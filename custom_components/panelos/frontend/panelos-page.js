@@ -4612,6 +4612,7 @@ class PanelOSPage extends HTMLElement {
         (opts.theme || []).length ? themeRows : null,
         light ? this._row("Automatic brightness", this._toggle(s.auto_brightness, (v) => this._command(p, "auto_brightness", v), { label: "Automatic brightness" }), { sub: s.auto_brightness ? "Follows the light in the room" : null }) : null,
         !s.auto_brightness || !light ? this._row("Brightness", this._slider(typeof s.brightness === "number" ? s.brightness : 70, 1, 100, 1, (v) => this._command(p, "brightness", v), (v) => `${v} %`, { label: "Brightness" })) : null,
+        (opts.time_format || []).length ? this._row("Time format", this._seg(opts.time_format.map((t) => [t, t]), s.time_format, (v) => this._command(p, "time_format", v), { label: "Time format" }), { info: "Every clock time the panel shows: clocks, alarms, calendar, notifications. Durations stay as they are." }) : null,
         p.connected ? null : h("p", { class: "note", style: { margin: "0 0 14px" } }, "These are the panel's own settings: they change while it is online.")),
       this._card("Screensaver", {},
         (opts.screensaver || []).length ? this._row("Starts after", this._select(opts.screensaver, s.screensaver, (v) => this._command(p, "screensaver", v), { label: "Screensaver starts after" }), { info: "How long nobody has to touch the panel before the screensaver comes." }) : null,
@@ -5699,7 +5700,7 @@ class PanelOSPage extends HTMLElement {
     if (Object.keys(changes).length) ok = await this._options(to, changes, { optimistic: (s) => { if (changes.pages) s.all_pages = changes.pages; } });
     if (ok && pageIndex == null && what.display && to.connected) {
       const fs = from.states || {};
-      for (const key of ["theme", "auto_brightness", "brightness", "screensaver", "screensaver_style"]) {
+      for (const key of ["theme", "auto_brightness", "brightness", "screensaver", "screensaver_style", "time_format"]) {
         if (fs[key] != null && (key !== "auto_brightness" || this._has(to, "light"))) await this._command(to, key, fs[key]);
       }
       if (fs.proximity_wake != null && this._has(to, "proximity")) await this._command(to, "proximity_wake", fs.proximity_wake);

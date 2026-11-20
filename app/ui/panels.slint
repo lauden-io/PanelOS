@@ -471,8 +471,10 @@ export component People inherits HorizontalLayout {
 }
 
 export struct ClockData {
-    hh: string,          // "07"
+    hh: string,          // "07" (24-hour: the hands, the dials, everything that computes with the hour)
     mm: string,          // "42"
+    th: string,          // the hour a digital clock shows, in the panel's time format: "07" / "18", or "7" / "6"
+    ampm: string,        // "" in 24-hour mode, else "AM" / "PM" (shown beside the digits)
     seconds: float,      // 0..60 (smooth)
     date: string,        // "Sunday, 8 November"
     weekday: string,     // "SUN"
@@ -484,7 +486,7 @@ export struct ClockData {
     next: string,        // next event, "" if none
     lcd-day: string,     // "WE" (the LCD clock)
     lcd-date: string,    // "11-18" (month-day, the LCD clock)
-    // Split-flap clock: current and previous digits, flip progress 0..1.
+    // Split-flap clock: current and previous digits (the shown hour: d1 "" for a blank card), flip progress 0..1.
     d1: string, d2: string, d3: string, d4: string,
     o1: string, o2: string, o3: string, o4: string,
     flip: float,
@@ -701,6 +703,30 @@ component InfoLine inherits HorizontalLayout {
     }
 }
 
+// The AM / PM mark of a digital clock in 12-hour mode: small letters after the minutes, on the digits' baseline (Noto
+// Sans: the baseline lies 1.07 em down a 1.36 em line, the line centred in the row). No room taken in 24-hour mode.
+export component AmPm inherits Rectangle {
+    in property <string> text;            // "" (24-hour), "AM", "PM"
+    in property <length> size;            // the digits' font size
+    in property <int> font-weight: 600;
+    in property <brush> ink: Theme.text;
+    // the digits' rim and glow (GlowText)
+    in property <float> k;
+    in property <bool> neon;
+    in property <color> glow: #ff2bd6;
+    in property <bool> paper;
+    property <length> fs: root.size * 0.24;
+    property <length> gap: root.size * 0.1;
+    preferred-width: root.text == "" ? 0px : g.preferred-width + root.gap;
+    min-width: self.preferred-width;
+    g := GlowText {
+        visible: root.text != "";
+        x: root.gap; y: (root.height - 1.36 * root.size) / 2 + 1.07 * (root.size - root.fs); height: 1.36 * root.fs;
+        text: root.text; font-size: root.fs; font-weight: root.font-weight; color: root.ink;
+        k: root.k; neon: root.neon; glow: root.glow; paper: root.paper;
+    }
+}
+
 component NextLine inherits HorizontalLayout {
     in property <ClockData> data;
     in property <color> accent;
@@ -734,8 +760,9 @@ export component FlapCard inherits Rectangle {
         d == "1" ? 1 : d == "2" ? 2 : d == "3" ? 3 : d == "4" ? 4 : d == "5" ? 5
             : d == "6" ? 6 : d == "7" ? 7 : d == "8" ? 8 : d == "9" ? 9 : 0
     }
+    property <image> blank;              // a blank card (12-hour mode: the hour's first card before 10)
     function glyph(d: string) -> image {
-        root.weight <= 450 ? root.w300[root.idx(d)] : root.weight <= 650 ? root.w600[root.idx(d)]
+        d == "" ? root.blank : root.weight <= 450 ? root.w300[root.idx(d)] : root.weight <= 650 ? root.w600[root.idx(d)]
             : root.weight <= 750 ? root.w700[root.idx(d)] : root.w800[root.idx(d)]
     }
     property <string> old-digit;         // the digit before the change
@@ -861,6 +888,16 @@ export component FlipClock inherits HorizontalLayout {
         new-digit: root.data.d3; delay: 70ms; }
     FlapCard { width: root.card-width; height: root.card-height; card: root.card; weight: root.weight;
         new-digit: root.data.d4; delay: 0ms; }
+    // 12-hour mode: a small AM / PM flap at the foot of the minutes
+    if root.data.ampm != "": VerticalLayout {
+        alignment: end;
+        Rectangle {
+            width: root.card-height * 0.34; height: root.card-height * 0.22; border-radius: 6px; background: root.card;
+            Text { text: root.data.ampm; font-size: root.card-height * 0.12; font-weight: root.weight; color: #f4f4f5;
+                horizontal-alignment: center; vertical-alignment: center; }
+            Rectangle { y: parent.height / 2 - 0.5px; height: 1px; background: #000000.with-alpha(0.55); }
+        }
+    }
 }
 
 // Clock face. style: 0 big clock + details, 1 huge digits, 2 round analog,
@@ -966,9 +1003,10 @@ export component ClockFace inherits Rectangle {
             transform-scale-x: min(root.width-k, (root.width - 52px) / max(1px, r0.preferred-width), 1 + 28px / ((root.width - 52px) / 2));
             r0 := HorizontalLayout {
                 alignment: root.clock-only ? center : start;
-                RollPair { text: root.data.hh; font-size: 128px; font-weight: root.weight; color: Theme.text; }
+                RollPair { text: root.data.th; font-size: 128px; font-weight: root.weight; color: Theme.text; }
                 Text { text: ":"; font-size: 128px; font-weight: root.weight; color: root.accent; opacity: root.colon; }
                 RollPair { text: root.data.mm; font-size: 128px; font-weight: root.weight; color: Theme.text; }
+                AmPm { text: root.data.ampm; size: 128px; font-weight: root.weight; ink: Theme.text; }
             }
         }
         if root.show-date: SwapText { text: root.data.date; font-size: 22px; ink: Theme.muted; }
@@ -1003,11 +1041,15 @@ export component ClockFace inherits Rectangle {
         alignment: center;
         Rectangle {
             transform-scale-x: min(root.width-k, (root.width - 24px) / max(1px, r1.preferred-width));
+            min-height: r1.preferred-height;
+            // centred at its own width, so a time wider than the screen (12-hour, wide digits) scales about the middle
             r1 := HorizontalLayout {
+                x: (parent.width - self.preferred-width) / 2; width: self.preferred-width;
                 alignment: center;
-                RollPair { text: root.data.hh; font-size: 176px; font-weight: root.weight; color: Theme.text; ink: true; }
+                RollPair { text: root.data.th; font-size: 176px; font-weight: root.weight; color: Theme.text; ink: true; }
                 Text { text: ":"; font-size: 176px; font-weight: root.weight; color: root.accent; opacity: root.colon; }
                 RollPair { text: root.data.mm; font-size: 176px; font-weight: root.weight; color: Theme.text; ink: true; }
+                AmPm { text: root.data.ampm; size: 176px; font-weight: root.weight; ink: Theme.text; }
             }
         }
         if root.show-seconds: HorizontalLayout {
@@ -1116,7 +1158,9 @@ export component ClockFace inherits Rectangle {
         spacing: 16px;
         Rectangle {
             transform-scale-x: min(root.width-k, (root.width - 24px) / max(1px, r7.preferred-width));
+            min-height: r7.preferred-height;
             r7 := FlipClock {
+                x: (parent.width - self.preferred-width) / 2; width: self.preferred-width;
                 data: root.data; weight: root.weight; accent: root.accent; colon: root.colon;
                 card-height: root.clock-only ? 170px : 150px;
             }
@@ -1138,11 +1182,11 @@ export component ClockFace inherits Rectangle {
         spacing: 14px;
         if root.style == 8: NixieClock {
             height: min(root.clock-only ? 300px : 220px, root.look-w * 168 / (root.show-seconds ? 438 : 302));
-            hh: root.data.hh; mm: root.data.mm; seconds: root.s30; show-seconds: root.show-seconds; live: root.live && !root.calm-tick;
+            hh: root.data.th; ampm: root.data.ampm; mm: root.data.mm; seconds: root.s30; show-seconds: root.show-seconds; live: root.live && !root.calm-tick;
         }
         if root.style == 9: LcdClock {
             height: min(root.clock-only ? 300px : 236px, root.look-w * 200 / 348);
-            hh: root.data.hh; mm: root.data.mm; seconds: root.s30; weekday: root.data.lcd-day; date: root.data.lcd-date;
+            hh: root.data.th; ampm: root.data.ampm; mm: root.data.mm; seconds: root.s30; weekday: root.data.lcd-day; date: root.data.lcd-date;
         }
         if root.style == 10: TwinBellClock {
             height: root.clock-only ? 320px : 252px;
@@ -1212,12 +1256,15 @@ export component ClockFace inherits Rectangle {
         alignment: center;
         Rectangle {
             transform-scale-x: min(root.width-k, root.wander-w / max(1px, r6.preferred-width)) * (1 - root.sqx);
+            min-height: r6.preferred-height;
             transform-scale-y: 1 - root.sqy;
             r6 := HorizontalLayout {
+                x: (parent.width - self.preferred-width) / 2; width: self.preferred-width;
                 alignment: center;
-                RollPair { text: root.data.hh; font-size: 84px; font-weight: root.weight; color: Theme.dark ? #c8c8cf : Theme.text; }
+                RollPair { text: root.data.th; font-size: 84px; font-weight: root.weight; color: Theme.dark ? #c8c8cf : Theme.text; }
                 Text { text: ":"; font-size: 84px; font-weight: root.weight; color: root.accent.with-alpha(0.85); opacity: root.colon; }
                 RollPair { text: root.data.mm; font-size: 84px; font-weight: root.weight; color: Theme.dark ? #c8c8cf : Theme.text; }
+                AmPm { text: root.data.ampm; size: 84px; font-weight: root.weight; ink: Theme.dark ? #c8c8cf : Theme.text; }
             }
         }
         if root.show-date || root.show-weather: InfoLine { data: root.data; show-date: root.show-date; show-weather: root.show-weather; size: 16px; color: Theme.faint; }

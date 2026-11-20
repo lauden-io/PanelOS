@@ -11,7 +11,7 @@ use std::time::Instant;
 use serde_json::Value;
 use slint::Color;
 
-use crate::pages::{local_format, now};
+use crate::pages::now;
 use crate::{icons, texts, with_state, AppWindow, StatusScreen};
 
 #[derive(Clone, Debug)]
@@ -262,7 +262,7 @@ pub fn refresh(ui: &AppWindow) -> Option<String> {
             picto_small: small,
             has_picto: has,
             tint: t.tint,
-            since: format!("since {} · {}", local_format(t.since, "%H:%M"), minutes(t.since)).into(),
+            since: format!("since {} · {}", crate::clock::local_hm(t.since), minutes(t.since)).into(),
             button: t.button.as_str().into(),
             left,
             left_text: left_text.into(),

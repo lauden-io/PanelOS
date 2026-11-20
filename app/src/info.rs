@@ -354,7 +354,7 @@ fn show_window(ui: &AppWindow) {
         ui.set_pop_pager(crate::quick::picture("info/pager-window.png"));
         ui.set_info_pager_led(crate::quick::picture("info/pager-led.png"));
     }
-    ui.set_info_clock(crate::pages::local_format(now(), "%H:%M").into());
+    ui.set_info_clock(crate::clock::local_hm(now()).into());
     if ui.get_pop_look() != look {
         ui.set_pop_look(look);
     }
@@ -503,7 +503,7 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
         }));
     }
     // the pager's and the news look's clock and lines; the pager's body and the fridge door
-    ui.set_info_clock(crate::pages::local_format(now(), "%H:%M").into());
+    ui.set_info_clock(crate::clock::local_hm(now()).into());
     if slot.variant == 2 {
         // the pager's finish: loaded again whenever it changes
         let finish = crate::page_option(_s, "info", "finish").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "graphite".into());

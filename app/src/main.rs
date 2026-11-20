@@ -56,6 +56,7 @@ mod visit;
 mod voice;
 mod web;
 mod webstats;
+mod wifi;
 mod windows;
 
 use std::cell::RefCell;
@@ -156,6 +157,8 @@ pub struct UiState {
     touch_close_at: Option<Instant>,
     touch_started: Option<Instant>,
     touch_test_down: Option<(Instant, f32, f32, u32)>,
+    /// The touch test was started from the settings list: it goes back there when it closes.
+    touch_from_settings: bool,
     /// Pull to refresh: where the finger came down, and how far it pulled (0..1, None: not pulling).
     web_pull: Option<(f32, f32)>,
     web_pulled: Option<f32>,
@@ -2230,12 +2233,16 @@ fn is_home_assistant(url: &str) -> bool {
     }
 }
 
+/// The mDNS browser (Home Assistant instances on the network, for the setup screen).
+static MDNS_BROWSER: std::sync::OnceLock<Arc<mdns::Browser>> = std::sync::OnceLock::new();
+
 /// First start without settings: the setup screen lists Home Assistant found
 /// on the network (mDNS) and takes an address on a keypad. Once Home Assistant
 /// answers at the address, it is saved to app.json and the app restarts (the
 /// supervisor starts it again), which then shows the pairing QR code.
 fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
     ui.set_setup(true);
+    ui.set_setup_variant(wifi_random());
     if !reason.contains("No such file") {
         ui.set_setup_message(format!("The saved settings could not be read ({reason}); set them again.").into());
         ui.set_setup_message_kind(1);
@@ -2243,7 +2250,64 @@ fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
     if let Some(ip) = pairing::local_ip_towards("8.8.8.8:53") {
         ui.set_net_ip(ip.to_string().into());
     }
+    setup_handlers(ui, browser);
+}
+
+/// A number for the screens' random texts.
+fn wifi_random() -> i32 {
+    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7);
+    (n % 1_000_000_000) as i32
+}
+
+/// Settings → Home Assistant: the setup screen with the address the panel uses, a back arrow; a new address that
+/// answers is saved and the app starts again with it (a different Home Assistant asks for the pairing again).
+fn open_ha_setup(ui: &AppWindow) {
+    let Some(browser) = MDNS_BROWSER.get().cloned() else { return };
+    let current = with_state(|s| s.config.as_ref().map(|c| c.ha_host_port()).unwrap_or_default());
+    // the keypad types digits, dots and colons: the address as host:port
+    ui.set_setup_address(current.into());
+    ui.set_setup_message("".into());
+    ui.set_setup_message_kind(0);
+    ui.set_setup_variant(wifi_random());
+    ui.set_setup_can_back(true);
+    ui.set_setup_wifi_info(false);
+    // the Wi-Fi the panel is on (its card on the screen)
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let link = shade::wifi_link();
+        let ip = pairing::local_ip_towards("8.8.8.8:53").map(|ip| ip.to_string());
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if let Some((name, dbm)) = link {
+                ui.set_net_name(name.into());
+                ui.set_net_bars(dbm.map_or(4, |d| if d > -55.0 { 4 } else if d > -63.0 { 3 } else if d > -72.0 { 2 } else { 1 }));
+            }
+            ui.set_net_ip(ip.unwrap_or_default().into());
+        });
+    });
+    setup_handlers(ui, browser);
+    ui.set_setup(true);
+}
+
+/// The setup screen's callbacks and its list of Home Assistants found (set once).
+fn setup_handlers(ui: &AppWindow, browser: Arc<mdns::Browser>) {
     browser.active.store(true, Ordering::Relaxed);
+    thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if READY.with(|r| r.replace(true)) {
+        return;
+    }
+    let back_browser = browser.clone();
+    let weak = ui.as_weak();
+    ui.on_setup_back(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if ui.get_setup_busy() {
+            return;
+        }
+        back_browser.active.store(false, Ordering::Relaxed);
+        ui.set_setup_pick_open(false);
+        ui.set_setup(false);
+        ui.set_setup_can_back(false);
+    });
     // Found instances, refreshed every second; the timer lives as long as the app.
     let found_timer = slint::Timer::default();
     let weak = ui.as_weak();
@@ -2307,17 +2371,36 @@ fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
         ui.set_setup_busy(true);
         ui.set_setup_message("Looking for Home Assistant…".into());
         ui.set_setup_message_kind(0);
+        // opened from the settings: the address the panel uses now
+        let now_url = with_state(|s| s.config.as_ref().map(|c| c.ha_url.trim_end_matches('/').to_string()));
         let weak = ui.as_weak();
         std::thread::spawn(move || {
             let found = candidates.iter().find(|u| is_home_assistant(u)).cloned();
-            let saved = found.as_ref().map(|url| {
+            let same = found.is_some() && found.as_deref() == now_url.as_deref();
+            let saved = found.as_ref().filter(|_| !same).map(|url| {
                 let _ = std::fs::create_dir_all(PERSIST_DIR);
-                let text = serde_json::to_string_pretty(&json!({ "ha_url": url })).unwrap_or_default();
-                std::fs::write(format!("{PERSIST_DIR}/app.json"), text + "\n")
+                // the other settings in app.json stay (only the address changes); written whole, then renamed
+                let path = format!("{PERSIST_DIR}/app.json");
+                let mut v: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+                v["ha_url"] = json!(url);
+                let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+                let tmp = format!("{path}.tmp");
+                std::fs::write(&tmp, text + "\n").and_then(|_| std::fs::rename(&tmp, &path))
             });
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak.upgrade() else { return };
                 ui.set_setup_busy(false);
+                if same {
+                    ui.set_setup_message("The panel uses this Home Assistant already.".into());
+                    ui.set_setup_message_kind(2);
+                    let weak = ui.as_weak();
+                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.invoke_setup_back();
+                        }
+                    });
+                    return;
+                }
                 match (found, saved) {
                     (Some(url), Some(Ok(()))) => {
                         eprintln!("nspanel-app: setup: Home Assistant at {url} saved, restarting");
@@ -2959,9 +3042,10 @@ fn report_device(s: &mut UiState) {
     let before = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning),
+        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h),
     );
     d.theme = s.settings.theme.clone();
+    d.time_24h = s.settings.time_24h;
     d.brightness = s.settings.brightness;
     d.auto_brightness = s.settings.auto_brightness;
     d.screensaver_seconds = s.settings.screensaver_seconds;
@@ -2984,7 +3068,7 @@ fn report_device(s: &mut UiState) {
     let after = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning),
+        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h),
     );
     if lux_changed {
         d.lux = s.lux.map(|l| l.round());
@@ -3246,6 +3330,16 @@ fn tick(ui: &AppWindow) {
             ui.set_touch_test_text(touch_test_text(0).into());
             ui.set_touch_test(touch_test);
             eprintln!("nspanel-app: touch test {}", if touch_test { "on" } else { "off" });
+            // started from the settings list: back there
+            if !touch_test && std::mem::take(&mut s.touch_from_settings) {
+                ui.set_set_view(3);
+                let weak = ui.as_weak();
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(ui) = weak.upgrade() {
+                        shade::fill(&ui);
+                    }
+                });
+            }
         }
         // Screensaver (not while Home Assistant shows something)
         let timeout = s.settings.screensaver_seconds;
@@ -3260,7 +3354,9 @@ fn tick(ui: &AppWindow) {
             || s.ringing.is_some()
             || s.timers.values().any(|t| t.active)
             || !s.statuses.is_empty()
-            || s.critical.is_some();
+            || s.critical.is_some()
+            // (a Wi-Fi network being tried: its result stays in view)
+            || ui.get_wifi_busy();
         if !s.screensaver
             && !showing
             && timeout > 0
@@ -3333,6 +3429,8 @@ const TOUCH_TEST_FILE: &str = "/tmp/nspanel-touch-test";
 const TOUCH_TEST_POINTS: [(f32, f32); 9] =
     [(16.0, 16.0), (240.0, 16.0), (464.0, 16.0), (464.0, 240.0), (464.0, 464.0), (240.0, 464.0), (16.0, 464.0), (16.0, 240.0), (240.0, 240.0)];
 const TOUCH_TEST_HOLD: Duration = Duration::from_millis(1500);
+/// A touch counts for the point only this near to it (pixels); a calibration never needs more.
+const TOUCH_TEST_RADIUS: f32 = 40.0;
 
 fn touch_test_text(step: usize) -> String {
     match step {
@@ -3342,9 +3440,42 @@ fn touch_test_text(step: usize) -> String {
     }
 }
 
+/// The line after a touch too far from the point (it does not count).
+fn touch_test_miss_text(step: usize) -> String {
+    format!("Touch the red point itself ({} of 9)", step.min(8) + 1)
+}
+
+/// Whether a touch at `offset` (dx, dy from the point) counts for it.
+fn touch_test_hit(offset: (f32, f32)) -> bool {
+    offset.0.hypot(offset.1) <= TOUCH_TEST_RADIUS
+}
+
+/// The touch test's way out: nothing is stored, the correction stays as it was.
+fn cancel_touch_test(ui: &AppWindow) {
+    let back = with_state(|s| {
+        s.touch_test_manual = false;
+        s.touch_close_at = None;
+        s.touch_offsets.clear();
+        s.touch_result = None;
+        s.touch_test_down = None;
+        s.touch_test = false;
+        s.touch_test_step = 0;
+        std::mem::take(&mut s.touch_from_settings)
+    });
+    eprintln!("nspanel-app: touch test cancelled");
+    ui.set_touch_test(false);
+    ui.set_touch_test_step(0);
+    if back {
+        ui.set_set_view(3);
+        shade::fill(ui);
+    }
+}
+
 /// Starts the touch calibration (the settings' Touch row, or the integration).
 fn start_touch_test(ui: &AppWindow) {
+    let from_settings = ui.get_set_view() == 3;
     with_state(|s| {
+        s.touch_from_settings = from_settings;
         s.touch_test_manual = true;
         s.touch_offsets.clear();
         s.touch_result = None;
@@ -3453,6 +3584,8 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
                 s.settings.lightning = value == "true";
                 ui.set_lightning(s.settings.lightning);
             }
+            // "24" or "12"
+            "time_format" => s.settings.time_24h = value != "12",
             "display_mode" => {
                 if matches!(value, "dashboard" | "assistant") {
                     s.settings.display_mode = value.to_string();
@@ -3496,9 +3629,32 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
     if lock {
         device_options::lock_changed(ui);
     }
+    apply_time_format(ui);
     apply_panel_config(ui);
     if reload {
         send(Command::Reload);
+    }
+}
+
+/// The time format from the settings to every clock: the UI's (`Clock.h24`), the app's texts (`clock::hm`), and the
+/// texts already on screen written again.
+fn apply_time_format(ui: &AppWindow) {
+    let on = with_state(|s| s.settings.time_24h);
+    if clock::h24() == on && ui.global::<Clock>().get_h24() == on {
+        return;
+    }
+    clock::set_h24(on);
+    ui.global::<Clock>().set_h24(on);
+    update_clock(ui);
+    with_state(|s| {
+        alarms::refresh(ui, s);
+        info::refresh(ui, s);
+        cal::refresh(ui, s);
+        todo::refresh(ui, s);
+    });
+    refresh_pages(ui);
+    if ui.get_set_view() > 0 {
+        shade::fill(ui);
     }
 }
 
@@ -3509,6 +3665,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
     match what {
         "saver.wake" => wake(ui),
         w if w.starts_with("lock.") || w.starts_with("prox.") => device_options::act(ui, w, value),
+        "touch.cancel" => cancel_touch_test(ui),
         "timers.stop" => stop_ringing(ui, "tap"),
         "timers.more" => ring_more(ui),
         w if w.starts_with("alarms.") || w.starts_with("alarm.") => alarms::act(ui, w, value),
@@ -3563,6 +3720,9 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         }
         "status.fold" | "strip.open" | "info.crit-silence" => alerts::act(ui, what),
         "set.touch" => start_touch_test(ui),
+        // the time format from a look's own 12H / 24H key ("true" 24-hour, "false" 12-hour): kept, applied to every
+        // clock, reported to the integration
+        "set.h24" => on_setting(ui, "time_format", if value == "false" { "12" } else { "24" }),
         "shade.open" => shade::open(ui),
         "shade.peek" => shade::fill(ui),
         // A home widget's view: clock → timers, date / event → calendar,
@@ -3723,6 +3883,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // browses for Home Assistant when the setup screen asks for it.
     let mdns_browser = Arc::new(mdns::Browser::default());
     mdns::spawn(vec![esphome::mdns_service(), sendspin::mdns_service()], mdns_browser.clone());
+    let _ = MDNS_BROWSER.set(mdns_browser.clone());
     let shared = Arc::new(ha::Shared::default());
     // development install: the system log kept on the data partition and sent to Home Assistant
     devlog::spawn();
@@ -3977,6 +4138,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             touch_result: None,
             touch_close_at: None,
             touch_started: None,
+            touch_from_settings: false,
             touch_test_down: None,
             web_pull: None,
             web_pulled: None,
@@ -4036,10 +4198,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             dev_wx: None,
         })
     });
-    // The look before the first frame (auto theme: the light sensor now).
+    // The look before the first frame (auto theme: the light sensor now), and the time format.
     with_state(|s| {
         s.lux = s.light.lux();
         update_theme(&ui, s);
+        clock::set_h24(s.settings.time_24h);
+        ui.global::<Clock>().set_h24(s.settings.time_24h);
     });
     apply_panel_config(&ui);
     update_clock(&ui);
@@ -4301,6 +4465,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    // the Wi-Fi screens (settings → Wi-Fi, the setup screen's Wi-Fi card)
+    wifi::init(&ui);
+
     let (config, auth) = match (config, auth) {
         (Ok(c), Some(a)) => (c, a),
         (result, _) => {
@@ -4493,6 +4660,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => {
                     let Some((at, x0, y0, moves)) = s.touch_test_down.take() else { return None };
+                    // done: the result stays until the view closes
+                    if s.touch_test_step >= 9 {
+                        return None;
+                    }
                     let held = at.elapsed();
                     let i = s.touch_test_step.min(8);
                     let (tx, ty) = TOUCH_TEST_POINTS[i];
@@ -4503,6 +4674,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         (dx * dx + dy * dy).sqrt(),
                         held.as_millis()
                     );
+                    // only a touch near the point counts (a tap anywhere else is not a measurement)
+                    if !touch_test_hit((dx, dy)) {
+                        return Some((s.touch_test_step, false));
+                    }
                     if s.touch_test_step < 8 || (s.touch_test_step == 8 && held >= TOUCH_TEST_HOLD) {
                         s.touch_test_step += 1;
                         // measured with the correction in place: the offset left over adds to it
@@ -4511,14 +4686,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if s.touch_test_step == 9 && s.touch_test_manual {
                         finish_touch_test(s);
                     }
-                    return Some(s.touch_test_step);
+                    return Some((s.touch_test_step, true));
                 }
             }
             None
         });
-        if let Some(step) = step {
+        if let Some((step, hit)) = step {
             ui.set_touch_test_step(step as i32);
-            ui.set_touch_test_text(touch_test_text(step).into());
+            ui.set_touch_test_text(if hit { touch_test_text(step) } else { touch_test_miss_text(step) }.into());
         }
     });
 
@@ -4602,5 +4777,19 @@ mod music_skip_tests {
         assert_eq!(skip_step("A", "B", false), SkipStep::NewTrack);
         assert_eq!(skip_step("A", "A", true), SkipStep::OldAgain);
         assert_eq!(skip_step("A", "B", true), SkipStep::NewTrack);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn touch_test_counts_only_near_the_point() {
+        assert!(touch_test_hit((0.0, 0.0)));
+        // 40 px away: still the point
+        assert!(touch_test_hit((24.0, -32.0)));
+        assert!(!touch_test_hit((30.0, 30.0)));
+        assert!(!touch_test_hit((200.0, 0.0)));
     }
 }

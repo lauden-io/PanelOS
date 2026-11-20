@@ -4,7 +4,7 @@
 // HA): a long press opens a lock, holding the lock unlocks the edit mode.
 import { Theme, Act, Words, Clock } from "theme.slint";
 import { Icon, Glyph, PlayGlyph, GlowText, Marquee, RollPair, Segmented, Dropdown, Toggle, CheckBox } from "widgets.slint";
-import { WeatherData, ClockData, AnalogDial, FlipClock } from "panels.slint";
+import { WeatherData, ClockData, AnalogDial, FlipClock, AmPm } from "panels.slint";
 import { NixieClock, LcdClock, TwinBellClock } from "clocks.slint";
 
 export struct HomeItem {
@@ -153,15 +153,17 @@ component ClockW inherits Rectangle {
     // 0 digital, 1 big digits with a seconds line
     if root.st == 0 || root.st == 1: dg := VerticalLayout {
         property <int> lines: root.it.h >= 2 ? (root.info ? 1 : 0) + (root.show-next ? 1 : 0) : 0;
-        property <length> fs: min((root.width - 16px) / 2.75, root.st == 1 ? (root.it.h >= 2 ? 150px - self.lines * 26px : root.it.w >= 4 ? 78px : 58px)
+        // (12-hour mode: the AM / PM mark takes about half a digit more)
+        property <length> fs: min((root.width - 16px) / (root.clock.ampm != "" ? 3.25 : 2.75), root.st == 1 ? (root.it.h >= 2 ? 150px - self.lines * 26px : root.it.w >= 4 ? 78px : 58px)
             : root.it.h >= 2 ? 136px - self.lines * 18px : root.it.w >= 4 ? 72px : root.it.w >= 2 ? 60px : 34px);
         alignment: center;
         spacing: 0;
         HorizontalLayout {
             alignment: center;
-            RollPair { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.hh; font-size: dg.fs; font-weight: root.it.weight; color: root.ink; ink: root.st == 1; }
+            RollPair { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.th; font-size: dg.fs; font-weight: root.it.weight; color: root.ink; ink: root.st == 1; }
             GlowText { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: ":"; font-size: dg.fs; font-weight: root.it.weight; color: root.acc; opacity: root.colon; }
             RollPair { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.mm; font-size: dg.fs; font-weight: root.it.weight; color: root.ink; ink: root.st == 1; }
+            AmPm { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.ampm; size: dg.fs; font-weight: root.it.weight; ink: root.ink; }
         }
         if root.st == 1 && root.secs: HorizontalLayout {
             alignment: center;
@@ -231,7 +233,9 @@ component ClockW inherits Rectangle {
 
     // 6 split-flap cards
     if root.st == 6: fg := VerticalLayout {
-        property <length> chh: min(150px, root.height - 22px - (root.it.h >= 2 && root.info ? 34px : 0px) - (root.it.h >= 2 && root.show-next ? 30px : 0px), (root.width - 52px) / 2.508);
+        // (12-hour mode: the AM / PM flap beside the minutes, 0.34 of the card height and a gap)
+        property <length> chh: min(150px, root.height - 22px - (root.it.h >= 2 && root.info ? 34px : 0px) - (root.it.h >= 2 && root.show-next ? 30px : 0px),
+            (root.width - 52px - (root.clock.ampm != "" ? 8px : 0px)) / (root.clock.ampm != "" ? 2.848 : 2.508));
         alignment: center;
         spacing: 10px;
         FlipClock {
@@ -258,11 +262,11 @@ component ClockW inherits Rectangle {
     //   clock (spec 24.9); each scaled to fit, centred, nothing behind it
     if root.st == 8: NixieClock {
         x: 4px; y: 4px; width: root.width - 8px; height: root.height - 8px;
-        hh: root.clock.hh; mm: root.clock.mm; seconds: root.s30; show-seconds: root.secs && root.it.w >= 4; live: root.live && !root.calm-tick;
+        hh: root.clock.th; ampm: root.clock.ampm; mm: root.clock.mm; seconds: root.s30; show-seconds: root.secs && root.it.w >= 4; live: root.live && !root.calm-tick;
     }
     if root.st == 9: LcdClock {
         x: 4px; y: 4px; width: root.width - 8px; height: root.height - 8px;
-        hh: root.clock.hh; mm: root.clock.mm; seconds: root.s30; weekday: root.clock.lcd-day; date: root.clock.lcd-date;
+        hh: root.clock.th; ampm: root.clock.ampm; mm: root.clock.mm; seconds: root.s30; weekday: root.clock.lcd-day; date: root.clock.lcd-date;
         cased: root.it.w >= 3 && root.it.h >= 2;
     }
     if root.st == 10: TwinBellClock {

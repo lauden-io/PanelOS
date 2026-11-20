@@ -144,7 +144,7 @@ fn due(d: &str) -> (String, i32) {
     let today = local_format(t, "%Y-%m-%d");
     let tomorrow = local_format(t + 86400, "%Y-%m-%d");
     let (date, time) = match parse_iso(d) {
-        Some(e) if d.len() > 10 => (local_format(e, "%Y-%m-%d"), Some(local_format(e, "%H:%M"))),
+        Some(e) if d.len() > 10 => (local_format(e, "%Y-%m-%d"), Some(crate::clock::local_hm(e))),
         _ => (d.get(..10).unwrap_or(d).to_string(), None),
     };
     let state = if date < today { 2 } else if date == today { 1 } else { 0 };
@@ -287,7 +287,7 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     ui.set_todo_receipt_footer(texts::kept("todo.receipt.footers", 0).into());
     ui.set_todo_receipt_empty(texts::kept("todo.receipt.empty", 0).into());
     ui.set_todo_term_empty(texts::kept("todo.term.empty", 0).into());
-    ui.set_todo_stamp(local_format(now(), "%d.%m.%Y %H:%M").into());
+    ui.set_todo_stamp(format!("{} {}", local_format(now(), "%d.%m.%Y"), crate::clock::local_hm(now())).into());
     if open.is_empty() {
         ui.set_todo_empty_title(texts::kept("todo.empty.titles", 0).into());
         ui.set_todo_empty_sub(texts::kept("todo.empty.subs", 0).into());

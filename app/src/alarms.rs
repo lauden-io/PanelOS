@@ -188,7 +188,7 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
             ui.set_timers_next_in(-1);
         }
     }
-    let hours = |t: &str| t.split_once(':').and_then(|(h, m)| Some(h.parse::<f32>().ok()? + m.parse::<f32>().ok()? / 60.0));
+    let hours = |t: &str| crate::clock::parse_hm(t).map(|(h, m)| h as f32 + m as f32 / 60.0);
     let w = ui.get_weather();
     if let (Some(r), Some(st)) = (hours(w.sunrise.as_str()), hours(w.sunset.as_str())) {
         ui.set_timers_sunrise_h(r);
