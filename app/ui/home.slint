@@ -4,13 +4,14 @@
 // HA): a long press opens a lock, holding the lock unlocks the edit mode.
 import { Theme, Act, Words, Clock } from "theme.slint";
 import { Icon, Glyph, PlayGlyph, GlowText, Marquee, RollPair, Segmented, Dropdown, Toggle, CheckBox, MenuHost, TextButton, TouchSlider } from "widgets.slint";
-import { WeatherData, ClockData, AnalogDial, FlipClock, TimerInfo, Person } from "panels.slint";
+import { WeatherData, ClockData, AnalogDial, FlipClock, AmPm, TimerInfo, Person } from "panels.slint";
 import { ArcadeScreen, ArcadeBlocks } from "arcade.slint";
 import { NixieClock, LcdClock, TwinBellClock } from "clocks.slint";
 
 export struct HomeItem {
     kind: int,      // 0 clock, 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly cards, 6 daily cards, 7 music,
                     // 8 a sensor's value, 9 the running timer, 10 the people at home
+                    // 11 weather details (wind, humidity, rain, the sun's times)
     col: int,
     row: int,
     w: int,         // cells
@@ -27,6 +28,7 @@ export struct HomeItem {
                     //   clock: 1 seconds, 2 date, 4 weather, 8 next event
                     //   date: 1 year, 2 week number; weather: 1 condition, 2 high / low, 4 rain chance, 8 feels like
                     //   event: 1 time, 2 calendar colour; curve: 1 rain bars, 2 icons; hourly / daily: 1 rain chance
+                    //   weather details: 1 wind, 2 humidity, 4 chance of rain, 8 sunrise and sunset
                     //   music: 1 long titles scroll (style = speed 1..5) instead of being cut off
                     //   sensor: 1 name, 2 icon; timer: 1 name; people: 1 the ones away too
     card: int,      // the card behind the widget: 0 = the widget's own (as designed), 1..101 = (card - 1) %
@@ -164,15 +166,17 @@ component ClockW inherits Rectangle {
     // 0 digital, 1 big digits with a seconds line
     if root.st == 0 || root.st == 1: dg := VerticalLayout {
         property <int> lines: root.it.h >= 2 ? (root.info ? 1 : 0) + (root.show-next ? 1 : 0) : 0;
-        property <length> fs: min((root.width - 16px) / 2.75, root.st == 1 ? (root.it.h >= 2 ? 150px - self.lines * 26px : root.it.w >= 4 ? 78px : 58px)
+        // (12-hour mode: the AM / PM mark takes about half a digit more)
+        property <length> fs: min((root.width - 16px) / (root.clock.ampm != "" ? 3.25 : 2.75), root.st == 1 ? (root.it.h >= 2 ? 150px - self.lines * 26px : root.it.w >= 4 ? 78px : 58px)
             : root.it.h >= 2 ? 136px - self.lines * 18px : root.it.w >= 4 ? 72px : root.it.w >= 2 ? 60px : 34px);
         alignment: center;
         spacing: 0;
         HorizontalLayout {
             alignment: center;
-            RollPair { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.hh; font-size: dg.fs; font-weight: root.it.weight; color: root.ink; ink: root.st == 1; }
+            RollPair { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.th; font-size: dg.fs; font-weight: root.it.weight; color: root.ink; ink: root.st == 1; }
             GlowText { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: ":"; font-size: dg.fs; font-weight: root.it.weight; color: root.acc; opacity: root.colon; }
             RollPair { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.mm; font-size: dg.fs; font-weight: root.it.weight; color: root.ink; ink: root.st == 1; }
+            AmPm { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.clock.ampm; size: dg.fs; font-weight: root.it.weight; ink: root.ink; }
         }
         if root.st == 1 && root.secs: HorizontalLayout {
             alignment: center;
@@ -242,7 +246,9 @@ component ClockW inherits Rectangle {
 
     // 6 split-flap cards
     if root.st == 6: fg := VerticalLayout {
-        property <length> chh: min(150px, root.height - 22px - (root.it.h >= 2 && root.info ? 34px : 0px) - (root.it.h >= 2 && root.show-next ? 30px : 0px), (root.width - 52px) / 2.508);
+        // (12-hour mode: the AM / PM flap beside the minutes, 0.34 of the card height and a gap)
+        property <length> chh: min(150px, root.height - 22px - (root.it.h >= 2 && root.info ? 34px : 0px) - (root.it.h >= 2 && root.show-next ? 30px : 0px),
+            (root.width - 52px - (root.clock.ampm != "" ? 8px : 0px)) / (root.clock.ampm != "" ? 2.848 : 2.508));
         alignment: center;
         spacing: 10px;
         FlipClock {
@@ -269,11 +275,11 @@ component ClockW inherits Rectangle {
     //   clock (spec 24.9); each scaled to fit, centred, nothing behind it
     if root.st == 8: NixieClock {
         x: 4px; y: 4px; width: root.width - 8px; height: root.height - 8px;
-        hh: root.clock.hh; mm: root.clock.mm; seconds: root.s30; show-seconds: root.secs && root.it.w >= 4; live: root.live && !root.calm-tick;
+        hh: root.clock.th; ampm: root.clock.ampm; mm: root.clock.mm; seconds: root.s30; show-seconds: root.secs && root.it.w >= 4; live: root.live && !root.calm-tick;
     }
     if root.st == 9: LcdClock {
         x: 4px; y: 4px; width: root.width - 8px; height: root.height - 8px;
-        hh: root.clock.hh; mm: root.clock.mm; seconds: root.s30; weekday: root.clock.lcd-day; date: root.clock.lcd-date;
+        hh: root.clock.th; ampm: root.clock.ampm; mm: root.clock.mm; seconds: root.s30; weekday: root.clock.lcd-day; date: root.clock.lcd-date;
         cased: root.it.w >= 3 && root.it.h >= 2;
     }
     if root.st == 10: TwinBellClock {
@@ -577,19 +583,24 @@ component HourlyW inherits Rectangle {
     in property <HomeItem> it;
     property <bool> rain: Math.mod(root.it.opts, 2) == 1;
     property <length> chh: root.rain ? 84px : 70px;
+    // as many hours as fit the widget's width (the forecast has up to 12)
+    property <int> fit: Math.floor((root.width - 4px + 6px) / 68px);
     HorizontalLayout {
         alignment: center;
-        spacing: 6px;
         padding-top: (root.height - root.chh) / 2; padding-bottom: (root.height - root.chh) / 2;
-        for h in root.data.hours: Rectangle {
-            width: 62px; height: root.chh; border-radius: 14px;
-            background: root.ink.with-alpha(0.12);
-            VerticalLayout {
-                alignment: center;
-                Text { text: h.label; font-size: 12px; color: root.ink.with-alpha(0.80); horizontal-alignment: center; }
-                Icon { text: h.icon; font-size: 20px; color: root.ink; }
-                Text { text: round(h.temp) + "°"; font-size: 14px; font-weight: root.it.weight; color: root.ink; horizontal-alignment: center; }
-                if root.rain: Text { text: h.precip + "%"; font-size: 11px; color: #8cc8ff; horizontal-alignment: center; }
+        for h[i] in root.data.hours: Rectangle {
+            width: i >= root.fit ? 0px : i == 0 ? 62px : 68px;
+            visible: i < root.fit;
+            Rectangle {
+                x: parent.width - 62px; width: 62px; height: root.chh; border-radius: 14px;
+                background: root.ink.with-alpha(0.12);
+                VerticalLayout {
+                    alignment: center;
+                    Text { text: h.label; font-size: 12px; color: root.ink.with-alpha(0.80); horizontal-alignment: center; }
+                    Icon { text: h.icon; font-size: 20px; color: root.ink; }
+                    Text { text: round(h.temp) + "°"; font-size: 14px; font-weight: root.it.weight; color: root.ink; horizontal-alignment: center; }
+                    if root.rain: Text { text: h.precip + "%"; font-size: 11px; color: root.ink.red < 128 ? #1f6fc0 : #8cc8ff; horizontal-alignment: center; }
+                }
             }
         }
     }
@@ -601,26 +612,123 @@ component DailyW inherits Rectangle {
     in property <HomeItem> it;
     property <bool> rain: Math.mod(root.it.opts, 2) == 1;
     property <length> chh: root.rain ? 86px : 76px;
+    // as many days as fit the widget's width (the forecast has up to 7)
+    property <int> fit: Math.floor((root.width - 4px + 6px) / 90px);
     HorizontalLayout {
         alignment: center;
-        spacing: 6px;
         padding-top: (root.height - root.chh) / 2; padding-bottom: (root.height - root.chh) / 2;
-        for d in root.data.days: Rectangle {
-            width: 84px; height: root.chh; border-radius: 14px;
-            background: root.ink.with-alpha(0.12);
-            VerticalLayout {
-                alignment: center;
-                spacing: 1px;
-                Text { text: d.label; font-size: 12px; color: root.ink.with-alpha(0.80); horizontal-alignment: center; }
-                Icon { text: d.icon; font-size: 22px; color: root.ink; }
-                HorizontalLayout {
+        for d[i] in root.data.days: Rectangle {
+            width: i >= root.fit ? 0px : i == 0 ? 84px : 90px;
+            visible: i < root.fit;
+            Rectangle {
+                x: parent.width - 84px; width: 84px; height: root.chh; border-radius: 14px;
+                background: root.ink.with-alpha(0.12);
+                VerticalLayout {
                     alignment: center;
-                    spacing: 6px;
-                    Text { text: round(d.high) + "°"; font-size: 14px; font-weight: root.it.weight; color: root.ink; }
-                    Text { text: round(d.low) + "°"; font-size: 14px; color: root.ink.with-alpha(0.60); }
+                    spacing: 1px;
+                    Text { text: d.label; font-size: 12px; color: root.ink.with-alpha(0.80); horizontal-alignment: center; }
+                    Icon { text: d.icon; font-size: 22px; color: root.ink; }
+                    HorizontalLayout {
+                        alignment: center;
+                        spacing: 6px;
+                        Text { text: round(d.high) + "°"; font-size: 14px; font-weight: root.it.weight; color: root.ink; }
+                        Text { text: round(d.low) + "°"; font-size: 14px; color: root.ink.with-alpha(0.60); }
+                    }
+                    if root.rain: Text { text: d.precip + "%"; font-size: 11px; color: root.ink.red < 128 ? #1f6fc0 : #8cc8ff; horizontal-alignment: center; }
                 }
-                if root.rain: Text { text: d.precip + "%"; font-size: 11px; color: #8cc8ff; horizontal-alignment: center; }
             }
+        }
+    }
+}
+
+// --------------------------------------------------------------------------- weather details
+// One part of the details as a chip: its icon and value (with the widgets' glyph rim, or neon, over the background).
+component DetailChip inherits Rectangle {
+    in property <color> ink;
+    in property <string> icon;
+    in property <string> text;
+    in property <int> weight: 600;
+    in property <bool> small;              // the narrow widget's two rows
+    in property <float> halo;
+    in property <bool> neon;
+    in property <color> glow;
+    height: root.small ? 30px : 36px;
+    border-radius: self.height / 2;
+    background: root.ink.with-alpha(0.12);
+    HorizontalLayout {
+        padding-left: root.small ? 8px : 10px; padding-right: root.small ? 10px : 12px; spacing: root.small ? 4px : 5px;
+        VerticalLayout { alignment: center;
+            GlowText { icon: true; paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.icon; font-size: root.small ? 14px : 16px; color: root.ink.with-alpha(0.85); } }
+        VerticalLayout { alignment: center;
+            GlowText { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.text; font-size: root.small ? 12px : 14px; font-weight: root.weight; color: root.ink; } }
+    }
+}
+
+// One part of the details as a line of a tall widget: its icon, name and value.
+component DetailLine inherits HorizontalLayout {
+    in property <color> ink;
+    in property <string> icon;
+    in property <string> name;
+    in property <string> text;
+    in property <int> weight: 600;
+    in property <float> halo;
+    in property <bool> neon;
+    in property <color> glow;
+    height: 36px;
+    spacing: 10px;
+    VerticalLayout { alignment: center; width: 26px;
+        GlowText { icon: true; horizontal-alignment: center; paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.icon; font-size: 22px; color: root.ink.with-alpha(0.85); } }
+    VerticalLayout { alignment: center; horizontal-stretch: 1;
+        GlowText { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.name; font-size: 16px; color: root.ink.with-alpha(0.85); } }
+    VerticalLayout { alignment: center;
+        GlowText { horizontal-alignment: right; paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: root.text; font-size: 18px; font-weight: root.weight; color: root.ink; } }
+}
+
+// Wind, humidity, the chance of rain and the sun's times (opts 1, 2, 4, 8): a row of chips on a wide widget, two rows of
+// two on a narrower one, name and value line by line on a tall one.
+component DetailsW inherits Rectangle {
+    in property <color> ink: #ffffff;      // text and lines (Ink on the plain light background)
+    in property <WeatherData> data;
+    in property <HomeItem> it;
+    in property <float> halo;
+    in property <bool> neon;
+    in property <color> glow;
+    pure function on(bit: int) -> bool { Math.mod(Math.floor(root.it.opts / bit), 2) == 1 }
+    property <string> sun: root.data.sunrise + " – " + root.data.sunset;
+    property <bool> tall: root.it.h >= 2;
+    property <bool> wide: !root.tall && root.it.w >= 4;
+    if root.tall: VerticalLayout {
+        padding-left: 18px; padding-right: 18px;
+        alignment: center;
+        spacing: 4px;
+        if root.on(1): DetailLine { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F059D}"; name: "Wind"; text: root.data.wind; }
+        if root.on(2): DetailLine { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F058E}"; name: "Humidity"; text: root.data.humidity; }
+        if root.on(4): DetailLine { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F054A}"; name: "Rain"; text: root.data.precip; }
+        if root.on(8): DetailLine { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F059C}"; name: "Sun"; text: root.sun; }
+    }
+    if root.wide: HorizontalLayout {
+        alignment: center;
+        spacing: 8px;
+        padding-top: (root.height - 36px) / 2; padding-bottom: (root.height - 36px) / 2;
+        if root.on(1): DetailChip { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F059D}"; text: root.data.wind; }
+        if root.on(2): DetailChip { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F058E}"; text: root.data.humidity; }
+        if root.on(4): DetailChip { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F054A}"; text: root.data.precip; }
+        if root.on(8): DetailChip { ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F059C}"; text: root.sun; }
+    }
+    if !root.tall && !root.wide: VerticalLayout {
+        alignment: center;
+        spacing: 6px;
+        if root.on(1) || root.on(2): HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            if root.on(1): DetailChip { small: true; ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F059D}"; text: root.data.wind; }
+            if root.on(2): DetailChip { small: true; ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F058E}"; text: root.data.humidity; }
+        }
+        if root.on(4) || root.on(8): HorizontalLayout {
+            alignment: center;
+            spacing: 6px;
+            if root.on(4): DetailChip { small: true; ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F054A}"; text: root.data.precip; }
+            if root.on(8): DetailChip { small: true; ink: root.ink; halo: root.halo; neon: root.neon; glow: root.glow; weight: root.it.weight; icon: "\u{F059C}"; text: root.sun; }
         }
     }
 }
@@ -980,6 +1088,7 @@ export component HomeWidget inherits Rectangle {
         s: root.it.style >= 0 && root.it.style < root.sensors.length ? root.sensors[root.it.style] : root.sensor-demo; }
     if root.it.kind == 9: TimerW { width: root.width; height: root.height; ink: root.ink; it: root.it; timers: root.timers; halo: root.halo; neon: root.neon; glow: root.glow; }
     if root.it.kind == 10: PeopleW { width: root.width; height: root.height; ink: root.ink; it: root.it; people: root.people; }
+    if root.it.kind == 11: DetailsW { width: root.width; height: root.height; ink: root.ink; data: root.data; it: root.it; halo: root.halo; neon: root.neon; glow: root.glow; }
 }
 
 // Edit frame of a widget: the outline with the same rounded corners, a thicker arc on the
@@ -1091,14 +1200,14 @@ component WidgetMenu inherits Rectangle {
     out property <length> need: rows.preferred-height;
     pure function name(kind: int) -> string {
         kind == 0 ? "Clock" : kind == 1 ? "Date" : kind == 2 ? "Weather now" : kind == 3 ? "Next event" : kind == 4 ? "Forecast curve"
-            : kind == 5 ? "Hourly forecast" : kind == 6 ? "Daily forecast" : kind == 7 ? "Music" : kind == 8 ? "Sensor" : kind == 9 ? "Timer" : "People"
+            : kind == 5 ? "Hourly forecast" : kind == 6 ? "Daily forecast" : kind == 7 ? "Music" : kind == 8 ? "Sensor" : kind == 9 ? "Timer" : kind == 11 ? "Details" : "People"
     }
     // where a tap leads, per widget kind (decided by the design, not configurable)
     pure function tap-text(kind: int) -> string {
         kind == 0 || kind == 9 ? "Opens timers and alarms" : kind == 1 ? "Opens the calendar at today"
             : kind == 2 ? "Opens the weather details" : kind == 3 ? "Opens the event in the calendar"
             : kind == 4 ? "Opens the hourly forecast" : kind == 5 ? "Opens the forecast at that hour"
-            : kind == 6 ? "Opens that day's forecast" : "Opens the music player"
+            : kind == 6 ? "Opens that day's forecast" : kind == 11 ? "Opens the weather details" : "Opens the music player"
     }
     // the switches of each kind (bit k = 2^k); a clock style without a place for them has none (in words, the LCD), the
     // nixie and the twin-bell only the seconds
@@ -1106,7 +1215,8 @@ component WidgetMenu inherits Rectangle {
         it.kind == 0 ? (it.style == 7 || it.style == 9 ? [] : it.style == 8 || it.style == 10 ? ["Seconds"] : ["Seconds", "Date", "Weather", "Event"])
             : it.kind == 1 ? ["Year", "Week number"] : it.kind == 2 ? ["Condition", "High and low", "Chance of rain", "Feels like"]
             : it.kind == 3 ? ["Time", "Calendar colour"] : it.kind == 4 ? ["Rain bars", "Icons"] : it.kind == 5 || it.kind == 6 ? ["Chance of rain"]
-            : it.kind == 8 ? ["Name", "Icon"] : it.kind == 9 ? ["Name"] : it.kind == 10 ? ["The ones away too"] : []
+            : it.kind == 8 ? ["Name", "Icon"] : it.kind == 9 ? ["Name"] : it.kind == 10 ? ["The ones away too"]
+            : it.kind == 11 ? ["Wind", "Humidity", "Chance of rain", "Sunrise and sunset"] : []
     }
     pure function on(bit: int) -> bool { Math.mod(Math.floor(root.it.opts / bit), 2) == 1 }
     property <bool> has-colour: root.it.kind == 0 || root.it.kind == 1 || root.it.kind == 3 || root.it.kind == 4 || root.it.kind == 8;
@@ -1352,7 +1462,7 @@ export component HomeGrid inherits Rectangle {
     property <length> cw: (self.width - 32px) / 4;
     property <length> ch: 98px;
     pure function min-w(it: HomeItem) -> int {
-        it.kind == 0 ? (it.style == 8 ? (Math.mod(it.opts, 2) == 1 ? 4 : 3) : 2) : it.kind == 1 || it.kind == 3 ? 2 : it.kind >= 4 && it.kind <= 6 ? 3 : 1
+        it.kind == 0 ? (it.style == 8 ? (Math.mod(it.opts, 2) == 1 ? 4 : 3) : 2) : it.kind == 1 || it.kind == 3 || it.kind == 11 ? 2 : it.kind >= 4 && it.kind <= 6 ? 3 : 1
     }
     pure function min-h(it: HomeItem) -> int { it.kind == 0 && it.style == 10 ? 2 : 1 }
 
@@ -1582,6 +1692,8 @@ export component HomeGrid inherits Rectangle {
     property <HomeItem> pv-music1: { kind: 7, w: 1, h: 1, accent: root.accent, weight: 600, opts: 0, neon: true };
     property <HomeItem> pv-music3: { kind: 7, w: 3, h: 1, accent: root.accent, weight: 600, opts: 0, neon: true };
     property <HomeItem> pv-music4: { kind: 7, w: 4, h: 1, accent: root.accent, weight: 600, opts: 0, neon: true };
+    property <HomeItem> pv-details: { kind: 11, w: 2, h: 1, accent: root.accent, weight: 600, opts: 15, neon: true };
+    property <HomeItem> pv-details4: { kind: 11, w: 4, h: 1, accent: root.accent, weight: 600, opts: 15, neon: true };
     property <HomeItem> pv-timer: { kind: 9, w: 2, h: 1, accent: root.accent, weight: 600, opts: 1, neon: true };
     property <HomeItem> pv-people: { kind: 10, w: 2, h: 1, accent: root.accent, weight: 600, opts: 1, neon: true };
     property <HomeItem> pv-sensor: { kind: 8, w: 2, h: 1, style: -1, accent: root.accent, weight: 600, opts: 3, neon: true };
@@ -1598,12 +1710,14 @@ export component HomeGrid inherits Rectangle {
     // the previews' places in the card (it is 448 px wide, the previews are cells of 112 x 98): what a tap adds
     // ("kind:style:w:h:opts", the sensor widget adds its sensor's place among the choices)
     property <length> pv-extra-y: 1162px;
-    property <length> pv-end: root.weather-only ? 552px : root.pv-extra-y + 138px + (root.has-sensor ? 138px : 0px);
+    property <length> pv-end: root.weather-only ? 690px : root.pv-extra-y + 138px + (root.has-sensor ? 138px : 0px);
     property <[{ it: HomeItem, x: length, y: length, w: length, h: length, pick: string, on: bool }]> picks: root.weather-only ? [
         { it: root.pv-weather, x: 0px, y: 0px, w: 224px, h: 98px, pick: "2:0:2:1:1", on: true },
-        { it: root.pv-curve, x: 0px, y: 138px, w: 448px, h: 98px, pick: "4:0:4:1:1", on: true },
-        { it: root.pv-hourly, x: 0px, y: 276px, w: 448px, h: 98px, pick: "5:0:4:1:0", on: true },
-        { it: root.pv-daily, x: 0px, y: 414px, w: 448px, h: 98px, pick: "6:0:4:1:0", on: true },
+        { it: root.pv-details, x: 224px, y: 0px, w: 224px, h: 98px, pick: "11:0:2:1:15", on: true },
+        { it: root.pv-details4, x: 0px, y: 138px, w: 448px, h: 98px, pick: "11:0:4:1:15", on: true },
+        { it: root.pv-curve, x: 0px, y: 276px, w: 448px, h: 98px, pick: "4:0:4:1:1", on: true },
+        { it: root.pv-hourly, x: 0px, y: 414px, w: 448px, h: 98px, pick: "5:0:4:1:0", on: true },
+        { it: root.pv-daily, x: 0px, y: 552px, w: 448px, h: 98px, pick: "6:0:4:1:0", on: true },
     ] : [
         { it: root.pv-analog, x: 0px, y: 0px, w: 224px, h: 196px, pick: "0:2:2:2:1", on: true },
         { it: root.pv-digital, x: 224px, y: 0px, w: 224px, h: 98px, pick: "0:0:2:1:1", on: true },
@@ -1623,8 +1737,8 @@ export component HomeGrid inherits Rectangle {
         { it: root.pv-sensor1, x: 224px, y: 1300px, w: 112px, h: 98px, pick: "8:0:1:1:2:0", on: root.has-sensor },
     ];
     property <[{ t: string, x: length, y: length, on: bool }]> pick-titles: root.weather-only ? [
-        { t: "Weather now", x: 4px, y: 104px, on: true }, { t: "Forecast curve", x: 4px, y: 242px, on: true },
-        { t: "Hourly forecast", x: 4px, y: 380px, on: true }, { t: "Daily forecast", x: 4px, y: 518px, on: true },
+        { t: "Weather now", x: 4px, y: 104px, on: true }, { t: "Details", x: 228px, y: 104px, on: true }, { t: "Details", x: 4px, y: 242px, on: true },
+        { t: "Forecast curve", x: 4px, y: 380px, on: true }, { t: "Hourly forecast", x: 4px, y: 518px, on: true }, { t: "Daily forecast", x: 4px, y: 656px, on: true },
     ] : [
         { t: "Clock", x: 4px, y: 202px, on: true }, { t: "Weather now", x: 4px, y: 340px, on: true }, { t: "Date", x: 228px, y: 340px, on: true },
         { t: "Next event", x: 4px, y: 478px, on: true }, { t: "Forecast curve", x: 4px, y: 616px, on: true },

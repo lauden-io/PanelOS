@@ -16,7 +16,10 @@ For administrators. The page uses these websocket commands:
 * ``panelos/page/test``: show a critical alert or a status screen on one panel
   for a few seconds;
 * ``panelos/page/touch_test``: start the panel's touch calibration (its
-  nine-point test; the result shows on the panel).
+  nine-point test; the result shows on the panel);
+* ``panelos/page/proximity_calibration``: start the panel's wake distance
+  calibration (it measures the proximity sensor's resting level; the result
+  shows on the panel).
 
 The panel sends that picture with ``panelos/screen`` when its subscription
 asks for it (command ``screenshot``).
@@ -68,6 +71,9 @@ from .const import (
     CONF_DND,
     CONF_POPUPS,
     CONF_SCREENSAVER,
+    CONF_THEME_AUTO,
+    CONF_WAKE_DISTANCE,
+    CONF_WIFI_ROAMING,
     DEFAULT_PAGES,
     DND_ALLOW,
     DND_MODES,
@@ -83,7 +89,9 @@ from .const import (
     SIGNAL_PAGE,
     SIGNAL_SHOW,
     STATUS_CATS,
+    THEME_AUTO_BY,
     TILE_DOMAINS,
+    WAKE_DISTANCES,
 )
 from .house import HOUSE_SCHEMA, House, _tone
 from .panel import KEY_DOMAIN, Panel, find_entry, panel_caps, panel_config
@@ -128,14 +136,18 @@ def _option_value(value: Any, depth: int = 0) -> Any:
     raise vol.Invalid("not a valid page option")
 
 
-# A widget of a weather page on its 4 x 4 grid, as the panel draws it
-# (app/ui/home.slint, HomeItem; panelos-page.js, WIDGETS): kind 0 clock,
+# A widget of a custom or weather details page on its 4 x 4 grid, as the panel
+# draws it (app/ui/home.slint, HomeItem; panelos-page.js, WIDGETS): kind 0 clock,
 # 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly forecast,
 # 6 daily forecast, 7 music, 8 a sensor's value, 9 the running timer, 10 the
-# people at home; style and opts per kind; the sensor widget names its sensor.
+# people at home, 11 weather details; style and opts per kind; the sensor
+# widget names its sensor.
+_WIDGET_KINDS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+# the weather details page offers the weather widgets only
+_WEATHER_WIDGET_KINDS = (2, 4, 5, 6, 11)
 _HOME_ITEM = vol.Schema(
     {
-        vol.Required("kind"): vol.All(int, vol.Range(min=0, max=10)),
+        vol.Required("kind"): vol.In(_WIDGET_KINDS),
         vol.Required("col"): vol.All(int, vol.Range(min=0, max=3)),
         vol.Required("row"): vol.All(int, vol.Range(min=0, max=3)),
         vol.Required("w"): vol.All(int, vol.Range(min=1, max=4)),
@@ -155,12 +167,14 @@ _HOME_ITEM = vol.Schema(
 )
 
 
-def _home_items(items: Any) -> list[dict[str, Any]]:
+def _home_items(items: Any, kinds: tuple[int, ...] = _WIDGET_KINDS) -> list[dict[str, Any]]:
     """Widgets may lie on each other (the later one on top; the page warns to check them on the panel)."""
     items = vol.Schema(vol.All([_HOME_ITEM], vol.Length(max=16)))(items)
     for item in items:
         if item["col"] + item["w"] > 4 or item["row"] + item["h"] > 4:
             raise vol.Invalid("a widget is outside the 4 x 4 grid")
+        if item["kind"] not in kinds:
+            raise vol.Invalid("the weather details page takes weather widgets only")
     return items
 
 
@@ -184,9 +198,11 @@ def _page(value: Any) -> dict[str, Any]:
     if len(json.dumps(page["options"])) > _OPTIONS_JSON_MAX:
         raise vol.Invalid("the page's options are too large")
     if "items" in page["options"]:
-        if page["kind"] != "home":
-            raise vol.Invalid("only custom pages have widgets")
-        page["options"]["items"] = _home_items(page["options"]["items"])
+        if page["kind"] not in ("home", "weather"):
+            raise vol.Invalid("only custom and weather details pages have widgets")
+        page["options"]["items"] = _home_items(
+            page["options"]["items"], _WIDGET_KINDS if page["kind"] == "home" else _WEATHER_WIDGET_KINDS
+        )
     return page
 
 
@@ -232,6 +248,8 @@ DND_SCHEMA = vol.Schema(
     }
 )
 
+THEME_AUTO_SCHEMA = vol.Schema({vol.Optional("by"): vol.In(THEME_AUTO_BY), vol.Optional("from"): _TIME, vol.Optional("to"): _TIME})
+
 POPUPS_SCHEMA = vol.Schema(
     {
         vol.Optional("kind"): vol.In(POPUP_KINDS),
@@ -261,6 +279,9 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_SCREENSAVER): SCREENSAVER_SCHEMA,
         vol.Optional(CONF_DND): DND_SCHEMA,
         vol.Optional(CONF_POPUPS): POPUPS_SCHEMA,
+        vol.Optional(CONF_THEME_AUTO): THEME_AUTO_SCHEMA,
+        vol.Optional(CONF_WIFI_ROAMING): bool,
+        vol.Optional(CONF_WAKE_DISTANCE): vol.In(WAKE_DISTANCES),
         **{
             vol.Optional(key): vol.All(vol.Coerce(float), vol.Range(min=low, max=high))
             for key, (_default, low, high, _step, _unit) in REPORTING.items()
@@ -296,6 +317,7 @@ async def async_setup_page(hass: HomeAssistant) -> None:
         ws_page_house,
         ws_page_test,
         ws_page_touch_test,
+        ws_page_proximity_calibration,
         ws_page_alarms,
         ws_page_ma,
         ws_page_ma_player,
@@ -440,7 +462,7 @@ def ws_page_options(hass: HomeAssistant, connection: websocket_api.ActiveConnect
         return
     options = {**entry.options, **changes}
     # The grouped settings change field by field.
-    for key in (CONF_SCREENSAVER, CONF_DND, CONF_POPUPS):
+    for key in (CONF_SCREENSAVER, CONF_DND, CONF_POPUPS, CONF_THEME_AUTO):
         if key in changes and isinstance(entry.options.get(key), dict):
             merged = {**entry.options[key], **changes[key]}
             if key == CONF_DND and "allow" in changes[key] and isinstance(entry.options[key].get("allow"), dict):
@@ -677,6 +699,22 @@ def ws_page_touch_test(hass: HomeAssistant, connection: websocket_api.ActiveConn
         connection.send_error(msg["id"], "not_connected", str(err))
         return
     async_dispatcher_send(hass, SIGNAL_SHOW, panel_config(panel.entry)["panel_id"], {"type": "touch_test"})
+    connection.send_result(msg["id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "panelos/page/proximity_calibration", vol.Required("entry_id"): str})
+@callback
+def ws_page_proximity_calibration(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Start the panel's wake distance calibration (it measures the sensor's resting level with nothing in front)."""
+    try:
+        panel = _panel(hass, msg["entry_id"])
+        if not panel.connected:
+            raise HomeAssistantError(f"The PanelOS panel '{panel.panel_id}' is not connected")
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "not_connected", str(err))
+        return
+    async_dispatcher_send(hass, SIGNAL_SHOW, panel_config(panel.entry)["panel_id"], {"type": "proximity_calibration"})
     connection.send_result(msg["id"])
 
 

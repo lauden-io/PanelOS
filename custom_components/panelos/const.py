@@ -86,6 +86,21 @@ SCREENSAVER_WHEN = ("dark", "window", "night", "any")
 # 5-26 lx and a dark room about 1 lx.
 DEFAULT_SCREENSAVER = {"when": "dark", "lux": 3, "from": "22:00", "to": "06:00", "light_entity": ""}
 
+# What switches the panel's Auto theme between dark and light: the light in the room (the panel's sensor; Home
+# Assistant's sun without one), the sun (dark from sunset to sunrise) or set times (dark from - to).
+CONF_THEME_AUTO = "theme_auto"
+THEME_AUTO_BY = ("light", "sun", "times")
+DEFAULT_THEME_AUTO = {"by": "light", "from": "20:00", "to": "07:00"}
+
+# Wi-Fi roaming: the panel moves by itself to a clearly stronger access point of its network (default on).
+CONF_WIFI_ROAMING = "wifi_roaming"
+
+# How close someone comes before the proximity sensor wakes the panel: near (about 30 cm), medium (45 cm) or far
+# (55 cm; noisy readings shorten it).
+CONF_WAKE_DISTANCE = "wake_distance"
+WAKE_DISTANCES = ("near", "medium", "far")
+DEFAULT_WAKE_DISTANCE = "medium"
+
 # Do not disturb: off, on, or on a schedule; what still comes through
 # (critical alerts always do).
 CONF_DND = "dnd"
@@ -150,8 +165,8 @@ PLATFORMS = ["binary_sensor", "button", "notify", "number", "select", "sensor", 
 # Entity keys per platform, as the panel names them in panelos/report and in
 # the commands it gets back.
 ENTITY_KEYS = {
-    "switch": ("screen", "auto_brightness", "proximity_wake"),
-    "select": ("dashboard", "theme", "screensaver", "screensaver_style", "display_mode"),
+    "switch": ("screen", "auto_brightness", "proximity_wake", "child_lock", "rain_on_glass", "lightning"),
+    "select": ("dashboard", "theme", "screensaver", "screensaver_style", "display_mode", "time_format"),
     "number": ("brightness",),
     "sensor": ("illuminance", "soc_temperature", "wifi_signal", "ip_address", "app_version"),
     "binary_sensor": ("presence",),

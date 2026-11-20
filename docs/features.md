@@ -2,7 +2,7 @@
 
 ## Core
 
-- Its own interface for Home Assistant, drawn on the GPU (no browser): pages side by side without an end, a status bar, a quick shade, sheets that follow the finger; tap to act, drag to set values. Pages: custom (a living weather background or a synthwave scene with widgets), weather, clock, music, timers / alarms / stopwatch, thermostat, quick controls, cameras, calendar, to-do, notifications; set per panel on the PanelOS page in Home Assistant.
+- Its own interface for Home Assistant, drawn on the GPU (no browser): pages side by side without an end, a status bar, a quick shade, sheets that follow the finger; tap to act, drag to set values. Pages: custom (a living weather background or a synthwave scene with widgets), weather details (the same backgrounds with weather widgets), clock, music, timers / alarms / stopwatch, thermostat, quick controls, cameras, calendar, to-do, notifications; set per panel on the PanelOS page in Home Assistant.
 - Connect to Home Assistant over the WebSocket API; pairing by the QR-code login (OAuth), no token typing (see docs/decisions.md).
 - First start on the panel: Home Assistant found on the network (mDNS) or its address typed on a keypad.
 - Announced over mDNS like any ESPHome device, so Home Assistant discovers the panel (inside one network segment).
@@ -35,7 +35,7 @@
 
 ## Home Assistant entities (see docs/home_assistant.md)
 
-On the panel's device (PanelOS integration): screen, dashboard, theme, screensaver, display mode, brightness, automatic brightness, wake on approach, illuminance, presence, SoC temperature, Wi-Fi signal, IP address, app version, restart, reboot. On the voice device (ESPHome): the Assist satellite, volume, microphone switch, wake word sensors.
+On the panel's device (PanelOS integration): screen, dashboard, theme, screensaver, display mode, brightness, automatic brightness, wake on approach, child lock, illuminance, presence, SoC temperature, Wi-Fi signal, IP address, app version, restart, reboot. On the voice device (ESPHome): the Assist satellite, volume, microphone switch, wake word sensors.
 
 Later: last touch, current page, stop audio, auto brightness limits, wake sensitivity.
 

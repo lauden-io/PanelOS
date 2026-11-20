@@ -48,16 +48,23 @@ from .const import (
     CONF_DND,
     CONF_POPUPS,
     CONF_SCREENSAVER,
+    CONF_THEME_AUTO,
+    CONF_WAKE_DISTANCE,
+    CONF_WIFI_ROAMING,
     DEFAULT_CAPS,
     DEFAULT_DND,
     DEFAULT_PAGES,
     DEFAULT_POPUPS,
     DEFAULT_SCREENSAVER,
+    DEFAULT_THEME_AUTO,
+    DEFAULT_WAKE_DISTANCE,
     DND_ALLOW,
     DND_MODES,
     DOMAIN,
     POPUP_KINDS,
     SCREENSAVER_WHEN,
+    THEME_AUTO_BY,
+    WAKE_DISTANCES,
     ENTITY_KEYS,
     ESPHOME_ENTITIES,
     REPORTING,
@@ -87,6 +94,13 @@ type Factory = Callable[["Panel", str], Entity]
 # A panel that went away keeps its entities' last state this long before they turn unavailable (most drops are a few
 # seconds: a Wi-Fi hiccup, the app restarting; every unavailable span was a row in the recorder and the logbook).
 RECONNECT_GRACE = 30.0
+# An entry set up again within this time after its unload (a reload) takes over the last states (`keep_for_reload`).
+KEPT_FOR_RELOAD = 120.0
+
+
+def kept(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    """What unloaded entries left for their next setup (entry id → states and the reconnect state)."""
+    return hass.data.setdefault(DOMAIN, {}).setdefault("kept", {})
 
 
 def links(hass: HomeAssistant) -> dict[int, tuple[str, int, Send]]:
@@ -138,12 +152,16 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         "skip_resources": list(getattr(getattr(entry, "runtime_data", None), "skip", [])),
         "zoom": max(50, min(150, int(options.get(CONF_ZOOM, 100)))),
         "loading_screen": bool(options.get(CONF_LOADING_SCREEN, True)),
-        "pages": shown_pages(options.get(CONF_PAGES, DEFAULT_PAGES)),
+        "pages": _door_speakers(entry, shown_pages(options.get(CONF_PAGES, DEFAULT_PAGES))),
         # the weather pages' widgets may be edited on the panel too (a long press, then holding the lock)
         "home_edit": bool(options.get(CONF_HOME_EDIT, False)),
         "screensaver": screensaver_config(options.get(CONF_SCREENSAVER)),
         "dnd": dnd_config(options.get(CONF_DND)),
         "popups": popups_config(options.get(CONF_POPUPS)),
+        # what switches the Auto theme, Wi-Fi roaming, how close someone comes before the panel wakes
+        "theme_auto": theme_auto_config(options.get(CONF_THEME_AUTO)),
+        "wifi_roaming": options.get(CONF_WIFI_ROAMING, True) is not False,
+        "wake_distance": options[CONF_WAKE_DISTANCE] if options.get(CONF_WAKE_DISTANCE) in WAKE_DISTANCES else DEFAULT_WAKE_DISTANCE,
         "keep_sounds": _keep_sounds(entry),
         "media_player": _media_player(entry),
         # the Music Assistant entity of that player (music alarms play through it), "" until it has one
@@ -156,8 +174,83 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         # the speech recognition of the panel's assistant: what is said while a timer rings is checked with it for a
         # stop word (never sent to the assistant)
         "stt": _stt(entry),
+        # the text-to-speech of the panel's assistant: the cameras page's replies at the door are spoken with it
+        "tts": _tts(entry),
         **{key: float(options.get(key, default)) for key, (default, *_rest) in REPORTING.items()},
     }
+
+
+def door_speaker(hass: HomeAssistant, cameras: list[str]) -> str:
+    """The speaker at the door a cameras page starts with: the media player on a camera's own device (UniFi Protect,
+    for one, has a camera's speaker as a media player of its device), the first camera's that has one; "" for none."""
+    entities = er.async_get(hass)
+    for camera in cameras:
+        entity = entities.async_get(camera)
+        if entity is None or not entity.device_id:
+            continue
+        for e in er.async_entries_for_device(entities, entity.device_id):
+            if e.domain == "media_player":
+                return e.entity_id
+    return ""
+
+
+def _door_speakers(entry: ConfigEntry, pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The cameras pages without a chosen speaker at the door get the one on their camera's device ("None" is kept as
+    the empty text)."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return pages
+    for page in pages:
+        if page["kind"] == "camera" and not isinstance(page["options"].get("speaker"), str):
+            page["options"]["speaker"] = door_speaker(panel.hass, page["entities"])
+    return pages
+
+
+def _assist_pipeline(entry: ConfigEntry) -> Any:
+    """The pipeline of the panel's assistant (its satellite's Assistant select), else the preferred one; None without."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return None
+    hass = panel.hass
+    try:
+        from homeassistant.components.assist_pipeline import async_get_pipeline, async_get_pipelines
+    except ImportError:
+        return None
+    pipeline_id = None
+    voice = panel._voice_entry()
+    if voice is not None:
+        for e in er.async_entries_for_config_entry(er.async_get(hass), voice.entry_id):
+            if e.domain == "select" and e.unique_id.endswith("-pipeline"):
+                state = hass.states.get(e.entity_id)
+                if state is not None:
+                    pipeline_id = next((p.id for p in async_get_pipelines(hass) if p.name == state.state), None)
+                break
+    try:
+        return async_get_pipeline(hass, pipeline_id)
+    except Exception:  # noqa: BLE001 - no pipelines (assist_pipeline not set up)
+        return None
+
+
+def _tts(entry: ConfigEntry) -> dict[str, str]:
+    """The text-to-speech engine (an entity), language and voice of the panel's assistant; without one there, Home
+    Assistant's default engine in its own language. {} when Home Assistant has none."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return {}
+    hass = panel.hass
+    pipeline = _assist_pipeline(entry)
+    engine = getattr(pipeline, "tts_engine", None) or ""
+    if engine.startswith("tts.") and hass.states.get(engine) is not None:
+        return {"engine": engine, "language": pipeline.tts_language or "", "voice": pipeline.tts_voice or ""}
+    try:
+        from homeassistant.components.tts import async_default_engine
+
+        engine = async_default_engine(hass) or ""
+    except Exception:  # noqa: BLE001 - text-to-speech not set up
+        engine = ""
+    if not engine.startswith("tts."):
+        engine = next((s.entity_id for s in hass.states.async_all("tts")), "")
+    return {"engine": engine, "language": "", "voice": ""} if engine else {}
 
 
 def _room(entry: ConfigEntry) -> str:
@@ -310,6 +403,16 @@ def screensaver_config(stored: Any) -> dict[str, Any]:
         "width": _int(s.get("width"), 100, 70, 130),
         "speed": _int(s.get("speed"), 20, 5, 60),
         "colour": s["colour"] if isinstance(s.get("colour"), str) else "",
+    }
+
+
+def theme_auto_config(stored: Any) -> dict[str, Any]:
+    """What switches the Auto theme, with the defaults filled in."""
+    s = stored if isinstance(stored, dict) else {}
+    return {
+        "by": s["by"] if s.get("by") in THEME_AUTO_BY else DEFAULT_THEME_AUTO["by"],
+        "from": _time(s.get("from"), DEFAULT_THEME_AUTO["from"]),
+        "to": _time(s.get("to"), DEFAULT_THEME_AUTO["to"]),
     }
 
 
@@ -544,6 +647,43 @@ class Panel:
         self._grace_cancel = None
         async_dispatcher_send(self.hass, self.signal, None)
 
+    @callback
+    def _cancel_grace(self) -> None:
+        if self._grace_cancel is not None:
+            self._grace_cancel()
+            self._grace_cancel = None
+
+    @callback
+    def keep_for_reload(self) -> None:
+        """The entry unloads: its last states and the reconnect state wait for the entry set up again (a reload),
+        so the entities come back with their states and a drop gets its grace as before."""
+        kept(self.hass)[self.entry.entry_id] = {
+            "at": time.monotonic(),
+            "states": dict(self.states),
+            "options": {k: list(v) for k, v in self.options.items()},
+            "ever": self._ever_connected or self.connected,
+            "gone_since": None if self.connected else self._gone_since,
+        }
+
+    @callback
+    def _resume_after_reload(self) -> None:
+        """Set up again soon after an unload (a reload): the last states and the grace go on. A panel that stays
+        connected through the reload counts as connected before, so its next drop gets the grace too."""
+        old = kept(self.hass).pop(self.entry.entry_id, None)
+        now = time.monotonic()
+        if old and now - old["at"] < KEPT_FOR_RELOAD:
+            self.states.update(old["states"])
+            self.options.update(old["options"])
+            self._ever_connected = bool(old["ever"])
+            if self._ever_connected and not self.connected:
+                # away during the reload: the grace runs from when it went away (or from the reload)
+                self._gone_since = old["gone_since"] if old["gone_since"] is not None else old["at"]
+                left = RECONNECT_GRACE - (now - self._gone_since)
+                if left > 0:
+                    self._grace_cancel = async_call_later(self.hass, left + 0.5, self._grace_over)
+        if self.connected:
+            self._ever_connected = True
+
     # -- screen picture ----------------------------------------------------
 
     async def async_screenshot(self, timeout: float = 8) -> tuple[bytes, str]:
@@ -595,7 +735,9 @@ class Panel:
             self._link_voice_device(voice_entry)
         if info.get("mac"):
             self._take_over_esphome_entities(info["mac"])
+        self._resume_after_reload()
         self.entry.async_on_unload(async_dispatcher_connect(self.hass, SIGNAL_LINKS, self._links_changed))
+        self.entry.async_on_unload(self._cancel_grace)
         self.entry.async_on_unload(self._stop_waiting)
         # A dashboard saved in Home Assistant may need other card resources.
         self.entry.async_on_unload(self.hass.bus.async_listen("lovelace_updated", self._lovelace_updated))

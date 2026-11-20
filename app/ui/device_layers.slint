@@ -1,0 +1,106 @@
+// Layers of the integration's device options: the child lock and the wake distance calibration.
+
+import { Theme, Act } from "theme.slint";
+import { Icon, RollPair } from "widgets.slint";
+
+// Child lock (the integration's switch): no touch reaches the panel. A tap shows the lock card (the same card and
+// hold ring as the panel editing's lock); holding the lock until its ring is full unlocks the panel. A tap outside
+// the card or its X closes the card, and it closes by itself a few seconds after it opened. With the screensaver on,
+// a tap only wakes the screen.
+export component ChildLockLayer inherits Rectangle {
+    in property <bool> saver;
+    in-out property <bool> open;
+    in property <string> title: "Child lock";
+    in property <string> sub: "Hold the lock to unlock.";
+    in property <color> accent: Theme.accent;
+    // how long the lock is held
+    in property <duration> hold: 3s;
+
+    // every touch lands here first: nothing below gets it
+    TouchArea {
+        clicked => {
+            if root.saver {
+                Act.act("saver.wake", "");
+            } else {
+                root.open = !root.open;
+            }
+        }
+    }
+    if root.open: Rectangle { background: #00000099; }
+    if root.open: card := Rectangle {
+        x: 40px; y: 122px; width: root.width - 80px; height: 130px + lock-texts.preferred-height + 26px; border-radius: 24px;
+        background: #1e1e22f7; border-width: 1px; border-color: #ffffff17;
+        // the hold: the ring fills while the lock is held and drains when it is let go
+        property <float> lp: lock-ta.pressed ? 1 : 0;
+        animate lp { duration: lock-ta.pressed ? root.hold : 250ms; easing: linear; }
+        Timer { interval: root.hold; running: lock-ta.pressed; triggered => { Act.act("lock.unlock", ""); } }
+        // closes by itself (not while the lock is held)
+        Timer { interval: 6s; running: !lock-ta.pressed; triggered => { root.open = false; } }
+        // a tap on the card itself does nothing
+        TouchArea { }
+        Rectangle {
+            x: parent.width - 50px; y: 14px; width: 36px; height: 36px; border-radius: 18px; background: #ffffff14;
+            Icon { text: "\u{F0156}"; font-size: 20px; color: #ffffffcc; }
+            TouchArea { x: -6px; y: -6px; width: 48px; height: 48px; clicked => { root.open = false; } }
+        }
+        Rectangle {
+            x: (parent.width - 88px) / 2; y: 26px; width: 88px; height: 88px;
+            Rectangle { border-radius: 44px; background: card.lp > 0 ? root.accent.with-alpha(0.14) : #ffffff10; border-width: 3px; border-color: #ffffff1f; }
+            // the hold ring fills clockwise from the top
+            if card.lp > 0.001: Path {
+                property <float> a: min(0.9999, card.lp) * 360;
+                x: -2px; y: -2px; width: 92px; height: 92px;
+                viewbox-width: 88; viewbox-height: 88;
+                stroke: root.accent; stroke-width: 4px;
+                commands: "M 44 1.5 A 42.5 42.5 0 " + (self.a > 180 ? "1" : "0") + " 1 "
+                    + (44 + 42.5 * Math.sin(self.a * 1deg)) + " " + (44 - 42.5 * Math.cos(self.a * 1deg));
+            }
+            Icon { text: card.lp >= 1 ? "\u{F0FC6}" : "\u{F033E}"; font-size: 40px; color: card.lp > 0 ? root.accent.mix(#ffffff, 0.8) : #ffffff; }
+            // the finger may land a little beside the lock
+            lock-ta := TouchArea { x: -16px; y: -16px; width: 120px; height: 120px; }
+        }
+        lock-texts := VerticalLayout {
+            x: 24px; y: 130px; width: parent.width - 48px; height: self.preferred-height;
+            spacing: 6px;
+            Text { text: root.title; font-size: 22px; font-weight: 600; color: #ffffff; horizontal-alignment: center; wrap: word-wrap; }
+            Text { text: root.sub; font-size: 15px; color: #ffffffa8; horizontal-alignment: center; wrap: word-wrap; }
+        }
+    }
+}
+
+// The wake distance calibration (started from the integration): a lead-in with a countdown to step back, then a still
+// screen while the panel measures (nothing on it moves: redraws can disturb the proximity sensor), then how far the
+// panel wakes now. A tap ends it, and nothing changes then.
+export component ProxCalLayer inherits Rectangle {
+    in property <int> step;     // 0 lead-in, 1 measuring, 2 done
+    in property <int> count;    // the lead-in's seconds left
+    in property <int> reach;    // done: cm
+    in property <bool> ok;      // done: false = something moved in front, nothing changed
+    in property <string> lead-title: "Wake distance";
+    in property <string> lead-line: "Step back and keep the space in front of the panel clear.";
+    in property <string> measure-title: "Measuring…";
+    in property <string> measure-line: "Keep the space in front of the panel clear.";
+    in property <string> done-title: "Done";
+    in property <string> refused-title: "Something moved in front of the panel";
+    in property <string> refused-line: "Nothing was changed. Try again from Home Assistant.";
+    background: #000000;
+    TouchArea { clicked => { Act.act("prox.cancel", ""); } }
+    VerticalLayout {
+        x: 40px; width: root.width - 80px;
+        alignment: center;
+        spacing: 18px;
+        Text {
+            text: root.step == 0 ? root.lead-title : root.step == 1 ? root.measure-title : root.ok ? root.done-title : root.refused-title;
+            font-size: 26px; font-weight: 600; color: #ffffff; horizontal-alignment: center; wrap: word-wrap;
+        }
+        if root.step == 0: HorizontalLayout {
+            alignment: center;
+            RollPair { text: root.count; font-size: 96px; font-weight: 600; color: Theme.accent; }
+        }
+        Text {
+            text: root.step == 0 ? root.lead-line : root.step == 1 ? root.measure-line
+                : root.ok ? "The panel wakes when someone comes within about " + root.reach + " cm." : root.refused-line;
+            font-size: 18px; color: #d8d8d8; horizontal-alignment: center; wrap: word-wrap;
+        }
+    }
+}

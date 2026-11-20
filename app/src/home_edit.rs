@@ -180,8 +180,8 @@ impl Spot {
 }
 
 /// The smallest size of a widget (cells): the nixie clock 3 x 1 (4 x 1 with its seconds), the LCD 2 x 1, the
-/// twin-bell 2 x 2, the date, the next event and the clock 2 x 1, the forecasts 3 x 1, the rest 1 x 1 (as the
-/// integration's editor has them).
+/// twin-bell 2 x 2, the date, the next event, the weather details and the clock 2 x 1, the forecasts 3 x 1, the rest
+/// 1 x 1 (as the integration's editor has them).
 pub fn min_size(kind: i32, style: i32, opts: i32) -> (i32, i32) {
     match kind {
         0 => match style {
@@ -189,7 +189,7 @@ pub fn min_size(kind: i32, style: i32, opts: i32) -> (i32, i32) {
             10 => (2, 2),
             _ => (2, 1),
         },
-        1 | 3 => (2, 1),
+        1 | 3 | 11 => (2, 1),
         4..=6 => (3, 1),
         _ => (1, 1),
     }
@@ -266,6 +266,10 @@ fn shown_items(s: &UiState, ci: usize) -> Vec<Value> {
     let Some(page) = pages.get(ci) else { return Vec::new() };
     if let Some(a) = items_of(page) {
         return a.clone();
+    }
+    // the weather details page: its own layout
+    if page.get("kind").and_then(Value::as_str) == Some("weather") {
+        return crate::pages::weather_items(slint::Color::default()).iter().map(item_json).collect();
     }
     if page.get("kind").and_then(Value::as_str) != Some("home") {
         return Vec::new();
@@ -789,6 +793,7 @@ mod tests {
         assert_eq!(min_size(5, 0, 0), (3, 1));
         assert_eq!(min_size(7, 0, 0), (1, 1));
         assert_eq!(min_size(8, 0, 0), (1, 1));
+        assert_eq!(min_size(11, 0, 15), (2, 1));
     }
 
     #[test]

@@ -488,6 +488,9 @@ async def async_unload_entry(hass: HomeAssistant, entry: PanelOSConfigEntry) -> 
     """Unload a panel's entry (the panel falls back to its defaults)."""
     if not await hass.config_entries.async_unload_platforms(entry, PLATFORMS):
         return False
+    # a reload sets it up again at once: the last states and the reconnect grace carry over
+    if panel := getattr(entry, "runtime_data", None):
+        panel.keep_for_reload()
     if not any(
         other.entry_id != entry.entry_id and getattr(other, "runtime_data", None)
         for other in hass.config_entries.async_entries(DOMAIN)

@@ -256,16 +256,17 @@ export component VoicePage inherits Rectangle {
 
     // ------------------------------------------------------------------ 3 oscilloscope
     // O1 the phosphor's afterglow; O2 / O3 the thinking ripple and the answer's sound (the app feeds them); O4 the beam
-    // warms up from a dot; O5 the TRIG lamp blinks on each voice peak; O6 the follow-up bar drains
+    // warms up from a dot; O5 the TRIG lamp blinks on each voice peak; O6 the follow-up bar drains; "not understood"
+    // draws a question mark with the beam (violet, it sweeps in over 300 ms), the error stays a flat red line
     if root.look == 3: scope := Rectangle {
         background: #0b0f0d;
-        property <color> trace: root.state == 4 ? #ff6b5e : root.state == 2 ? #ffc94a : #4dffb0;
+        property <color> trace: root.state == 4 ? #ff6b5e : root.state == 2 ? #ffc94a : root.state == 6 ? #c3a6ff : #4dffb0;
         property <float> warm: clamp(root.ot / 300, 0, 1);
         // the screen with its graticule
         Rectangle { x: 40px; y: 52px; width: 400px; height: 160px; background: #06140e; border-radius: 6px; clip: true;
             for i in 11: Rectangle { x: i * 40px; y: 0; width: 1px; height: parent.height; background: #1f5a40.with-alpha(i == 5 ? 0.9 : 0.5); }
             for i in 5: Rectangle { x: 0; y: i * 40px; width: parent.width; height: 1px; background: #1f5a40.with-alpha(i == 2 ? 0.9 : 0.5); }
-            Rectangle { x: parent.width * (1 - scope.warm) / 2; width: max(2px, parent.width * scope.warm); clip: true;
+            if root.state != 6: Rectangle { x: parent.width * (1 - scope.warm) / 2; width: max(2px, parent.width * scope.warm); clip: true;
                 Rectangle { x: -parent.x; width: 400px;
                     for g[i] in [{ w: root.wave3, a: 0.10 }, { w: root.wave2, a: 0.20 }, { w: root.wave1, a: 0.40 }]: Path {
                         visible: g.w != ""; x: -1.1px; y: -1.1px; width: 402.2px; height: 162.2px;
@@ -274,16 +275,23 @@ export component VoicePage inherits Rectangle {
                         viewbox-width: 400; viewbox-height: 160; commands: root.wave != "" ? root.wave : "M 0 80 L 400 80"; stroke: scope.trace.with-alpha(w.a); stroke-width: w.s; }
                 }
             }
+            if root.state == 6: Rectangle { x: 0; width: 168px + 64px * clamp(root.st / 300, 0, 1); clip: true;
+                Rectangle { x: 0; width: 400px;
+                    for w[i] in [{ s: 9px, a: 0.10 }, { s: 5px, a: 0.28 }, { s: 2.2px, a: 1.0 }]: Path { x: -w.s / 2; y: -w.s / 2; width: 400px + w.s; height: 160px + w.s;
+                        viewbox-width: 400; viewbox-height: 160; stroke: scope.trace.with-alpha(w.a); stroke-width: w.s;
+                        commands: "M 176 56 C 176 37 188 26 200 26 C 213 26 224 36 224 50 C 224 64 212 70 205 77 C 201 81 200 86 200 95 L 200 104 M 197 127 A 3 3 0 1 1 203 127 A 3 3 0 1 1 197 127"; }
+                }
+            }
         }
-        Text { x: 44px; y: 26px; text: "CH1 MIC  " + (root.listening ? "50 mV/div" : root.state == 2 ? "SWEEP" : root.state == 3 ? "TTS OUT" : "NO SIGNAL"); font-family: "DejaVu Sans Mono";
+        Text { x: 44px; y: 26px; text: "CH1 MIC  " + (root.listening ? "50 mV/div" : root.state == 2 ? "SWEEP" : root.state == 3 ? "TTS OUT" : root.state == 6 ? "NO MATCH" : "NO SIGNAL"); font-family: "DejaVu Sans Mono";
             font-size: 13px; color: scope.trace.with-alpha(0.8); }
-        Text { x: 300px; y: 26px; width: 140px; horizontal-alignment: right; text: root.assistant; font-family: "DejaVu Sans Mono"; font-size: 13px; color: #9fb5aa; overflow: elide; }
+        Text { x: 200px; y: 26px; width: 240px; horizontal-alignment: right; text: root.assistant; font-family: "DejaVu Sans Mono"; font-size: 13px; color: #9fb5aa; overflow: elide; }
         // the TRIG lamp: 120 ms on each voice peak
         Rectangle { x: 392px; y: 218px; width: 8px; height: 8px; border-radius: 4px;
             background: (animation-tick() - root.last-peak) < 120ms ? #ff5a3c : #3a1a14; }
         Text { x: 404px; y: 214px; text: "TRIG"; font-family: "DejaVu Sans Mono"; font-size: 11px; color: #9fb5aa; }
         VerticalLayout { x: 40px; y: 236px; width: 400px; height: parent.height - 256px; spacing: 10px; alignment: start;
-            Text { text: root.line; font-family: "DejaVu Sans Mono"; font-size: 15px; color: scope.trace; overflow: elide; }
+            Text { text: root.line; font-family: "DejaVu Sans Mono"; font-size: 15px; color: scope.trace; wrap: word-wrap; }
             if root.heard != "": Text { text: "IN  › " + root.heard; font-family: "DejaVu Sans Mono"; font-size: 16px; color: #b7c9bf; wrap: word-wrap; }
             if root.answer != "": Rectangle { height: min(oa.preferred-height, 150px); clip: true;
                 oa := Text { x: 0; y: 0; width: parent.width; height: parent.height; text: "OUT › " + root.answer; font-family: "DejaVu Sans Mono"; font-weight: 700;
