@@ -255,11 +255,11 @@ mod tests {
         assert_eq!(list.iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["person.anna"]);
         assert!(v1 > v0);
         // still wanted at the same address: kept, nothing changes
-        want(&[("person.anna".into(), "/a.png".into())]);
+        want(&[("person.anna".to_string(), "/a.png".to_string())]);
         assert_eq!(version(), v1);
         assert_eq!(ready().1.len(), 1);
         // a new address: the old picture goes (the new one is asked for once Home Assistant is known)
-        want(&[("person.anna".into(), "/b.png".into())]);
+        want(&[("person.anna".to_string(), "/b.png".to_string())]);
         assert!(ready().1.is_empty());
         assert!(version() > v1);
     }
