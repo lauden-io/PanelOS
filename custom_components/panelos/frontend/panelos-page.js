@@ -206,6 +206,12 @@ const DND_DEFAULT_ALLOW = { alarms: true, timers: true, status: true, ring: true
 const DEFAULT_SCREENSAVER = { when: "dark", lux: 3, from: "22:00", to: "06:00", light_entity: "", face: 1, seconds: true, date: true, weather: true, next: true, weight: 600, width: 100, speed: 20, colour: "" };
 const DEFAULT_DND = { mode: "off", from: "22:00", to: "07:00", allow: DND_DEFAULT_ALLOW };
 const DEFAULT_POPUPS = { kind: "card", sound: true, seconds: 10, until: false };
+// The cameras page's replies at the door (app/src/cam.rs DEFAULT_REPLIES): at most four, each one line on the panel,
+// whose reply lines are 347 px wide in Noto Sans 500 15 px (app/ui/camera.slint).
+const DOOR_REPLIES = ["We're coming, one moment", "Please leave it at the door", "We can't come to the door right now", "Who is it?"];
+const DOOR_REPLIES_MAX = 4;
+const DOOR_FONT = '500 15px "PanelOS Text", "Noto Sans", sans-serif';
+const DOOR_LINE_PX = 347;
 
 const SECTIONS = [
   { id: "overview", name: "Overview", icon: "monitor-dashboard" },
@@ -1055,6 +1061,11 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .alarm.off .tm, .alarm.off .d { opacity: .5; }
 :host([size=narrow]) .alarm, :host([size=narrow]) .alarm .open { gap: 12px; }
 :host([size=narrow]) .alarm .tm { font-size: 22px; }
+.replies { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; width: 100%; min-width: 0; }
+.replies .rfield, .replies .rline { display: flex; min-width: 0; width: 100%; }
+.replies .rfield { flex-direction: column; gap: 4px; }
+.replies .rline { align-items: center; gap: 4px; }
+.replies .rlong { color: var(--bad); font-size: 13px; padding-left: 4px; }
 .inp.alarm-time { width: 210px; max-width: 100%; font-size: 34px; text-align: center; font-family: "PanelOS Heading", "Space Grotesk", sans-serif; font-variant-numeric: tabular-nums; padding: 8px 12px; }
 .only-narrow { display: none; }
 :host([size=narrow]) .only-narrow { display: flex; }
@@ -3313,10 +3324,83 @@ class PanelOSPage extends HTMLElement {
       this._card("Picture", {},
         this._row("Opens on", this._seg([["one", "One camera"], ["all", "All cameras"]], o.view === "all" ? "all" : "one", (v) => this._setPageOption(p, i, "view", v), { label: "Opens on" })),
         this._row("Fit", this._seg([["whole", "Whole picture"], ["fill", "Fill the screen"]], o.fit === "whole" ? "whole" : "fill", (v) => this._setPageOption(p, i, "fit", v), { label: "Fit" }))),
-      this._card("Visitor alert", { info: "When this sensor turns on, the first camera's picture opens over any page and the panel rings (also in do not disturb, if the doorbell is allowed to come through there). With a door chosen, holding the button on the picture opens it." },
+      this._card("Visitor alert", { info: "When this sensor turns on, the first camera's picture opens over any page and the panel rings (also in do not disturb, if the doorbell is allowed to come through there). With a door chosen, holding the button on the picture opens it. With a speaker at the door, the microphone on the picture offers the replies; a tap on one says it on that speaker." },
         this._row("Opens when", this._entityButton(o.ring || "", { title: "Opens when", domains: ["binary_sensor"], none: "Never", p, onPick: (v) => this._setPageOption(p, i, "ring", v || undefined) })),
-        this._row("Door to open", this._entityButton(o.lock || "", { title: "Door to open", domains: ["lock", "cover"], none: "None", p, onPick: (v) => this._setPageOption(p, i, "lock", v || undefined) }))),
+        this._row("Door to open", this._entityButton(o.lock || "", { title: "Door to open", domains: ["lock", "cover"], none: "None", p, onPick: (v) => this._setPageOption(p, i, "lock", v || undefined) })),
+        ...this._doorReplies(p, page, i)),
     ];
+  }
+
+  // The replies at the door (spec 38.1): the speaker (at first the media player on a camera's own device), up to four
+  // replies, each one line on the panel, and the language they are spoken in.
+  _doorReplies(p, page, i) {
+    const o = page.options || {};
+    const speaker = typeof o.speaker === "string" ? o.speaker : this._doorSpeaker(page.entities || []);
+    const rows = [this._row("Speaker at the door", this._entityButton(speaker, { title: "Speaker at the door", domains: ["media_player"], none: "None", p, onPick: (v) => this._setPageOption(p, i, "speaker", v || "") }))];
+    if (!speaker) return rows;
+    const list = Array.isArray(o.replies) ? o.replies.filter((t) => typeof t === "string").slice(0, DOOR_REPLIES_MAX) : [...DOOR_REPLIES];
+    const save = (next) => this._setPageOption(p, i, "replies", next);
+    if (!this._doorFont && document.fonts) this._doorFont = document.fonts.load(DOOR_FONT).then(() => this._render(), () => {});
+    const field = (text, k) => {
+      const note = h("small", { class: "rlong", hidden: this._doorFits(text) }, "Too long for one line on the panel");
+      const input = h("input", {
+        class: "inp", type: "text", value: text, maxlength: 100, placeholder: "Reply", "aria-label": `Reply ${k + 1}`,
+        oninput: (e) => { note.hidden = this._doorFits(e.target.value); },
+        onchange: (e) => { const next = [...list]; next[k] = e.target.value.trim(); save(next); },
+        onkeydown: (e) => { if (e.key === "Enter") e.target.blur(); },
+      });
+      return h("div", { class: "rfield" },
+        h("div", { class: "rline" }, input, h("button", { class: "ib", "aria-label": `Remove reply ${k + 1}`, onclick: () => save(list.filter((_, j) => j !== k)) }, icon("close"))),
+        note);
+    };
+    rows.push(this._row("Replies", h("div", { class: "replies" }, list.map(field),
+      list.length < DOOR_REPLIES_MAX ? this._btn("Add a reply", () => {
+        save([...list, ""]);
+        setTimeout(() => this.shadowRoot?.querySelector(".replies .rfield:last-of-type input")?.focus(), 80);
+      }, { cls: "small", icon: "plus" }) : null), { stack: true }));
+    const engine = p.settings?.tts?.engine || "";
+    rows.push(this._row("Language", this._dropdown([["", "Same as Home Assistant"], ...this._ttsLanguages(engine)], o.language || "",
+      (v) => this._setPageOption(p, i, "language", v || undefined), { label: "Language", disabled: !engine }),
+    { sub: engine ? null : "Home Assistant has no text-to-speech" }));
+    return rows;
+  }
+
+  // the media player on the first camera's device that has one ("" for none), as the integration picks it
+  _doorSpeaker(cameras) {
+    const reg = Object.values(this._entityReg);
+    for (const cam of cameras) {
+      const dev = this._entityReg[cam]?.device_id;
+      const hit = dev && reg.find((e) => e.device_id === dev && e.entity_id.startsWith("media_player.") && !e.disabled_by);
+      if (hit) return hit.entity_id;
+    }
+    return "";
+  }
+
+  // a reply fits one line on the panel: the panel's font and the width its line has there
+  _doorFits(text) {
+    const c = this._measure || (this._measure = document.createElement("canvas").getContext("2d"));
+    c.font = DOOR_FONT;
+    return c.measureText(String(text || "").trim()).width <= DOOR_LINE_PX;
+  }
+
+  // the languages of a text-to-speech engine, by name ([code, name]); fetched once per engine
+  _ttsLanguages(engine) {
+    if (!engine) return [];
+    this._tts = this._tts || {};
+    if (!this._tts[engine]) {
+      this._tts[engine] = { list: [] };
+      this._hass.callWS({ type: "tts/engine/get", engine_id: engine }).then((r) => {
+        const codes = Array.isArray(r?.provider?.supported_languages) ? r.provider.supported_languages : [];
+        let names = null;
+        try { names = new Intl.DisplayNames([this._hass.locale?.language || this._hass.language || "en"], { type: "language" }); } catch (e) { names = null; }
+        const named = codes.map((c) => { let n = c; try { n = (names && names.of(String(c).replace("_", "-"))) || c; } catch (e) { n = c; } return [c, n]; });
+        const seen = {};
+        for (const [, n] of named) seen[n] = (seen[n] || 0) + 1;
+        this._tts[engine].list = named.map(([c, n]) => [c, seen[n] > 1 ? `${n} (${c})` : n]).sort((a, b) => a[1].localeCompare(b[1]));
+        this._render();
+      }, () => {});
+    }
+    return this._tts[engine].list;
   }
 
   _editCalendar(p, page, i) {
