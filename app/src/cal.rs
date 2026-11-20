@@ -783,25 +783,31 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     ui.set_cal_day_allday(ModelRc::new(VecModel::from(allday)));
     ui.set_cal_day_today(dayv == today);
     ui.set_cal_now_min(((t - today) / 60) as i32);
-    // week: Monday to Sunday of this week
-    let monday = day_after(today, -weekday(t) + if view == 2 || view == 4 { 7 * shift } else { 0 });
+    // week: Monday to Sunday of this week; 3 days: today and the next two (back / forward three days at a time)
+    let (col0, columns) = grid_days(today, weekday(t), view, shift);
+    let monday = day_after(today, -weekday(t) + if view == 2 { 7 * shift } else { 0 });
     let mut week_events = Vec::new();
     let mut week_allday = Vec::new();
     let mut nums = Vec::new();
     let mut wnames = Vec::new();
-    for d in 0..7 {
-        let day0 = day_after(monday, d);
+    for d in 0..columns {
+        let day0 = day_after(col0, d);
         nums.push(local_format(day0, "%-d").parse::<i32>().unwrap_or(0));
         wnames.push(SharedString::from(local_format(day0, "%a").to_uppercase()));
-        let mut timed: Vec<CalEvent> = on_day(day0).iter().filter(|e| !e.all_day).map(|e| event(e, &c, day0, t)).collect();
+        let column = |mut ev: CalEvent| {
+            ev.day = d as i32;
+            ev
+        };
+        let mut timed: Vec<CalEvent> = on_day(day0).iter().filter(|e| !e.all_day).map(|e| column(event(e, &c, day0, t))).collect();
         lanes(&mut timed);
         week_events.extend(timed);
-        week_allday.extend(on_day(day0).iter().filter(|e| e.all_day).map(|e| event(e, &c, day0, t)));
+        week_allday.extend(on_day(day0).iter().filter(|e| e.all_day).map(|e| column(event(e, &c, day0, t))));
     }
-    DAYS.with(|d| d.borrow_mut().insert("week", (0..7).map(|k| day_after(monday, k)).collect()));
+    DAYS.with(|d| d.borrow_mut().insert("week", (0..columns).map(|k| day_after(col0, k)).collect()));
     ui.set_cal_week_names(ModelRc::new(VecModel::from(wnames)));
     ui.set_cal_week_nums(ModelRc::new(VecModel::from(nums)));
-    ui.set_cal_week_today(if view == 2 || view == 4 { if shift == 0 { weekday(t) as i32 } else { -1 } } else { weekday(t) as i32 });
+    let today_column = (today - col0 + 43200).div_euclid(86400);
+    ui.set_cal_week_today(if (0..columns).contains(&today_column) { today_column as i32 } else { -1 });
     ui.set_cal_week_events(ModelRc::new(VecModel::from(week_events)));
     ui.set_cal_week_allday(ModelRc::new(VecModel::from(week_allday)));
     // month: six weeks from the Monday on or before the first
@@ -894,7 +900,7 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             },
             local_format(dayv, "%A, %-d %B"),
         ),
-        2 | 4 => (
+        2 => (
             match shift {
                 0 => "This week".to_string(),
                 1 => "Next week".into(),
@@ -903,11 +909,30 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             },
             format!("{}–{} · week {}", local_format(monday, "%-d"), local_format(day_after(monday, 6), "%-d %B"), local_format(monday, "%V").trim_start_matches('0')),
         ),
+        4 => {
+            let last = day_after(col0, columns - 1);
+            let span = if local_format(col0, "%m") == local_format(last, "%m") {
+                format!("{}–{}", local_format(col0, "%-d"), local_format(last, "%-d %B"))
+            } else {
+                format!("{} – {}", local_format(col0, "%-d %B"), local_format(last, "%-d %B"))
+            };
+            (span, format!("{}–{} · week {}", local_format(col0, "%a"), local_format(last, "%a"), local_format(col0, "%V").trim_start_matches('0')))
+        }
         3 => (local_format(first, "%B"), local_format(first, "%Y")),
         _ => ("Coming up".into(), local_format(t, "%A, %-d %B")),
     };
     ui.set_cal_title(title.into());
     ui.set_cal_sub(sub.into());
+}
+
+/// The days of the plain look's time grid: the first day's midnight and how many columns. The week view shows
+/// Monday to Sunday (`shift` weeks from this one), the 3-day view today and the next two (`shift` × 3 days on).
+fn grid_days(today: i64, today_weekday: i64, view: i32, shift: i64) -> (i64, i64) {
+    if view == 4 {
+        (day_after(today, 3 * shift), 3)
+    } else {
+        (day_after(today, -today_weekday + if view == 2 { 7 * shift } else { 0 }), 7)
+    }
 }
 
 /// The events shown on the page (the calendars left on, nothing being deleted) of the days from `day0`, `days` long.
@@ -1164,6 +1189,12 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             SHIFT.with(|o| o.set(o.get() + if what == "cal.next" { 1 } else { -1 }));
             with_state(|s| refresh(ui, s));
         }
+        // the page came on screen: the time grids show the period with today in it again
+        "cal.shown" => {
+            if SHIFT.with(|o| o.replace(0)) != 0 {
+                with_state(|s| refresh(ui, s));
+            }
+        }
         "cal.detail-close" => {
             ui.set_cal_detail(false);
             close_edit(ui);
@@ -1331,6 +1362,19 @@ mod tests {
         assert_eq!(v, ["W", "O", "R", "K", " ", " "]);
         let t: Vec<String> = flap_cells("6:45P", 6).iter().map(|x| x.to_string()).collect();
         assert_eq!(t, [" ", "6", ":", "4", "5", "P"]);
+    }
+
+    #[test]
+    fn grid_periods() {
+        // the 3-day view starts today and steps three days; the week view starts on Monday and steps weeks
+        let today = midnight(now());
+        let wd = weekday(today);
+        assert_eq!(grid_days(today, wd, 4, 0), (today, 3));
+        assert_eq!(grid_days(today, wd, 4, 1), (day_after(today, 3), 3));
+        assert_eq!(grid_days(today, wd, 4, -2), (day_after(today, -6), 3));
+        assert_eq!(grid_days(today, wd, 2, 0), (day_after(today, -wd), 7));
+        assert_eq!(grid_days(today, wd, 2, 1), (day_after(today, 7 - wd), 7));
+        assert_eq!(weekday(grid_days(today, wd, 2, -1).0), 0);
     }
 
     #[test]
