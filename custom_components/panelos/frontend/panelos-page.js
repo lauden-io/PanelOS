@@ -122,14 +122,16 @@ const OWN_CRIT_DOMAINS = ["binary_sensor", "sensor", "lock", "input_boolean", "s
 // draws them (app/ui/home.slint, HomeItem): {kind, col, row, w, h, style,
 // accent "#rrggbb" ("" = the panel's accent), weight, tap, opts}.
 // kind: 0 clock, 1 date, 2 weather now, 3 next event, 4 forecast curve,
-//   5 hourly forecast, 6 daily forecast, 7 music.
+//   5 hourly forecast, 6 daily forecast, 7 music, 8 a sensor's value (its
+//   sensor in "entity"), 9 the running timer, 10 the people at home.
 // style: clock 0 digital, 1 big digits + seconds line, 2 round, 3 square,
 //   4 minimal, 5 numerals, 6 split-flap, 7 the time in words, 8 nixie, 9 LCD quartz, 10 twin-bell; music: the
 //   scroll speed of long titles 1..5 (with opts bit 1); others 0.
 // opts (bits): clock 1 seconds, 2 date, 4 weather, 8 next event; date 1 year,
 //   2 week number; weather now 1 condition, 2 high / low, 4 rain chance,
 //   8 feels like; next event 1 time, 2 calendar colour; curve 1 rain bars,
-//   2 icons; hourly / daily 1 rain chance; music 1 long titles scroll.
+//   2 icons; hourly / daily 1 rain chance; music 1 long titles scroll;
+//   sensor 1 name, 2 icon; timer 1 name; people 1 the ones away too.
 // The weather, calendars and player of a weather page are its entities (the
 // first weather.*, every calendar.*, the first media_player.*).
 const WIDGETS = {
@@ -141,6 +143,9 @@ const WIDGETS = {
   5: { name: "Hourly forecast", icon: "clock-time-four-outline", min: [3, 1], def: [4, 1], opts: 1, bits: [[1, "Chance of rain"]] },
   6: { name: "Daily forecast", icon: "calendar-week", min: [3, 1], def: [4, 1], opts: 1, bits: [[1, "Chance of rain"]] },
   7: { name: "Music", icon: "music", min: [1, 1], def: [4, 1], opts: 0, bits: [] },
+  8: { name: "Sensor", icon: "gauge", min: [1, 1], def: [2, 1], opts: 3, bits: [[1, "Name"], [2, "Icon"]], notap: true },
+  9: { name: "Timer", icon: "timer-outline", min: [1, 1], def: [2, 1], opts: 1, bits: [[1, "Name"]], nocolour: true },
+  10: { name: "People", icon: "account-group-outline", min: [1, 1], def: [2, 1], opts: 1, bits: [[1, "The ones away too"]], notap: true, noweight: true, nocolour: true },
 };
 const CLOCK_STYLES = ["Digital", "Big digits", "Round", "Square", "Minimal", "Numerals", "Split-flap", "In words", "Nixie", "LCD quartz", "Twin-bell"];
 // The smallest size of a widget in cells [w, h]: the nixie clock needs 3 x 1 (4 x 1 with seconds), the LCD 2 x 1 (its
@@ -3364,6 +3369,7 @@ class PanelOSPage extends HTMLElement {
       accent: w.accent || "", weight: w.weight || 600, tap: w.tap !== false, opts: w.opts || 0,
       ...(Number.isInteger(w.bg) && w.bg >= 0 ? { bg: w.bg } : {}),
       ...(typeof w.neon === "boolean" ? { neon: w.neon } : {}),
+      ...(w.kind === 8 && w.entity ? { entity: w.entity } : {}),
     }));
     return this._setPage(p, i, { options: { ...(page.options || {}), items: clean } }, opts);
   }
@@ -3386,6 +3392,26 @@ class PanelOSPage extends HTMLElement {
   _freeSpot(items, w, hh) {
     for (let y = 0; y <= 4 - hh; y++) for (let x = 0; x <= 4 - w; x++) if (this._fits(items, -1, x, y, w, hh)) return { x, y };
     return null;
+  }
+
+  // Forward / Back (the later widget lies on top): the place in the list just above the next widget it lies on, or
+  // just below the one before; -1 when there is none that way.
+  _layerTo(items, k, dir) {
+    const w = items[k];
+    const over = this._overlaps(items, k, w.col, w.row, w.w, w.h);
+    if (dir > 0) { const up = over.filter((o) => o > k); return up.length ? Math.min(...up) : -1; }
+    const down = over.filter((o) => o < k);
+    return down.length ? Math.max(...down) : -1;
+  }
+
+  _layer(p, i, k, dir) {
+    const items = this._items(this._pages(p)[i]);
+    const to = this._layerTo(items, k, dir);
+    if (to < 0) return;
+    const [w] = items.splice(k, 1);
+    items.splice(to, 0, w);
+    this._ui.sel = to;
+    this._saveItems(p, i, items);
   }
 
   _contentWidth() {
@@ -3438,11 +3464,16 @@ class PanelOSPage extends HTMLElement {
       h("div", { class: "wbar" }, sw
         ? [h("span", { class: "tag sig" }, (WIDGETS[sw.kind] || WIDGETS[0]).name),
           this._btn("Settings", () => this._openSheet({ kind: "widget", panel: p.entry_id, page: i, item: sel }), { cls: "small", icon: "tune-variant" }),
+          this._overlaps(items, sel, sw.col, sw.row, sw.w, sw.h).length ? [
+            this._btn("Back", () => this._layer(p, i, sel, -1), { cls: "small ghost", icon: "arrange-send-backward", disabled: this._layerTo(items, sel, -1) < 0 }),
+            this._btn("Forward", () => this._layer(p, i, sel, 1), { cls: "small ghost", icon: "arrange-bring-forward", disabled: this._layerTo(items, sel, 1) < 0 })] : null,
           this._btn("Remove", () => this._removeWidget(p, i, sel), { cls: "small ghost", icon: "delete-outline" })]
         : h("span", { class: "note" }, `${plural(items.length, "widget", "widgets")} · grid 4 × 4`)),
       h("div", { class: "editor-wrap" }, canvas),
       this._overlapNote(items),
-      Array.isArray(page.options?.items) ? null : h("p", { class: "note", style: { margin: "0 0 14px" } }, "The panel's own layout. Any change here saves it for this page.")),
+      Array.isArray(page.options?.items) ? null : h("p", { class: "note", style: { margin: "0 0 14px" } }, "The panel's own layout. Any change here saves it for this page."),
+      this._row("Allow editing on the panel", this._toggle(Boolean(this._settings(p).home_edit), (v) => this._options(p, { home_edit: v }, { optimistic: (s) => { s.home_edit = v; } }), { label: "Allow editing on the panel" }),
+        { info: "Long press on the panel, then hold the lock." })),
       this._card("Data", { info: "Where the widgets of this page get their data. Without a choice here they use the panel's weather and player." },
         this._pageEntityRow(p, i, "Weather from", "weather", "The panel's weather"),
         hasKind(7) ? this._pageEntityRow(p, i, "Player", "media_player", "The panel's player") : null,
@@ -3461,7 +3492,8 @@ class PanelOSPage extends HTMLElement {
       .forEach((o) => pairs.push(`${(WIDGETS[w.kind] || WIDGETS[0]).name} and ${(WIDGETS[items[o].kind] || WIDGETS[0]).name}`)));
     if (!pairs.length) return null;
     return h("div", { class: "warnline", role: "note" }, icon("alert-outline"),
-      h("span", null, `${pairs.join(", ")} lie on each other. Check on the panel that both read well.`));
+      h("span", null, `${pairs.join(", ")} lie on each other. Check on the panel that both read well.`),
+      h("span", { class: "rinfo" }, this._infoBtn("overlap", "The widget added later lies on top. Select one and use Forward or Back to change that.")));
   }
 
   _removeWidget(p, i, k) {
@@ -4104,6 +4136,8 @@ class PanelOSPage extends HTMLElement {
         this._ui.sheet = null;
         this._ui.sel = items.length - 1;
         this._saveItems(p, sh.page, items, { toast: `${w.name} added` });
+        // the sensor widget needs its sensor: its settings open at once
+        if (kind === 8) this._openSheet({ kind: "widget", panel: p.entry_id, page: sh.page, item: items.length - 1 });
       } }, h("div", { class: "pic wicon" }, this._lookPic(p, `widget-${kind}`, () => icon(w.icon), { fit: "contain" })), h("b", null, w.name), h("small", null, spot ? `${w.def[0]} × ${w.def[1]}` : small ? "Smaller, to fit" : "On top of the others"));
     })), null, { wide: true });
   }
@@ -4122,6 +4156,8 @@ class PanelOSPage extends HTMLElement {
         why ? { sub: why, cls: "dim" } : {});
     };
     const body = [];
+    if (w.kind === 8) body.push(h("div", { class: "group" }, this._row("Sensor", this._entityButton(w.entity || "", { title: "Sensor", domains: ["sensor"], p, back: sh,
+      onPick: (id) => { if (id) { set({ entity: id }); if (this._ui.sheet === sh) this._renderLayer(); } } }), { cls: "first" })));
     if (w.kind === 0) body.push(h("div", { class: "sec" }, h("h3", null, "Style"),
       this._lookPicker(CLOCK_STYLES.map((n, k) => {
         const m = widgetMin({ kind: 0, style: k, opts: (w.opts || 0) & ~1 });
@@ -4138,7 +4174,7 @@ class PanelOSPage extends HTMLElement {
     const shown = bits.filter(([b]) => this._bitWhy(w, b) !== false);
     if (shown.length) body.push(h("div", { class: "group" }, shown.map(([b, label], k) => { const r = bit(b, label); if (k === 0) r.classList.add("first"); return r; })));
     // the letters: their weight (every widget with text), and the page's neon on the synthwave background
-    if (w.kind !== 5 && w.kind !== 6) {
+    if (w.kind !== 5 && w.kind !== 6 && !meta.noweight) {
       const wt = w.weight || 600;
       body.push(h("div", { class: "group" },
         this._row("Letters", this._weightSlider(wt, (v) => set({ weight: v })), { cls: "first" }),
@@ -4146,7 +4182,7 @@ class PanelOSPage extends HTMLElement {
           ? this._row("Neon letters", this._toggle(typeof w.neon === "boolean" ? w.neon : page.options?.neon !== false, (v) => set({ neon: v }), { label: "Neon letters" }))
           : null));
     }
-    body.push(h("div", { class: "sec" }, h("h3", null, "Colour"), h("div", { class: "swatches" },
+    if (!meta.nocolour) body.push(h("div", { class: "sec" }, h("h3", null, "Colour"), h("div", { class: "swatches" },
       h("button", { class: `sw panel${!w.accent ? " on" : ""}`, "aria-label": "The panel's colour", title: "The panel's colour", onclick: () => set({ accent: "" }) }),
       ACCENTS.map((c) => h("button", { class: `sw${w.accent === c ? " on" : ""}`, style: { background: c }, "aria-label": c, onclick: () => set({ accent: c }) })))));
     // the card behind the widget: -1 = its own as designed (a glass card behind the event, the curve and
@@ -4157,7 +4193,7 @@ class PanelOSPage extends HTMLElement {
       this._row("Background", this._slider(bg >= 0 ? bg : ownCard, 0, 100, 5, (v) => set({ bg: v }), (v) => (bg < 0 ? `${v} % · Default` : `${v} %`), { label: "Background" }),
         { cls: "first", info: "How solid the card behind this widget is: 0 % is no card, 100 % a solid one.",
           sub: bg >= 0 ? h("button", { class: "linkbtn", onclick: () => set({ bg: -1 }) }, "Back to the default") : null }),
-      this._row("Opens its page on a tap", this._toggle(w.tap !== false, (v) => set({ tap: v }), { label: "Opens its page on a tap" }))));
+      meta.notap ? null : this._row("Opens its page on a tap", this._toggle(w.tap !== false, (v) => set({ tap: v }), { label: "Opens its page on a tap" }))));
     return this._sheetFrame(meta.name, body, [
       this._btn("Remove", () => { this._ui.sheet = null; this._removeWidget(p, sh.page, sh.item); this._renderLayer(); }, { cls: "ghost danger", icon: "delete-outline" }),
       h("span", { class: "grow" }), this._btn("Done", () => this._closeSheet(), { cls: "primary" })]);

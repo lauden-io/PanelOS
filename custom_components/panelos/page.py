@@ -64,6 +64,7 @@ from .const import (
     CONF_ZOOM,
     CONF_LOADING_SCREEN,
     CONF_PAGES,
+    CONF_HOME_EDIT,
     CONF_DND,
     CONF_POPUPS,
     CONF_SCREENSAVER,
@@ -130,23 +131,26 @@ def _option_value(value: Any, depth: int = 0) -> Any:
 # A widget of a weather page on its 4 x 4 grid, as the panel draws it
 # (app/ui/home.slint, HomeItem; panelos-page.js, WIDGETS): kind 0 clock,
 # 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly forecast,
-# 6 daily forecast, 7 music; style and opts per kind.
+# 6 daily forecast, 7 music, 8 a sensor's value, 9 the running timer, 10 the
+# people at home; style and opts per kind; the sensor widget names its sensor.
 _HOME_ITEM = vol.Schema(
     {
-        vol.Required("kind"): vol.All(int, vol.Range(min=0, max=7)),
+        vol.Required("kind"): vol.All(int, vol.Range(min=0, max=10)),
         vol.Required("col"): vol.All(int, vol.Range(min=0, max=3)),
         vol.Required("row"): vol.All(int, vol.Range(min=0, max=3)),
         vol.Required("w"): vol.All(int, vol.Range(min=1, max=4)),
         vol.Required("h"): vol.All(int, vol.Range(min=1, max=4)),
         vol.Optional("style", default=0): vol.All(int, vol.Range(min=0, max=99)),
         vol.Optional("accent", default=""): vol.Any("", vol.All(str, vol.Match(r"^#[0-9a-fA-F]{6}$"))),
-        vol.Optional("weight", default=600): vol.All(int, vol.Range(min=300, max=800)),
+        vol.Optional("weight", default=600): vol.All(int, vol.Range(min=100, max=900)),
         vol.Optional("tap", default=True): bool,
         # neon letters on the synthwave background (each widget its own; without it: the page's old switch)
         vol.Optional("neon"): bool,
         vol.Optional("opts", default=0): vol.All(int, vol.Range(min=0, max=0xFFFF)),
         # the card behind the widget: -1 = its own (as designed), 0..100 % opacity
         vol.Optional("bg", default=-1): vol.All(int, vol.Range(min=-1, max=100)),
+        # the sensor widget's sensor
+        vol.Optional("entity"): vol.Any("", cv.entity_domain("sensor")),
     }
 )
 
@@ -184,6 +188,11 @@ def _page(value: Any) -> dict[str, Any]:
             raise vol.Invalid("only custom pages have widgets")
         page["options"]["items"] = _home_items(page["options"]["items"])
     return page
+
+
+def checked_page(value: Any) -> dict[str, Any]:
+    """A page as the options keep it (its kind, look, entities and options checked; the widgets on their grid)."""
+    return _page(value)
 
 
 def _pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -248,6 +257,7 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_ZOOM): vol.All(vol.Coerce(int), vol.Range(min=50, max=150)),
         vol.Optional(CONF_LOADING_SCREEN): bool,
         vol.Optional(CONF_PAGES): vol.All([_page], vol.Length(min=1, max=MAX_PAGES), _pages),
+        vol.Optional(CONF_HOME_EDIT): bool,
         vol.Optional(CONF_SCREENSAVER): SCREENSAVER_SCHEMA,
         vol.Optional(CONF_DND): DND_SCHEMA,
         vol.Optional(CONF_POPUPS): POPUPS_SCHEMA,

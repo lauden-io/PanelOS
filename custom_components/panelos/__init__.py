@@ -69,7 +69,7 @@ from .house import House
 from .notes import Notes
 from .players import async_register_players_view
 from .sounds import async_register_views
-from .page import async_hide_page, async_setup_page, async_show_page
+from .page import async_hide_page, async_setup_page, async_show_page, checked_page
 from .panel import Panel, alive, find_entry, link_gone, links, panel_config, voice_player
 
 type PanelOSConfigEntry = ConfigEntry[Panel]
@@ -269,7 +269,8 @@ def ws_report(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
         vol.Optional("panel_id", default=""): str,
         vol.Required("index"): vol.All(int, vol.Range(min=0, max=63)),
         vol.Optional("variant"): vol.All(int, vol.Range(min=0, max=15)),
-        vol.Optional("options"): {str: vol.Any(None, bool, int, float, vol.All(str, vol.Length(max=200)))},
+        # a weather page's widgets edited on the panel come as its "items" (a list, checked with the page)
+        vol.Optional("options"): {str: vol.Any(None, bool, int, float, vol.All(str, vol.Length(max=200)), list)},
     }
 )
 @callback
@@ -302,6 +303,11 @@ def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
             else:
                 options[key] = value
         page["options"] = options
+    try:
+        pages[shown[msg["index"]]] = checked_page(page)
+    except vol.Invalid as err:
+        connection.send_error(msg["id"], "invalid_format", str(err))
+        return
     hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_PAGES: pages})
     connection.send_result(msg["id"])
 

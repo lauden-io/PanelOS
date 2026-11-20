@@ -43,6 +43,7 @@ from .const import (
     CONF_ZOOM,
     CONF_LOADING_SCREEN,
     CONF_PAGES,
+    CONF_HOME_EDIT,
     CONF_CAPS,
     CONF_DND,
     CONF_POPUPS,
@@ -138,6 +139,8 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         "zoom": max(50, min(150, int(options.get(CONF_ZOOM, 100)))),
         "loading_screen": bool(options.get(CONF_LOADING_SCREEN, True)),
         "pages": shown_pages(options.get(CONF_PAGES, DEFAULT_PAGES)),
+        # the weather pages' widgets may be edited on the panel too (a long press, then holding the lock)
+        "home_edit": bool(options.get(CONF_HOME_EDIT, False)),
         "screensaver": screensaver_config(options.get(CONF_SCREENSAVER)),
         "dnd": dnd_config(options.get(CONF_DND)),
         "popups": popups_config(options.get(CONF_POPUPS)),

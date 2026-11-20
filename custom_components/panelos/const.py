@@ -72,6 +72,9 @@ PAGE_KINDS = {
     "info": (4, (), 0),
 }
 DEFAULT_PAGES = [{"kind": kind} for kind in ("home", "weather", "music", "timers")]
+# Editing the weather pages' widgets on the panel itself (a long press, then holding the lock): off by default, the
+# layout is edited here; the panel sends its changes back as the page's widget list.
+CONF_HOME_EDIT = "home_edit"
 
 # When the screensaver may start (the idle time is the panel's own
 # "screensaver" setting): when the room is dark (darker than `lux`, from the
