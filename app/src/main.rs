@@ -18,10 +18,14 @@ mod camera;
 mod clock;
 mod config;
 mod connlog;
+mod device_options;
 mod devlog;
 mod display;
 mod draw;
 mod esphome;
+mod glass;
+#[cfg(feature = "gpu")]
+mod glass_gl;
 #[cfg(feature = "gpu")]
 mod gpu;
 mod ha;
@@ -48,9 +52,11 @@ mod texts;
 mod thermo;
 mod todo;
 mod touch;
+mod visit;
 mod voice;
 mod web;
 mod webstats;
+mod wifi;
 mod windows;
 
 use std::cell::RefCell;
@@ -71,6 +77,7 @@ use auth::Auth;
 use config::{AppConfig, PERSIST_DIR};
 use ha::{Command, EntityState, Event};
 use settings::Settings;
+use visit::{Hold, Visit};
 
 slint::include_modules!();
 
@@ -150,6 +157,8 @@ pub struct UiState {
     touch_close_at: Option<Instant>,
     touch_started: Option<Instant>,
     touch_test_down: Option<(Instant, f32, f32, u32)>,
+    /// The touch test was started from the settings list: it goes back there when it closes.
+    touch_from_settings: bool,
     /// Pull to refresh: where the finger came down, and how far it pulled (0..1, None: not pulling).
     web_pull: Option<(f32, f32)>,
     web_pulled: Option<f32>,
@@ -199,13 +208,19 @@ pub struct UiState {
     art_accent: Option<slint::Color>,
     /// The record's colour (the cover's own, black, white or grey too): None without a cover.
     art_record: Option<slint::Color>,
-    /// When a layer opened by a show request closes by itself.
+    /// When the dashboard shown by a show request goes by itself (a shown page view's time is its visit's).
     show_until: Option<Instant>,
+    /// When a notification's strip goes by itself.
+    strip_until: Option<Instant>,
     /// When the light level was last sent to Home Assistant.
     last_lux_report: Instant,
     /// Play / pause pressed on the panel: (playing, when, the position then) until the player reports it (at most 3 s),
     /// so the time neither runs on after a pause nor jumps after a play while the player catches up.
     music_hold: Option<(bool, Instant, f32)>,
+    /// Next / previous pressed on the panel (see `apply_music_skip`).
+    music_skip: Option<MusicSkip>,
+    /// The player the cover in `art_url` belongs to (a paused track keeps its cover only on its own player).
+    art_player: String,
     /// Split-flap clock: the digits shown before the last change, and when it changed.
     digits: [String; 4],
     prev_digits: [String; 4],
@@ -381,7 +396,7 @@ fn popup(ui: &AppWindow, id: &str, title: &str, message: &str) {
     ui.set_strip_tint(slint::Color::from_rgb_u8(0x2a, 0x2c, 0x2f));
     ui.set_strip_on(true);
     with_state(|s| {
-        s.show_until = Some(Instant::now() + Duration::from_secs(seconds));
+        s.strip_until = Some(Instant::now() + Duration::from_secs(seconds));
         if sound {
             s.player.play(voice::Sound::Chime);
         }
@@ -436,6 +451,67 @@ fn apply_music_hold(s: &mut UiState, music: &mut HomeMusic) {
     music.playing = want;
     if !want {
         music.pos = pos;
+    }
+}
+
+/// Next / previous pressed on the panel: for up to 3 s the page keeps the play state it had (a player between two
+/// tracks says paused or buffering for a moment), and once the new track has shown, the old one does not come back
+/// (a player may report the old track again for a moment while it changes).
+struct MusicSkip {
+    at: Instant,
+    /// The track shown when the key was pressed (`track_key`).
+    from: String,
+    playing: bool,
+    /// The newest other track seen since.
+    to: Option<HomeMusic>,
+}
+
+fn track_key(m: &HomeMusic) -> String {
+    format!("{}\u{1f}{}", m.title, m.artist)
+}
+
+/// Applies a running skip hold to the shown music; true when the player reported the old track again and the new
+/// one is shown instead (the cover and the other details then stay as they are too).
+fn apply_music_skip(s: &mut UiState, music: &mut HomeMusic) -> bool {
+    let Some(k) = s.music_skip.as_mut() else { return false };
+    if k.at.elapsed() >= Duration::from_secs(3) {
+        s.music_skip = None;
+        return false;
+    }
+    let mut back = false;
+    match skip_step(&k.from, &track_key(music), k.to.is_some()) {
+        SkipStep::NewTrack => k.to = Some(music.clone()),
+        SkipStep::OldAgain => {
+            if let Some(to) = &k.to {
+                *music = to.clone();
+                back = true;
+            }
+        }
+        SkipStep::Waiting => {}
+    }
+    if k.playing {
+        music.playing = true;
+    }
+    back
+}
+
+#[derive(Debug, PartialEq)]
+enum SkipStep {
+    /// Another track than the one at the press: the newest one seen.
+    NewTrack,
+    /// The track of the press again after a new one had shown: the new one stays.
+    OldAgain,
+    /// Still the track of the press (the player has not changed yet).
+    Waiting,
+}
+
+fn skip_step(from: &str, now: &str, seen_new: bool) -> SkipStep {
+    if now != from {
+        SkipStep::NewTrack
+    } else if seen_new {
+        SkipStep::OldAgain
+    } else {
+        SkipStep::Waiting
     }
 }
 
@@ -571,6 +647,8 @@ fn update_clock(ui: &AppWindow) {
             // the thermostat remote's own clock (hours and minutes as numbers)
             ui.set_thermo_clock_h(data.hh.parse().unwrap_or(0));
             ui.set_thermo_clock_m(data.mm.parse().unwrap_or(0));
+            // the notifications page's pager and TV news clock (minutes of the day; -1 before the clock is set)
+            ui.set_info_minute(info::minute_of(&data.hh, &data.mm));
             ui.set_clock(data);
             let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
             ui.invoke_sync_seconds(wall.rem_euclid(60.0) as f32);
@@ -612,6 +690,7 @@ fn update_clock(ui: &AppWindow) {
         if music.playing && !really_playing(s, &media_entity(s)) {
             music.playing = false;
         }
+        apply_music_skip(s, &mut music);
         if music.playing || ui.get_home_music_pos() != music.pos {
             ui.set_music_pos(music.pos);
             ui.set_home_music_pos(music.pos);
@@ -623,12 +702,12 @@ fn update_clock(ui: &AppWindow) {
         }
         // The synthwave scenes in use: their view, colour and the next car.
         synth::tick(ui, s);
-        // city windows lit one by one (drawn city / big city, the first such Custom page)
+        // city windows lit one by one (drawn city / big city, the first such custom or weather details page)
         {
             let w = ui.get_weather();
             let pages = ui.get_pages();
             let slot = (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i))
-                .find(|p| p.kind == "home" && matches!(if p.theme >= 0 { p.theme } else { w.theme }, 4 | 6));
+                .find(|p| (p.kind == "home" || p.kind == "weather") && matches!(if p.theme >= 0 { p.theme } else { w.theme }, 4 | 6));
             let theme = slot.as_ref().map(|p| if p.theme >= 0 { p.theme } else { w.theme }).unwrap_or(-1);
             let light = slot.as_ref().is_some_and(|p| p.light == 1 || (p.light == 0 && !ui.global::<Theme>().get_dark()));
             let hour = local_hour();
@@ -648,9 +727,9 @@ fn update_clock(ui: &AppWindow) {
             let first = s.alarm_minute == 0;
             s.alarm_minute = minute;
             if !first {
-                if let Some((time, label, tone)) = alarms::due(s) {
+                if let Some((time, label, tone, hour)) = alarms::due(s) {
                     s.snooze = None;
-                    ring_alarm(ui, s, time, label, tone);
+                    ring_alarm(ui, s, time, label, tone, hour);
                 }
             }
             alarms::refresh(ui, s);
@@ -659,13 +738,15 @@ fn update_clock(ui: &AppWindow) {
         if s.snooze.as_ref().is_some_and(|(at, ..)| Instant::now() >= *at) {
             if let Some((_, _, label, tone)) = s.snooze.take() {
                 // the big time shows the time now (the alarm's own time has passed)
-                ring_alarm(ui, s, pages::local_format(pages::now(), "%-H:%M"), label, tone);
+                let (time, hour) = alarms::now_hm();
+                ring_alarm(ui, s, time, label, tone, hour);
+                alarms::refresh(ui, s);
             }
         }
         // Voice view: closes a few seconds after the end.
         if s.voice_hide_at.is_some_and(|t| Instant::now() >= t) {
             s.voice_hide_at = None;
-            ui.set_voice_on(false);
+            close_voice_view(ui);
         }
         // Ringing timer or alarm: its sound loops until stopped, at most a minute.
         match s.ringing {
@@ -692,10 +773,10 @@ fn update_clock(ui: &AppWindow) {
     if RANG.with(|r| r.replace(false)) {
         wake(ui);
         // the ringing screen is the timers page's: a temporary one when the list has none
-        visit_page(ui, "timers");
+        visit_page(ui, "timers", Hold::Ring);
     }
     if RING_OVER.with(|r| r.replace(false)) {
-        end_visit(ui);
+        end_visit(ui, true);
     }
 }
 
@@ -704,8 +785,6 @@ thread_local! {
     static TIMER_SHEET_CLOSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// A timer the panel runs reached zero during this clock update.
     static RANG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// A view shown by Home Assistant ran out of time (back to the page before at the next tick).
-    static SHOW_OVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// A ring ended by itself (its minute passed) during this clock update.
     static RING_OVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -788,6 +867,8 @@ fn refresh_pages(ui: &AppWindow) {
             set_wx_frames(ui, &cond);
             s.wx_cond = cond;
         }
+        // rain on the glass over the photo backgrounds: the scene's rain and wind (and the panel's switch)
+        glass::set_weather(s.settings.rain_on_glass, glass::rain_level(weather.rain, weather.mood), weather.wind_kmh, weather.gust_kmh);
         let key = weather_key(&weather);
         if key != s.weather_key {
             s.weather_key = key;
@@ -807,6 +888,11 @@ fn refresh_pages(ui: &AppWindow) {
         if !same {
             let lays: Vec<HomeLayout> = lays.into_iter().map(|items| HomeLayout { items: ModelRc::new(VecModel::from(items)) }).collect();
             ui.set_home_layouts(ModelRc::new(VecModel::from(lays)));
+        }
+        // the weather details page's widgets while it has none of its own
+        let wx = pages::weather_items(a);
+        if !same_rows(&ui.get_weather_items(), &wx) {
+            ui.set_weather_items(ModelRc::new(VecModel::from(wx)));
         }
         // the next event of the custom page's calendars (its entities)
         let calendars: Vec<String> = page_entities(s, "home").into_iter().filter(|e| e.starts_with("calendar.")).collect();
@@ -845,6 +931,13 @@ fn refresh_pages(ui: &AppWindow) {
             music.playing = false;
         }
         apply_music_hold(s, &mut music);
+        let back = apply_music_skip(s, &mut music);
+        // which player shows which track (a mixed-up page can be traced)
+        thread_local!(static SHOWN: RefCell<String> = const { RefCell::new(String::new()) });
+        let shown = format!("{player}: {} · {}", music.title, music.artist);
+        if SHOWN.with(|v| v.replace(shown.clone())) != shown {
+            eprintln!("nspanel-app: music page shows {shown}");
+        }
         ui.set_music_title(music.title.clone());
         ui.set_music_artist(music.artist.clone());
         ui.set_music_playing(music.playing);
@@ -866,11 +959,15 @@ fn refresh_pages(ui: &AppWindow) {
         if let Some(c) = record {
             ui.set_music_record(c);
         }
-        if let Some(p) = s.states.get(&player) {
-            ui.set_music_album(p.attrs.get("media_album_name").and_then(Value::as_str).unwrap_or("").into());
-            ui.set_music_volume(p.attrs.get("volume_level").and_then(Value::as_f64).unwrap_or(0.0) as f32);
-            ui.set_music_shuffle(p.attrs.get("shuffle").and_then(Value::as_bool).unwrap_or(false));
-            ui.set_music_repeat(match p.attrs.get("repeat").and_then(Value::as_str) {
+        // the rest of the page from the same player (nothing of another player stays: a player not known yet shows
+        // none of it)
+        if !back {
+            let p = s.states.get(&player);
+            let attr = |k: &str| p.and_then(|p| p.attrs.get(k));
+            ui.set_music_album(attr("media_album_name").and_then(Value::as_str).unwrap_or("").into());
+            ui.set_music_volume(attr("volume_level").and_then(Value::as_f64).unwrap_or(0.0) as f32);
+            ui.set_music_shuffle(attr("shuffle").and_then(Value::as_bool).unwrap_or(false));
+            ui.set_music_repeat(match attr("repeat").and_then(Value::as_str) {
                 Some("all") => 1,
                 Some("one") => 2,
                 _ => 0,
@@ -883,10 +980,12 @@ fn refresh_pages(ui: &AppWindow) {
                 .then(|| p.attrs.get("entity_picture").and_then(Value::as_str).filter(|u| !u.is_empty()).map(str::to_string))
                 .flatten()
         });
-        // a paused track keeps its cover even if the player drops the picture meanwhile
-        let url = if url.is_none() && shows { s.art_url.clone() } else { url };
+        // a paused track keeps its cover even if the player drops the picture meanwhile (on the same player only);
+        // a skip hold that keeps the new track keeps its cover too
+        let url = if back || (url.is_none() && shows && s.art_player == player) { s.art_url.clone() } else { url };
         let art = if url != s.art_url {
             s.art_url = url.clone();
+            s.art_player = player.clone();
             s.art_tx.clone().map(|tx| (tx, url))
         } else {
             None
@@ -1050,6 +1149,8 @@ fn apply_panel_config(ui: &AppWindow) {
             saver_clock(ui, s);
         }
     });
+    // Wi-Fi roaming, the wake distance, the child lock
+    with_state(|s| device_options::apply(ui, s));
     let reload = with_state(|s| {
         let slots = pages::page_slots(s.panel_config.as_ref());
         let current = ui.get_page();
@@ -1117,6 +1218,8 @@ fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
                 close_page_sheets(ui);
             }
             ui.set_page(i as i32);
+            // a temporary page shown before goes once left
+            leave_temporary_page(ui, i as i32);
             true
         }
         None => false,
@@ -1127,6 +1230,7 @@ fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
 /// hide the dots of the others).
 fn close_page_sheets(ui: &AppWindow) {
     ui.set_quick_sheet(false);
+    ui.set_quick_settings(false);
     ui.set_thermo_sheet(false);
     ui.set_thermo_picker(false);
     ui.set_thermo_settings(false);
@@ -1138,74 +1242,117 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_quick(false);
     ui.set_timers_sheet(-1);
     ui.set_timers_settings(false);
+    ui.set_timers_edit(false);
+    ui.set_timers_edit_keyboard(false);
     ui.set_todo_picker(false);
     ui.set_todo_settings(false);
     ui.set_todo_pend_look(-1);
     ui.set_todo_adding(false);
     ui.set_cam_settings(false);
+    ui.set_cam_replies(false);
     ui.set_info_settings(false);
+    info::leave(ui);
     ui.set_home_bg_sheet(false);
     ui.set_home_settings(-1);
 }
 
 thread_local! {
-    /// A visit the panel made by itself (a ring, a show request): (the page it came from, the page it went to).
-    static VISIT: std::cell::Cell<Option<(i32, i32)>> = const { std::cell::Cell::new(None) };
+    /// The visit the panel made by itself (a ring, a view shown for some seconds), while it holds.
+    static VISIT: std::cell::Cell<Option<Visit>> = const { std::cell::Cell::new(None) };
 }
 
-/// Goes to a page by itself (a timer rings, Home Assistant asks for a view) and remembers where it came from, so
-/// `end_visit` can go back there.
-fn visit_page(ui: &AppWindow, kind: &str) {
-    let from = ui.get_page();
-    let known = VISIT.with(|v| v.get());
-    if !go_to_page(ui, kind) {
-        open_temporary_page(ui, kind);
-    }
-    let to = ui.get_page();
-    // a second visit on top of one keeps the first page to go back to
-    let from = known.map_or(from, |(f, _)| f);
-    if to != from {
-        VISIT.with(|v| v.set(Some((from, to))));
-    }
-}
-
-/// The visit is over (the ring stopped, the shown view's time ran out): back to the page from before, unless someone
-/// paged meanwhile.
-fn end_visit(ui: &AppWindow) {
-    if let Some((from, to)) = VISIT.with(|v| v.take()) {
-        let temp = with_state(|s| s.temp_page);
-        if ui.get_page() == to || temp.is_some_and(|t| t as i32 == ui.get_page()) {
-            ui.set_page(from);
+/// Goes to a page by itself (a timer rings, Home Assistant shows a view for some seconds) and remembers where it came
+/// from, so `end_visit` can go back there.
+fn visit_page(ui: &AppWindow, kind: &str, hold: Hold) {
+    let page = ui.get_page();
+    let mut v = Visit::base(VISIT.with(|c| c.get()), page);
+    let to = if go_to_page(ui, kind) {
+        ui.get_page()
+    } else {
+        let new = with_state(|s| s.temp_page.is_none());
+        let Some((at, took_over)) = open_temporary_page(ui, kind) else { return };
+        let at = at as i32;
+        if new {
+            v = v.inserted(at);
+        } else if took_over && v.from == at {
+            // the temporary page it came from now shows this: back to the page that one was opened next to
+            v.from = (at - 1).max(0);
         }
-    }
+        at
+    };
+    VISIT.with(|c| c.set(Some(v.hold(to, hold))));
 }
 
-/// A page the panel's list lacks (a home widget's view): slides in next to
-/// the current one, without a dot; a swipe back to the right returns, and it
-/// is gone once left.
-fn open_temporary_page(ui: &AppWindow, kind: &str) {
-    if with_state(|s| s.temp_page.is_some()) {
+/// The ring stopped (`ring`) or the shown view's time is up: back to the page from before (or to the view still
+/// shown), unless someone paged meanwhile. The other one's hold stays.
+fn end_visit(ui: &AppWindow, ring: bool) {
+    let Some(v) = VISIT.with(|c| c.get()) else { return };
+    let (left, go) = v.end(ring, ui.get_page(), Instant::now());
+    VISIT.with(|c| c.set(left));
+    let Some(page) = go else { return };
+    if page < 0 || page as usize >= ui.get_pages().row_count() {
         return;
     }
+    close_page_sheets(ui);
+    ui.set_page(page);
+    // a temporary page the visit showed goes once left
+    leave_temporary_page(ui, page);
+}
+
+/// A view shown without seconds stays: an earlier shown view's way back is dropped (a ring's stays).
+fn end_show_visit() {
+    VISIT.with(|c| {
+        c.set(c.get().and_then(|mut v| {
+            v.show = None;
+            v.ring.is_some().then_some(v)
+        }))
+    });
+}
+
+/// A page the panel's list lacks (a home widget's view): slides in next to the current one, without a dot; a swipe
+/// back to the right returns, and it is gone once left. The page left closes its sheets (they would hold the swipes).
+/// A temporary page already there takes the new kind. Returns its place in the pager (a new one shows there 40 ms
+/// later) and whether it took over a temporary page of another kind.
+fn open_temporary_page(ui: &AppWindow, kind: &str) -> Option<(usize, bool)> {
     let pages = ui.get_pages();
-    let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
+    let vec = pages.as_any().downcast_ref::<VecModel<PageSlot>>()?;
+    let slot = PageSlot { kind: kind.into(), variant: 0, theme: -1, layout: -1, light: 0 };
+    if let Some(t) = with_state(|s| s.temp_page) {
+        if t >= vec.row_count() {
+            // still on its way in
+            return Some((t, false));
+        }
+        let other = vec.row_data(t).is_some_and(|p| p.kind != kind);
+        if other || ui.get_page() != t as i32 {
+            close_page_sheets(ui);
+        }
+        if other {
+            vec.set_row_data(t, slot);
+        }
+        ui.set_page(t as i32);
+        if other {
+            refresh_pages(ui);
+        }
+        return Some((t, other));
+    }
+    close_page_sheets(ui);
     let at = (ui.get_page().max(0) as usize + 1).min(vec.row_count());
     with_state(|s| s.temp_page = Some(at));
     // the page frame restarts at the page shown (the same picture, drawn once), then the new page slides in
     ui.set_instant(true);
     ui.invoke_reset_pos();
-    let kind = kind.to_string();
     let weak = ui.as_weak();
     slint::Timer::single_shot(Duration::from_millis(40), move || {
         let Some(ui) = weak.upgrade() else { return };
         ui.set_instant(false);
         let pages = ui.get_pages();
         let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
-        vec.insert(at.min(vec.row_count()), PageSlot { kind: kind.into(), variant: 0, theme: -1, layout: -1, light: 0 });
+        vec.insert(at.min(vec.row_count()), slot);
         ui.set_dots_hidden(true);
         ui.set_page(at as i32);
         refresh_pages(&ui);
     });
+    Some((at, false))
 }
 
 /// After a swipe: the temporary page goes once it is off screen (the pages
@@ -1218,14 +1365,17 @@ fn leave_temporary_page(ui: &AppWindow, now: i32) {
     let weak = ui.as_weak();
     slint::Timer::single_shot(Duration::from_millis(320), move || {
         let Some(ui) = weak.upgrade() else { return };
-        if with_state(|s| s.temp_page.take()) != Some(t) {
+        // back on it meanwhile (a visit took it over), or another one in its place: it stays
+        if with_state(|s| s.temp_page) != Some(t) || ui.get_page() as usize == t {
             return;
         }
+        with_state(|s| s.temp_page = None);
         let pages = ui.get_pages();
         let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
         if t < vec.row_count() {
             ui.set_instant(true);
             vec.remove(t);
+            VISIT.with(|v| v.set(v.get().map(|v| v.removed(t as i32))));
             let page = ui.get_page();
             if page as usize > t {
                 ui.set_page(page - 1);
@@ -1250,7 +1400,7 @@ fn handle_timer(ui: &AppWindow, kind: i32, id: String, name: String, left: u32, 
     }
     if finished {
         wake(ui);
-        visit_page(ui, "timers");
+        visit_page(ui, "timers", Hold::Ring);
     }
     update_clock(ui);
 }
@@ -1645,6 +1795,12 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
             ui.set_timers_lap_marks(ModelRc::new(VecModel::from(marks)));
             ui.set_timers_laps(ModelRc::new(VecModel::from(laps)));
         }
+        // the stopwatch tab's look, from its settings menu (a page option the integration keeps)
+        "watch.look" => {
+            let look = (n as i32).clamp(0, 4);
+            ui.set_timers_sw_look(look);
+            page_set(ui, "timers", None, json!({ "sw_look": look }));
+        }
         "watch.reset" => {
             ui.invoke_watch_stop();
             ui.set_timers_watch_base(0.0);
@@ -1666,13 +1822,15 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
 }
 
 /// An alarm rings: its screen and its sound (looping until stopped, at most a minute).
-fn ring_alarm(ui: &AppWindow, s: &mut UiState, time: String, label: String, tone: String) {
+fn ring_alarm(ui: &AppWindow, s: &mut UiState, time: String, label: String, tone: String, hour: f32) {
     s.ring_tone = format!("{tone}|birds");
     ui.set_timers_ring_tint(accent(s));
     s.ringing = Some(Instant::now());
     s.ringing_flag.store(true, Ordering::SeqCst);
     ui.set_timers_ring_alarm(true);
     ui.set_timers_ring_time(time.into());
+    // the alarm looks draw the ringing time themselves (the radio's LED, the dial's hand)
+    ui.set_timers_ring_h(hour);
     ui.set_timers_ring_label(label.into());
     ui.set_timers_ringing(true);
     RANG.with(|r| r.set(true));
@@ -1686,7 +1844,11 @@ fn ring_more(ui: &AppWindow) {
     let tone = with_state(|s| s.ring_tone.rsplit_once('|').map(|(v, _)| v.to_string()).unwrap_or_default());
     stop_ringing(ui, "more time");
     if alarm {
-        with_state(|s| s.snooze = Some((Instant::now() + Duration::from_secs(9 * 60), time, label, tone)));
+        with_state(|s| {
+            s.snooze = Some((Instant::now() + Duration::from_secs(9 * 60), time, label, tone));
+            // the next-alarm lines show the snoozed ring
+            alarms::refresh(ui, s);
+        });
     } else {
         start_timer(ui, 60, label);
     }
@@ -1705,7 +1867,8 @@ fn stop_ringing(ui: &AppWindow, why: &str) {
         }
     });
     ui.set_timers_ringing(false);
-    end_visit(ui);
+    // the ring's visit only: a view Home Assistant shows keeps its own time
+    end_visit(ui, true);
 }
 
 /// The voice view's status line for a state (listen, think, reply, more,
@@ -1838,6 +2001,15 @@ fn voice_meter(ui: &AppWindow, on: bool) {
     });
 }
 
+/// The voice view closes (its time is up, or a tap): its meter, follow-up drain and typing stop with it, so nothing
+/// keeps measuring the microphone for a view nobody sees.
+fn close_voice_view(ui: &AppWindow) {
+    ui.set_voice_on(false);
+    voice_meter(ui, false);
+    follow_up_drain(ui, false);
+    TYPING.with(|t| t.stop());
+}
+
 /// Listening for more: the 5 s drain (`voice-left`, 1 … 0) until speech starts (spec 31, F2).
 fn follow_up_drain(ui: &AppWindow, on: bool) {
     FOLLOW.with(|t| {
@@ -1909,7 +2081,8 @@ fn handle_voice_ui(ui: &AppWindow, event: voice::VoiceUi) {
             ui.set_voice_line(voice_line(ui, if more { "more" } else { "listen" }).into());
             ui.set_voice_state(if more { 5 } else { 1 });
             follow_up_drain(ui, more);
-            voice_meter(ui, true);
+            // the meter only for a view that shows
+            voice_meter(ui, show);
             ui.set_voice_on(show);
         }
         VoiceUi::Heard(text) => {
@@ -2067,12 +2240,16 @@ fn is_home_assistant(url: &str) -> bool {
     }
 }
 
+/// The mDNS browser (Home Assistant instances on the network, for the setup screen).
+static MDNS_BROWSER: std::sync::OnceLock<Arc<mdns::Browser>> = std::sync::OnceLock::new();
+
 /// First start without settings: the setup screen lists Home Assistant found
 /// on the network (mDNS) and takes an address on a keypad. Once Home Assistant
 /// answers at the address, it is saved to app.json and the app restarts (the
 /// supervisor starts it again), which then shows the pairing QR code.
 fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
     ui.set_setup(true);
+    ui.set_setup_variant(wifi_random());
     if !reason.contains("No such file") {
         ui.set_setup_message(format!("The saved settings could not be read ({reason}); set them again.").into());
         ui.set_setup_message_kind(1);
@@ -2080,7 +2257,64 @@ fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
     if let Some(ip) = pairing::local_ip_towards("8.8.8.8:53") {
         ui.set_net_ip(ip.to_string().into());
     }
+    setup_handlers(ui, browser);
+}
+
+/// A number for the screens' random texts.
+fn wifi_random() -> i32 {
+    let n = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.subsec_nanos()).unwrap_or(7);
+    (n % 1_000_000_000) as i32
+}
+
+/// Settings → Home Assistant: the setup screen with the address the panel uses, a back arrow; a new address that
+/// answers is saved and the app starts again with it (a different Home Assistant asks for the pairing again).
+fn open_ha_setup(ui: &AppWindow) {
+    let Some(browser) = MDNS_BROWSER.get().cloned() else { return };
+    let current = with_state(|s| s.config.as_ref().map(|c| c.ha_host_port()).unwrap_or_default());
+    // the keypad types digits, dots and colons: the address as host:port
+    ui.set_setup_address(current.into());
+    ui.set_setup_message("".into());
+    ui.set_setup_message_kind(0);
+    ui.set_setup_variant(wifi_random());
+    ui.set_setup_can_back(true);
+    ui.set_setup_wifi_info(false);
+    // the Wi-Fi the panel is on (its card on the screen)
+    let weak = ui.as_weak();
+    std::thread::spawn(move || {
+        let link = shade::wifi_link();
+        let ip = pairing::local_ip_towards("8.8.8.8:53").map(|ip| ip.to_string());
+        let _ = slint::invoke_from_event_loop(move || {
+            let Some(ui) = weak.upgrade() else { return };
+            if let Some((name, dbm)) = link {
+                ui.set_net_name(name.into());
+                ui.set_net_bars(dbm.map_or(4, |d| if d > -55.0 { 4 } else if d > -63.0 { 3 } else if d > -72.0 { 2 } else { 1 }));
+            }
+            ui.set_net_ip(ip.unwrap_or_default().into());
+        });
+    });
+    setup_handlers(ui, browser);
+    ui.set_setup(true);
+}
+
+/// The setup screen's callbacks and its list of Home Assistants found (set once).
+fn setup_handlers(ui: &AppWindow, browser: Arc<mdns::Browser>) {
     browser.active.store(true, Ordering::Relaxed);
+    thread_local!(static READY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) });
+    if READY.with(|r| r.replace(true)) {
+        return;
+    }
+    let back_browser = browser.clone();
+    let weak = ui.as_weak();
+    ui.on_setup_back(move || {
+        let Some(ui) = weak.upgrade() else { return };
+        if ui.get_setup_busy() {
+            return;
+        }
+        back_browser.active.store(false, Ordering::Relaxed);
+        ui.set_setup_pick_open(false);
+        ui.set_setup(false);
+        ui.set_setup_can_back(false);
+    });
     // Found instances, refreshed every second; the timer lives as long as the app.
     let found_timer = slint::Timer::default();
     let weak = ui.as_weak();
@@ -2144,17 +2378,36 @@ fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
         ui.set_setup_busy(true);
         ui.set_setup_message("Looking for Home Assistant…".into());
         ui.set_setup_message_kind(0);
+        // opened from the settings: the address the panel uses now
+        let now_url = with_state(|s| s.config.as_ref().map(|c| c.ha_url.trim_end_matches('/').to_string()));
         let weak = ui.as_weak();
         std::thread::spawn(move || {
             let found = candidates.iter().find(|u| is_home_assistant(u)).cloned();
-            let saved = found.as_ref().map(|url| {
+            let same = found.is_some() && found.as_deref() == now_url.as_deref();
+            let saved = found.as_ref().filter(|_| !same).map(|url| {
                 let _ = std::fs::create_dir_all(PERSIST_DIR);
-                let text = serde_json::to_string_pretty(&json!({ "ha_url": url })).unwrap_or_default();
-                std::fs::write(format!("{PERSIST_DIR}/app.json"), text + "\n")
+                // the other settings in app.json stay (only the address changes); written whole, then renamed
+                let path = format!("{PERSIST_DIR}/app.json");
+                let mut v: Value = std::fs::read_to_string(&path).ok().and_then(|t| serde_json::from_str(&t).ok()).filter(Value::is_object).unwrap_or_else(|| json!({}));
+                v["ha_url"] = json!(url);
+                let text = serde_json::to_string_pretty(&v).unwrap_or_default();
+                let tmp = format!("{path}.tmp");
+                std::fs::write(&tmp, text + "\n").and_then(|_| std::fs::rename(&tmp, &path))
             });
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak.upgrade() else { return };
                 ui.set_setup_busy(false);
+                if same {
+                    ui.set_setup_message("The panel uses this Home Assistant already.".into());
+                    ui.set_setup_message_kind(2);
+                    let weak = ui.as_weak();
+                    slint::Timer::single_shot(Duration::from_millis(1500), move || {
+                        if let Some(ui) = weak.upgrade() {
+                            ui.invoke_setup_back();
+                        }
+                    });
+                    return;
+                }
                 match (found, saved) {
                     (Some(url), Some(Ok(()))) => {
                         eprintln!("nspanel-app: setup: Home Assistant at {url} saved, restarting");
@@ -2190,6 +2443,10 @@ fn handle_show(ui: &AppWindow, v: &Value) {
         start_touch_test(ui);
         return;
     }
+    if v["type"].as_str() == Some("proximity_calibration") {
+        device_options::start_calibration(ui);
+        return;
+    }
     // the alarms as edited in the integration (the panel keeps and rings them)
     if v["type"].as_str() == Some("alarms") {
         eprintln!("nspanel-app: alarms from Home Assistant ({})", v["list"].as_array().map_or(0, Vec::len));
@@ -2216,30 +2473,32 @@ fn handle_show(ui: &AppWindow, v: &Value) {
     eprintln!("nspanel-app: show request {v}");
     wake(ui);
     ui.set_set_view(0);
-    let chime = with_state(|s| {
-        s.show_until = (seconds > 0).then(|| Instant::now() + Duration::from_secs(seconds));
-        v["chime"].as_bool().unwrap_or(false).then(|| s.player.clone())
-    });
+    // with seconds: shown until then, and back to where the panel was; without: it stays
+    let until = (seconds > 0).then(|| Instant::now() + Duration::from_secs(seconds));
+    let chime = with_state(|s| v["chime"].as_bool().unwrap_or(false).then(|| s.player.clone()));
     match v["view"].as_str().unwrap_or("home") {
         "dashboard" => {
             if ui.get_web_active() {
                 set_dashboard(ui, true);
+                with_state(|s| s.show_until = until);
             }
         }
-        "media" => {
-            if seconds > 0 {
-                visit_page(ui, "music");
-            } else {
+        "media" => match until {
+            Some(until) => visit_page(ui, "music", Hold::Show(until)),
+            None => {
+                end_show_visit();
                 go_to_page(ui, "music");
             }
-        }
+        },
         other => {
             set_dashboard(ui, with_state(|s| s.settings.display_mode == "dashboard") && ui.get_web_active());
             let kind = if ui.get_pages().iter().any(|p| p.kind == other) { other } else { "home" };
-            if seconds > 0 {
-                visit_page(ui, kind);
-            } else {
-                go_to_page(ui, kind);
+            match until {
+                Some(until) => visit_page(ui, kind, Hold::Show(until)),
+                None => {
+                    end_show_visit();
+                    go_to_page(ui, kind);
+                }
             }
         }
     }
@@ -2724,7 +2983,8 @@ fn start_screensaver(ui: &AppWindow, s: &mut UiState) {
             }
         }
     });
-    s.show_until = None;
+    // the strip goes; a shown view or dashboard keeps its time and goes back under the screensaver
+    s.strip_until = None;
     ui.set_set_view(0);
     ui.set_strip_on(false);
     info::pop(ui, None);
@@ -2789,14 +3049,18 @@ fn report_device(s: &mut UiState) {
     let before = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone()),
+        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h),
     );
     d.theme = s.settings.theme.clone();
+    d.time_24h = s.settings.time_24h;
     d.brightness = s.settings.brightness;
     d.auto_brightness = s.settings.auto_brightness;
     d.screensaver_seconds = s.settings.screensaver_seconds;
     d.screensaver_style = s.settings.screensaver_style.clone();
     d.proximity_wake = s.settings.proximity_wake;
+    d.child_lock = s.settings.child_lock;
+    d.rain_on_glass = s.settings.rain_on_glass;
+    d.lightning = s.settings.lightning;
     d.screen_on = !s.screensaver;
     d.dashboard = s.shared.dashboard.lock().unwrap().clone();
     d.presence = s.proximity.near();
@@ -2811,7 +3075,7 @@ fn report_device(s: &mut UiState) {
     let after = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone()),
+        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h),
     );
     if lux_changed {
         d.lux = s.lux.map(|l| l.round());
@@ -2848,11 +3112,24 @@ const THEME_LIGHT_LUX: f64 = 30.0;
 /// (no flipping at dusk or when a hand passes the sensor).
 const THEME_SETTLE: Duration = Duration::from_secs(10);
 
-/// Dark or light for the "auto" theme, by the light sensor. The first
-/// decision is immediate, so the first screen already has the right look.
-/// Without a sensor reading: Home Assistant's sun, otherwise unchanged (dark
-/// at the start).
-fn auto_dark(s: &mut UiState) -> bool {
+/// Dark or light for the "auto" theme, by what the integration's `theme_auto` names: the sun (Home Assistant's
+/// `sun.sun`), set times (once the clock is set), or the light sensor. The light sensor's first decision is
+/// immediate, so the first screen already has the right look. Without what the trigger needs, the light sensor
+/// decides; without a sensor reading Home Assistant's sun, otherwise unchanged (dark at the start).
+fn auto_dark(s: &mut UiState, by: device_options::AutoBy) -> bool {
+    match by {
+        device_options::AutoBy::Sun => {
+            if let Some(sun) = s.states.get("sun.sun") {
+                s.theme_pending = None;
+                return sun.state == "below_horizon";
+            }
+        }
+        device_options::AutoBy::Times { from, to } if clock::valid() => {
+            s.theme_pending = None;
+            return device_options::in_window(device_options::minutes_now(), from, to);
+        }
+        _ => {}
+    }
     let Some(lux) = s.lux else {
         s.theme_pending = None;
         return match s.states.get("sun.sun") {
@@ -2893,19 +3170,22 @@ fn auto_dark(s: &mut UiState) -> bool {
 }
 
 fn update_theme(ui: &AppWindow, s: &mut UiState) {
+    let by = device_options::auto_by(s.panel_config.as_ref());
     let dark = match s.settings.theme.as_str() {
         "light" => false,
-        "auto" => auto_dark(s),
+        "auto" => auto_dark(s, by),
         _ => true,
     };
+    // the setting with Auto's trigger: a change of either is someone's switch, the quicker change
+    let seen = if s.settings.theme == "auto" { format!("auto {by:?}") } else { s.settings.theme.clone() };
     ui.set_theme_mode(match s.settings.theme.as_str() {
         "light" => 0,
         "auto" => 2,
         _ => 1,
     });
     if s.dark != Some(dark) {
-        // Auto changed it by itself (the light, the sun): the calmer change; a switch by someone: the quicker one
-        ui.set_theme_slow(s.dark.is_some() && s.settings.theme == "auto" && s.theme_mode_seen.as_deref() == Some("auto"));
+        // Auto changed it by itself (the light, the sun, the time): the slow blend; a switch by someone: the quicker one
+        ui.set_theme_slow(s.dark.is_some() && s.settings.theme == "auto" && s.theme_mode_seen.as_deref() == Some(seen.as_str()));
         let first = s.dark.is_none();
         s.dark = Some(dark);
         if first {
@@ -2939,7 +3219,7 @@ fn update_theme(ui: &AppWindow, s: &mut UiState) {
             });
         }
     }
-    s.theme_mode_seen = Some(s.settings.theme.clone());
+    s.theme_mode_seen = Some(seen);
 }
 
 /// Backlight fade, every 20 ms: towards the target in perceived brightness
@@ -2994,20 +3274,26 @@ fn update_web(ui: &AppWindow, s: &mut UiState) {
 
 /// Runs twice a second: theme, screensaver, proximity wake, backlight target.
 fn tick(ui: &AppWindow) {
-    if SHOW_OVER.with(|o| o.replace(false)) {
-        end_visit(ui);
+    // a view shown for some seconds: its time is up (back to the page before, unless a ring holds the panel)
+    if VISIT.with(|v| v.get()).and_then(|v| v.show).is_some_and(|(_, until)| Instant::now() >= until) {
+        end_visit(ui, false);
     }
     update_connection_screens(ui);
     with_state(|s| update_web(ui, s));
     let result = with_state(|s| {
         s.lux = s.light.lux();
         update_theme(ui, s);
-        // Layer opened by a show request: close it when its time is up.
+        // A notification's strip: it goes when its time is up (a status strip keeps its own).
+        if s.strip_until.is_some_and(|t| Instant::now() >= t) {
+            s.strip_until = None;
+            if !s.alert_strip {
+                ui.set_strip_on(false);
+            }
+        }
+        // The dashboard shown by a show request: back to the display mode when its time is up.
         if s.show_until.is_some_and(|t| Instant::now() >= t) {
             s.show_until = None;
-            ui.set_strip_on(false);
             set_dashboard(ui, s.settings.display_mode == "dashboard" && s.web.is_some());
-            SHOW_OVER.with(|o| o.set(true));
         }
         let idle = platform::idle_time();
         // Proximity test view: on while the file exists. Its first line is
@@ -3023,6 +3309,8 @@ fn tick(ui: &AppWindow) {
             let integration = test.as_deref().and_then(|t| t.split_whitespace().next()).unwrap_or(hw::PROXIMITY_INTEGRATION);
             s.light.set_proximity_integration(integration);
             s.proximity = hw::ProximityWake::new(integration.parse().unwrap_or(0.01184));
+            let cm = device_options::wake_cm(s);
+            s.proximity.set_wake_cm(cm);
             test_started = test.is_some() && s.proximity_test.is_none();
             ui.set_prox_test(test.is_some());
             match &test {
@@ -3049,18 +3337,33 @@ fn tick(ui: &AppWindow) {
             ui.set_touch_test_text(touch_test_text(0).into());
             ui.set_touch_test(touch_test);
             eprintln!("nspanel-app: touch test {}", if touch_test { "on" } else { "off" });
+            // started from the settings list: back there
+            if !touch_test && std::mem::take(&mut s.touch_from_settings) {
+                ui.set_set_view(3);
+                let weak = ui.as_weak();
+                slint::Timer::single_shot(Duration::ZERO, move || {
+                    if let Some(ui) = weak.upgrade() {
+                        shade::fill(&ui);
+                    }
+                });
+            }
         }
         // Screensaver (not while Home Assistant shows something)
         let timeout = s.settings.screensaver_seconds;
         // (and not while a timer runs: its chips stay in view)
         let showing = s.show_until.is_some()
+            || s.strip_until.is_some()
+            || VISIT.with(|v| v.get()).is_some_and(|v| v.show.is_some())
             || ui.get_pop_on()
             || s.proximity_test.is_some()
+            || device_options::calibrating()
             || ui.get_voice_on()
             || s.ringing.is_some()
             || s.timers.values().any(|t| t.active)
             || !s.statuses.is_empty()
-            || s.critical.is_some();
+            || s.critical.is_some()
+            // (a Wi-Fi network being tried: its result stays in view)
+            || ui.get_wifi_busy();
         if !s.screensaver
             && !showing
             && timeout > 0
@@ -3076,7 +3379,8 @@ fn tick(ui: &AppWindow) {
         let saver_ends = s.screensaver && s.saver_auto && !saver_window(s, true);
         // Proximity: presence for Home Assistant, wake from the screensaver
         let mut wake_now = test_started && s.screensaver;
-        if let Some(p) = s.light.proximity() {
+        let reading = s.light.proximity();
+        if let Some(p) = reading {
             let approach = s.proximity.update(p);
             wake_now |= approach && s.screensaver && s.settings.proximity_wake;
             if s.proximity_test.is_some() {
@@ -3087,6 +3391,8 @@ fn tick(ui: &AppWindow) {
                 platform::note_stir();
             }
         }
+        // the child lock locking again, the wake distance calibration
+        device_options::tick(ui, s, idle, reading);
         // the clocks' calm: nobody near and nothing asked of the panel for 10 minutes
         let calm = platform::calm();
         if ui.global::<Clock>().get_calm() != calm {
@@ -3130,6 +3436,8 @@ const TOUCH_TEST_FILE: &str = "/tmp/nspanel-touch-test";
 const TOUCH_TEST_POINTS: [(f32, f32); 9] =
     [(16.0, 16.0), (240.0, 16.0), (464.0, 16.0), (464.0, 240.0), (464.0, 464.0), (240.0, 464.0), (16.0, 464.0), (16.0, 240.0), (240.0, 240.0)];
 const TOUCH_TEST_HOLD: Duration = Duration::from_millis(1500);
+/// A touch counts for the point only this near to it (pixels); a calibration never needs more.
+const TOUCH_TEST_RADIUS: f32 = 40.0;
 
 fn touch_test_text(step: usize) -> String {
     match step {
@@ -3139,9 +3447,42 @@ fn touch_test_text(step: usize) -> String {
     }
 }
 
+/// The line after a touch too far from the point (it does not count).
+fn touch_test_miss_text(step: usize) -> String {
+    format!("Touch the red point itself ({} of 9)", step.min(8) + 1)
+}
+
+/// Whether a touch at `offset` (dx, dy from the point) counts for it.
+fn touch_test_hit(offset: (f32, f32)) -> bool {
+    offset.0.hypot(offset.1) <= TOUCH_TEST_RADIUS
+}
+
+/// The touch test's way out: nothing is stored, the correction stays as it was.
+fn cancel_touch_test(ui: &AppWindow) {
+    let back = with_state(|s| {
+        s.touch_test_manual = false;
+        s.touch_close_at = None;
+        s.touch_offsets.clear();
+        s.touch_result = None;
+        s.touch_test_down = None;
+        s.touch_test = false;
+        s.touch_test_step = 0;
+        std::mem::take(&mut s.touch_from_settings)
+    });
+    eprintln!("nspanel-app: touch test cancelled");
+    ui.set_touch_test(false);
+    ui.set_touch_test_step(0);
+    if back {
+        ui.set_set_view(3);
+        shade::fill(ui);
+    }
+}
+
 /// Starts the touch calibration (the settings' Touch row, or the integration).
 fn start_touch_test(ui: &AppWindow) {
+    let from_settings = ui.get_set_view() == 3;
     with_state(|s| {
+        s.touch_from_settings = from_settings;
         s.touch_test_manual = true;
         s.touch_offsets.clear();
         s.touch_result = None;
@@ -3197,6 +3538,7 @@ fn show_proximity_test(ui: &AppWindow, s: &UiState, raw: f64) {
 
 fn on_setting(ui: &AppWindow, key: &str, value: &str) {
     let mut reload = false;
+    let mut lock = false;
     match key {
         // the integration's page settings are open: the panel shows that page (by its place among the
         // pages shown), so the picture there shows what is being set
@@ -3240,6 +3582,17 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
             }
             "screensaver_style" => s.settings.screensaver_style = value.to_string(),
             "proximity_wake" => s.settings.proximity_wake = value == "true",
+            "child_lock" => {
+                s.settings.child_lock = value == "true";
+                lock = true;
+            }
+            "rain_on_glass" => s.settings.rain_on_glass = value == "true",
+            "lightning" => {
+                s.settings.lightning = value == "true";
+                ui.set_lightning(s.settings.lightning);
+            }
+            // "24" or "12"
+            "time_format" => s.settings.time_24h = value != "12",
             "display_mode" => {
                 if matches!(value, "dashboard" | "assistant") {
                     s.settings.display_mode = value.to_string();
@@ -3280,9 +3633,35 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
         }
         s.settings.save();
     });
+    if lock {
+        device_options::lock_changed(ui);
+    }
+    apply_time_format(ui);
     apply_panel_config(ui);
     if reload {
         send(Command::Reload);
+    }
+}
+
+/// The time format from the settings to every clock: the UI's (`Clock.h24`), the app's texts (`clock::hm`), and the
+/// texts already on screen written again.
+fn apply_time_format(ui: &AppWindow) {
+    let on = with_state(|s| s.settings.time_24h);
+    if clock::h24() == on && ui.global::<Clock>().get_h24() == on {
+        return;
+    }
+    clock::set_h24(on);
+    ui.global::<Clock>().set_h24(on);
+    update_clock(ui);
+    with_state(|s| {
+        alarms::refresh(ui, s);
+        info::refresh(ui, s);
+        cal::refresh(ui, s);
+        todo::refresh(ui, s);
+    });
+    refresh_pages(ui);
+    if ui.get_set_view() > 0 {
+        shade::fill(ui);
     }
 }
 
@@ -3292,6 +3671,8 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
     stir(ui);
     match what {
         "saver.wake" => wake(ui),
+        w if w.starts_with("lock.") || w.starts_with("prox.") => device_options::act(ui, w, value),
+        "touch.cancel" => cancel_touch_test(ui),
         "timers.stop" => stop_ringing(ui, "tap"),
         "timers.more" => ring_more(ui),
         w if w.starts_with("alarms.") || w.starts_with("alarm.") => alarms::act(ui, w, value),
@@ -3302,8 +3683,16 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 windows::tap(ui, x, y);
             }
         }
+        // a finger wiping the drops off the glass (H1): its places along the stroke, then its end
+        "glass.wipe" => {
+            let mut it = value.split(':').map(|v| v.parse::<f32>().ok());
+            if let (Some(Some(x)), Some(Some(y))) = (it.next(), it.next()) {
+                glass::wipe(x, y);
+            }
+        }
+        "glass.wipe-end" => glass::wipe_end(),
         w if w.starts_with("timers.") || w.starts_with("watch.") => timers_act(ui, w, value),
-        "voice.close" => ui.set_voice_on(false),
+        "voice.close" => close_voice_view(ui),
         // the bell: the notifications page, or the list as a temporary page when the panel has none
         "notes.open" => {
             if !go_to_page(ui, "info") {
@@ -3332,18 +3721,24 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             }
             ui.set_timers_sheet(value.parse::<i32>().unwrap_or(-1));
         }
-        "strip.close" => ui.set_strip_on(false),
+        "strip.close" => {
+            alerts::act(ui, what);
+            with_state(|s| s.strip_until = None);
+        }
         "status.fold" | "strip.open" | "info.crit-silence" => alerts::act(ui, what),
         "set.touch" => start_touch_test(ui),
+        // the time format from a look's own 12H / 24H key ("true" 24-hour, "false" 12-hour): kept, applied to every
+        // clock, reported to the integration
+        "set.h24" => on_setting(ui, "time_format", if value == "false" { "12" } else { "24" }),
         "shade.open" => shade::open(ui),
         "shade.peek" => shade::fill(ui),
         // A home widget's view: clock → timers, date / event → calendar,
-        // weather now / curve / hours / days → weather, music → music.
+        // weather now / curve / hours / days / details → weather, music → music.
         "home.tap" => {
             let kind = match value {
                 "0" => "timers",
                 "1" | "3" => "calendar",
-                "2" | "4" | "5" | "6" => "weather",
+                "2" | "4" | "5" | "6" | "11" => "weather",
                 "7" => "music",
                 _ => return,
             };
@@ -3358,9 +3753,12 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         }
         "music.settings-close" => ui.set_music_settings(false),
         "music.look" => page_set(ui, "music", Some(value.parse().unwrap_or(0)), Value::Null),
-        // the camera and notification pages' sheets
-        "cam.fit" => page_set(ui, "camera", None, json!({ "fit": value })),
-        "info.look" => page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null),
+        // the notification page's look
+        "info.look" => {
+            page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null);
+            // the new look's pictures (the pager, the fridge door and notes) at once, not when the integration answers
+            with_state(|s| info::refresh(ui, s));
+        }
         "music.holds" => page_set(ui, "music", None, json!({ "holds": value.parse::<i64>().unwrap_or(0) })),
         "music.scroll" => page_set(ui, "music", None, json!({ "scroll": value == "1" })),
         "music.blur" => {
@@ -3416,12 +3814,22 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 "music.play" => {
                     call("media_player", "media_play_pause", &entity, json!({}));
                     // the glyph turns at once; the player's next state confirms it, or after 3 s the
-                    // views show its real state again
+                    // views show its real state again. A pause holds the position of this moment (the widget's
+                    // struct keeps the one of its last full refresh: the running time has its own property).
                     let mut m = ui.get_home_music();
                     m.playing = !m.playing;
-                    let held = (m.playing, Instant::now(), m.pos);
-                    with_state(|s| s.music_hold = Some(held));
+                    let pos = with_state(|s| pages::home_music(&s.states, &entity, None, m.accent).pos);
+                    m.pos = pos;
+                    let held = (m.playing, Instant::now(), pos);
+                    with_state(|s| {
+                        s.music_hold = Some(held);
+                        s.music_skip = None;
+                    });
                     ui.set_music_playing(m.playing);
+                    if !m.playing {
+                        ui.set_music_pos(pos);
+                        ui.set_home_music_pos(pos);
+                    }
                     ui.set_home_music(m);
                     let weak = ui.as_weak();
                     slint::Timer::single_shot(Duration::from_secs(3), move || {
@@ -3433,8 +3841,14 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 // the turntable's arm: dropped on its rest pauses, dropped on the record plays
                 "music.pause" => call("media_player", "media_pause", &entity, json!({})),
                 "music.resume" => call("media_player", "media_play", &entity, json!({})),
-                "music.next" => call("media_player", "media_next_track", &entity, json!({})),
-                "music.prev" => call("media_player", "media_previous_track", &entity, json!({})),
+                "music.next" | "music.prev" => {
+                    call("media_player", if what == "music.next" { "media_next_track" } else { "media_previous_track" }, &entity, json!({}));
+                    let playing = ui.get_music_playing();
+                    with_state(|s| {
+                        let from = track_key(&pages::home_music(&s.states, &entity, None, slint::Color::default()));
+                        s.music_skip = Some(MusicSkip { at: Instant::now(), from, playing, to: None });
+                    });
+                }
                 "music.shuffle" => call("media_player", "shuffle_set", &entity, json!({"shuffle": !ui.get_music_shuffle()})),
                 "music.repeat" => {
                     let next = match ui.get_music_repeat() {
@@ -3480,6 +3894,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // browses for Home Assistant when the setup screen asks for it.
     let mdns_browser = Arc::new(mdns::Browser::default());
     mdns::spawn(vec![esphome::mdns_service(), sendspin::mdns_service()], mdns_browser.clone());
+    let _ = MDNS_BROWSER.set(mdns_browser.clone());
     let shared = Arc::new(ha::Shared::default());
     // development install: the system log kept on the data partition and sent to Home Assistant
     devlog::spawn();
@@ -3675,6 +4090,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_speaker_muted(settings.volume == 0);
     let ringing_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     ui.set_mic_muted(settings.mic_muted);
+    ui.set_lightning(settings.lightning);
+    // the drops on the glass: how much of the screen shows a photo page with nothing over it, and whether a stroke
+    // there may wipe
+    {
+        let (see, wet) = (ui.as_weak(), ui.as_weak());
+        glass::connect(
+            move || see.upgrade().map_or(0.0, |ui| ui.get_glass_k()),
+            move |b| {
+                if let Some(ui) = wet.upgrade() {
+                    ui.set_glass_wet(b);
+                }
+            },
+        );
+    }
     ui.set_voice_assistant("".into());
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
     STATE.with(|s| {
@@ -3720,6 +4149,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             touch_result: None,
             touch_close_at: None,
             touch_started: None,
+            touch_from_settings: false,
             touch_test_down: None,
             web_pull: None,
             web_pulled: None,
@@ -3755,8 +4185,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             art_tx: None,
             art: None,
             show_until: None,
+            strip_until: None,
             last_lux_report: Instant::now(),
             music_hold: None,
+            music_skip: None,
+            art_player: String::new(),
             digits: Default::default(),
             prev_digits: Default::default(),
             flip_at: None,
@@ -3776,10 +4209,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             dev_wx: None,
         })
     });
-    // The look before the first frame (auto theme: the light sensor now).
+    // The look before the first frame (auto theme: the light sensor now), and the time format.
     with_state(|s| {
         s.lux = s.light.lux();
         update_theme(&ui, s);
+        clock::set_h24(s.settings.time_24h);
+        ui.global::<Clock>().set_h24(s.settings.time_24h);
     });
     apply_panel_config(&ui);
     update_clock(&ui);
@@ -3856,9 +4291,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Pages that fetch while on screen (cameras) start or stop.
         if let Some(ui) = weak.upgrade() {
             close_page_sheets(&ui);
-            if ui.get_pages().row_data(now as usize).is_some_and(|p| p.kind == "timers") {
-                synth::timers_opened();
-            }
+            synth::page_changed();
             leave_temporary_page(&ui, now);
             with_state(|s| cam::refresh(&ui, s));
             reroll_lines(ui.as_weak());
@@ -3986,6 +4419,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(b) = v.get("frame_stats").and_then(Value::as_bool) {
                 gpu::FRAME_STATS.store(b, Ordering::SeqCst);
             }
+            // Development: the glass drops' GPU pass off / on ({"glass_pass": false}, for measurements)
+            if let Some(b) = v.get("glass_pass").and_then(Value::as_bool) {
+                glass::set_pass(b);
+                ui.window().request_redraw();
+            }
             if let Some(a) = v.get("assist").and_then(Value::as_array) {
                 ui.set_voice_heard(a.get(1).and_then(Value::as_str).unwrap_or("").into());
                 ui.set_voice_answer(a.get(2).and_then(Value::as_str).unwrap_or("").into());
@@ -4037,6 +4475,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     });
+
+    // the Wi-Fi screens (settings → Wi-Fi, the setup screen's Wi-Fi card)
+    wifi::init(&ui);
 
     let (config, auth) = match (config, auth) {
         (Ok(c), Some(a)) => (c, a),
@@ -4198,6 +4639,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         || ui.get_timers_ringing()
                         || ui.get_setup()
                         || ui.get_prox_test()
+                        || ui.get_prox_cal_on()
+                        || ui.get_child_lock_open()
                         || ui.get_intro_visible())
             }),
             changed: Box::new(move |on| changed_view.set_direct(on)),
@@ -4228,6 +4671,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
                 _ => {
                     let Some((at, x0, y0, moves)) = s.touch_test_down.take() else { return None };
+                    // done: the result stays until the view closes
+                    if s.touch_test_step >= 9 {
+                        return None;
+                    }
                     let held = at.elapsed();
                     let i = s.touch_test_step.min(8);
                     let (tx, ty) = TOUCH_TEST_POINTS[i];
@@ -4238,6 +4685,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         (dx * dx + dy * dy).sqrt(),
                         held.as_millis()
                     );
+                    // only a touch near the point counts (a tap anywhere else is not a measurement)
+                    if !touch_test_hit((dx, dy)) {
+                        return Some((s.touch_test_step, false));
+                    }
                     if s.touch_test_step < 8 || (s.touch_test_step == 8 && held >= TOUCH_TEST_HOLD) {
                         s.touch_test_step += 1;
                         // measured with the correction in place: the offset left over adds to it
@@ -4246,14 +4697,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     if s.touch_test_step == 9 && s.touch_test_manual {
                         finish_touch_test(s);
                     }
-                    return Some(s.touch_test_step);
+                    return Some((s.touch_test_step, true));
                 }
             }
             None
         });
-        if let Some(step) = step {
+        if let Some((step, hit)) = step {
             ui.set_touch_test_step(step as i32);
-            ui.set_touch_test_text(touch_test_text(step).into());
+            ui.set_touch_test_text(if hit { touch_test_text(step) } else { touch_test_miss_text(step) }.into());
         }
     });
 
@@ -4324,4 +4775,32 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = VERSION;
     ui.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod music_skip_tests {
+    use super::{skip_step, SkipStep};
+
+    #[test]
+    fn a_skip_never_flips_back() {
+        // Next pressed on "A": the player still says "A", then "B", then "A" again for a moment, then "B"
+        assert_eq!(skip_step("A", "A", false), SkipStep::Waiting);
+        assert_eq!(skip_step("A", "B", false), SkipStep::NewTrack);
+        assert_eq!(skip_step("A", "A", true), SkipStep::OldAgain);
+        assert_eq!(skip_step("A", "B", true), SkipStep::NewTrack);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn touch_test_counts_only_near_the_point() {
+        assert!(touch_test_hit((0.0, 0.0)));
+        // 40 px away: still the point
+        assert!(touch_test_hit((24.0, -32.0)));
+        assert!(!touch_test_hit((30.0, 30.0)));
+        assert!(!touch_test_hit((200.0, 0.0)));
+    }
 }

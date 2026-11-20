@@ -458,6 +458,17 @@ impl PanelPlatform {
     }
 }
 
+/// The drops on the glass move (GPU build; they are drawn only there).
+#[cfg(feature = "gpu")]
+fn glass_frames() -> bool {
+    crate::glass::wants_frame()
+}
+
+#[cfg(not(feature = "gpu"))]
+fn glass_frames() -> bool {
+    false
+}
+
 /// JSON commands from the development input FIFO, handled by the UI timer.
 pub static DEV_COMMANDS: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
@@ -511,7 +522,7 @@ impl Platform for PanelPlatform {
             let web_waiting = WEB_NEXT.lock().unwrap().is_some() && !flip_pending;
             let mut timeout_ms: i32 = if web_waiting {
                 0
-            } else if self.window.has_active_animations() {
+            } else if self.window.has_active_animations() || glass_frames() {
                 // GPU: the next frame is drawn while this one waits for its flip
                 // (the renderer blocks before its swap), so draw again at once.
                 if cfg!(feature = "gpu") {

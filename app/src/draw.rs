@@ -51,8 +51,9 @@ pub enum Job {
     TapeItem { text: String, tint: Tint, seed: u32, due: String, due_state: i32, note: String, struck: bool },
     /// The label look's header: the list name and what is left.
     TapeHead { name: String, count: String, seed: u32 },
-    /// The mixing desk's tiny label under a fader.
-    DeskTape { text: String, tint: Tint, seed: u32 },
+    /// The mixing desk's tiny label under a fader, its strip at most `width` px wide (smaller letters or two lines
+    /// when the text is long).
+    DeskTape { text: String, tint: Tint, seed: u32, width: u32 },
     /// A to-do item written on the notepad (rows of 36 px).
     HandItem { text: String, seed: u32, due: String, due_state: i32, note: String, ticked: bool, faded: bool },
     /// The notepad's top margin: the list name and what is left.
@@ -65,6 +66,66 @@ pub enum Job {
     Fridge { title: String, message: String, foot: String, level: i32, seed: u32, big: bool },
     /// A wall calendar day: up to two notes in pen, "+n", today circled.
     Cell { notes: Vec<(String, Ink)>, today: bool, seed: u32 },
+}
+
+/// The desk label's letter sizes, largest first, and its line height (× the size) when it takes two lines.
+#[allow(dead_code)]
+const DESK_SIZES: [f32; 4] = [10.0, 9.0, 8.0, 7.5];
+#[allow(dead_code)]
+const DESK_LINE: f32 = 1.2;
+
+/// How a desk label fits a strip whose text may be `max` px wide: its letter size and its lines. One line in the
+/// usual size or a size smaller; else two lines split at the space that keeps the longer line shortest, from a size
+/// smaller down to the smallest; else one line in the smallest sizes; only a word too long even then is cut with "…".
+/// `width(line, size)` measures a line.
+#[allow(dead_code)]
+pub fn desk_lines(text: &str, max: f32, width: impl Fn(&str, f32) -> f32) -> (f32, Vec<String>) {
+    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
+    for &px in &DESK_SIZES[..2] {
+        if width(&text, px) <= max {
+            return (px, vec![text]);
+        }
+    }
+    let words: Vec<&str> = text.split(' ').collect();
+    let split = |px: f32| {
+        (1..words.len())
+            .map(|k| (words[..k].join(" "), words[k..].join(" ")))
+            .min_by(|a, b| {
+                let wa = width(&a.0, px).max(width(&a.1, px));
+                let wb = width(&b.0, px).max(width(&b.1, px));
+                wa.total_cmp(&wb)
+            })
+    };
+    for &px in &DESK_SIZES[1..] {
+        if let Some((a, b)) = split(px) {
+            if width(&a, px).max(width(&b, px)) <= max {
+                return (px, vec![a, b]);
+            }
+        }
+    }
+    for &px in &DESK_SIZES[2..] {
+        if width(&text, px) <= max {
+            return (px, vec![text]);
+        }
+    }
+    let px = DESK_SIZES[DESK_SIZES.len() - 1];
+    let cut = |line: String| {
+        if width(&line, px) <= max {
+            return line;
+        }
+        let mut chars: Vec<char> = line.chars().collect();
+        while !chars.is_empty() && width(&(chars.iter().collect::<String>() + "…"), px) > max {
+            chars.pop();
+        }
+        while chars.last() == Some(&' ') {
+            chars.pop();
+        }
+        chars.iter().collect::<String>() + "…"
+    };
+    match split(px) {
+        Some((a, b)) => (px, vec![cut(a), cut(b)]),
+        None => (px, vec![cut(text.clone())]),
+    }
 }
 
 /// A stable seed for a text.
@@ -211,7 +272,7 @@ mod skia {
         match job {
             Job::Tape { text, tint, small, seed } => tape(f, text, *tint, *small as u8, *seed, false, false, 448.0),
             Job::TapeLabel { text, tint, small, seed, max_w, rim } => tape_label(f, text, *tint, *small as u8, *seed, *max_w as f32, *rim),
-            Job::DeskTape { text, tint, seed } => tape(f, text, *tint, 2, *seed, false, false, 72.0),
+            Job::DeskTape { text, tint, seed, width } => tape(f, text, *tint, 2, *seed, false, false, *width as f32),
             Job::TapeItem { text, tint, seed, due, due_state, note, struck } => {
                 tape_item(f, text, *tint, *seed, due, *due_state, note, *struck)
             }
@@ -567,29 +628,53 @@ mod skia {
         let mut rng = Rng::new(seed as u64);
         let printed = matches!(tint, Tint::Yellow | Tint::White);
         // size 0: an item's tape, 1: the due date's and the note's, 2: the mixing desk's
-        let (h, fs, ls, pad) = tape_metrics(size);
+        let (mut h, mut fs, ls, pad) = tape_metrics(size);
         let small = size > 0;
+        // the desk's label is as wide as its strip (`max_w`, the visible tape): smaller letters or two lines first
+        let desk: Option<Vec<String>> = if size == 2 {
+            let fonts: Vec<(f32, Font)> = super::DESK_SIZES.iter().filter_map(|&px| f.font(NOTO, 700, px * sf).map(|ft| (px, ft))).collect();
+            let measure = |t: &str, px: f32| {
+                fonts.iter().find(|(s, _)| *s == px).map_or(f32::MAX, |(_, ft)| {
+                    t.chars().map(|c| adv(ft, c) / sf).sum::<f32>() + ls * t.chars().count().saturating_sub(1) as f32
+                })
+            };
+            let (px, lines) = super::desk_lines(&text.to_uppercase(), max_w - 2.0 * pad, measure);
+            fs = px;
+            if lines.len() > 1 {
+                h = (2.0 * super::DESK_LINE * px + 5.0).ceil() as usize;
+            }
+            Some(lines)
+        } else {
+            None
+        };
         let font = f.font(NOTO, 700, fs * sf)?;
         let width_of = |t: &[char]| {
             t.iter().map(|c| if *c == MARK { fs * MARK_EM } else { adv(&font, *c) / sf }).sum::<f32>() + ls * t.len().saturating_sub(1) as f32
         };
-        let mut chars: Vec<char> = text.to_uppercase().chars().collect();
-        let limit = max_w - 2.0 * pad - 8.0;
-        if width_of(&chars) > limit {
-            loop {
-                let mut t = chars.clone();
-                t.push('…');
-                if chars.is_empty() || width_of(&t) <= limit {
-                    break;
+        let rows: Vec<Vec<char>> = match desk {
+            Some(lines) => lines.iter().map(|l| l.chars().collect()).collect(),
+            None => {
+                let mut chars: Vec<char> = text.to_uppercase().chars().collect();
+                let limit = max_w - 2.0 * pad - 8.0;
+                if width_of(&chars) > limit {
+                    loop {
+                        let mut t = chars.clone();
+                        t.push('…');
+                        if chars.is_empty() || width_of(&t) <= limit {
+                            break;
+                        }
+                        chars.pop();
+                    }
+                    while chars.last() == Some(&' ') {
+                        chars.pop();
+                    }
+                    chars.push('…');
                 }
-                chars.pop();
+                vec![chars]
             }
-            while chars.last() == Some(&' ') {
-                chars.pop();
-            }
-            chars.push('…');
-        }
-        let wn = (width_of(&chars) + 2.0 * pad).ceil() as usize;
+        };
+        let text_w = rows.iter().map(|r| width_of(r)).fold(0.0f32, f32::max);
+        let wn = (text_w + 2.0 * pad).ceil() as usize;
         let (w, hh) = (wn * S, h * S);
         // the cut ends: a slight slant and a ragged line, each end on its own
         let slant_l = rng.uniform(-2.2, 2.2) * sf;
@@ -620,42 +705,47 @@ mod skia {
             let mut surf = surfaces::raster(&info, None, None)?;
             let (_, m) = font.metrics();
             let (asc, desc) = (-m.ascent, m.descent);
-            let y0 = (hh as f32 - (asc + desc)) / 2.0 + 0.6 * sf;
+            // one line in the middle; two lines (the desk's) a line height apart, each centred
+            let lh = if rows.len() > 1 { super::DESK_LINE * fs * sf } else { asc + desc };
+            let top = (hh as f32 - lh * rows.len() as f32) / 2.0 + (lh - (asc + desc)) / 2.0 + 0.6 * sf;
             {
                 let canvas = surf.canvas();
                 canvas.clear(Color::TRANSPARENT);
                 let mut p = Paint::default();
                 p.set_anti_alias(true);
                 p.set_color(Color::WHITE);
-                let mut x = pad * sf;
-                let mut boxes = Vec::new();
-                for ch in &chars {
-                    let jy = rng.uniform(-0.45, 0.45) * sf;
-                    let base = y0 + jy + asc;
-                    if *ch == MARK {
-                        // a triangle the height of the capitals
-                        let (mw, ch_h) = (fs * MARK_EM * sf, asc * 0.72);
-                        let mut pb = PathBuilder::new();
-                        pb.move_to((x + 0.06 * mw, base - ch_h));
-                        pb.line_to((x + 0.94 * mw, base - ch_h / 2.0));
-                        pb.line_to((x + 0.06 * mw, base));
-                        pb.close();
-                        canvas.draw_path(&pb.detach(), &p);
-                        x += mw + ls * sf;
-                        continue;
+                for (r, chars) in rows.iter().enumerate() {
+                    let y0 = top + r as f32 * lh;
+                    let mut x = (pad + (text_w - width_of(chars)) / 2.0) * sf;
+                    let mut boxes = Vec::new();
+                    for ch in chars {
+                        let jy = rng.uniform(-0.45, 0.45) * sf;
+                        let base = y0 + jy + asc;
+                        if *ch == MARK {
+                            // a triangle the height of the capitals
+                            let (mw, ch_h) = (fs * MARK_EM * sf, asc * 0.72);
+                            let mut pb = PathBuilder::new();
+                            pb.move_to((x + 0.06 * mw, base - ch_h));
+                            pb.line_to((x + 0.94 * mw, base - ch_h / 2.0));
+                            pb.line_to((x + 0.06 * mw, base));
+                            pb.close();
+                            canvas.draw_path(&pb.detach(), &p);
+                            x += mw + ls * sf;
+                            continue;
+                        }
+                        let s = ch.to_string();
+                        canvas.draw_str(&s, (x, base), &font, &p);
+                        let (a, b) = font.measure_str(&s, Some(&p));
+                        if *ch != ' ' {
+                            boxes.push((x + b.left, x + b.right));
+                        }
+                        x += a + ls * sf;
                     }
-                    let s = ch.to_string();
-                    canvas.draw_str(&s, (x, base), &font, &p);
-                    let (a, b) = font.measure_str(&s, Some(&p));
-                    if *ch != ' ' {
-                        boxes.push((x + b.left, x + b.right));
-                    }
-                    x += a + ls * sf;
-                }
-                if struck {
-                    for (bx0, bx1) in boxes {
-                        let yc = y0 + asc * 0.62 + rng.uniform(-0.4, 0.4) * sf;
-                        canvas.draw_rect(Rect::from_ltrb(bx0 + 0.3 * sf, yc - sf, bx1 - 0.3 * sf, yc + sf), &p);
+                    if struck {
+                        for (bx0, bx1) in boxes {
+                            let yc = y0 + asc * 0.62 + rng.uniform(-0.4, 0.4) * sf;
+                            canvas.draw_rect(Rect::from_ltrb(bx0 + 0.3 * sf, yc - sf, bx1 - 0.3 * sf, yc + sf), &p);
+                        }
                     }
                 }
             }
@@ -1130,5 +1220,34 @@ mod skia {
         let note = sh.image()?;
         let ang = rng.uniform(1.0, 4.0) * rng.sign();
         tilt(&note, ang, 10.0, 4.0, 2.0, 4.0, 0.35)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::desk_lines;
+
+    /// Capitals about 0.62 of the size wide, 0.5 px apart (like the desk's Noto Sans Bold).
+    fn w(t: &str, px: f32) -> f32 {
+        let n = t.chars().count() as f32;
+        n * 0.62 * px + 0.5 * (n - 1.0).max(0.0)
+    }
+
+    #[test]
+    fn desk_labels_fit_their_strip() {
+        // short: one line in the usual size
+        assert_eq!(desk_lines("DESK", 42.0, w), (10.0, vec!["DESK".to_string()]));
+        // a little long: one size smaller
+        assert_eq!(desk_lines("KITCHEN", 43.0, w), (9.0, vec!["KITCHEN".to_string()]));
+        // two words that do not fit in one line: two lines, never one cut word
+        let (px, lines) = desk_lines("SHUTTER LEFT", 42.0, w);
+        assert_eq!(lines, vec!["SHUTTER".to_string(), "LEFT".to_string()]);
+        assert!(lines.iter().all(|l| w(l, px) <= 42.0));
+        // three words: the split that keeps the longer line shortest
+        assert_eq!(desk_lines("CEILING LIGHT LEFT", 70.0, w), (9.0, vec!["CEILING".to_string(), "LIGHT LEFT".to_string()]));
+        // one long word: the smallest size, cut only when even that does not fit
+        let (px, lines) = desk_lines("DEHUMIDIFIER", 42.0, w);
+        assert_eq!(px, 7.5);
+        assert!(lines[0].ends_with('…') && w(&lines[0], px) <= 42.0);
     }
 }

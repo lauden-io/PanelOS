@@ -66,6 +66,7 @@ component NixieGlass inherits Rectangle {
     in property <int> d;
     in property <float> f: 1;             // the glow, never quite steady
     width: 54px; height: 132px;
+    property <float> lit: root.d >= 0 && root.d <= 9 ? 1 : 0;   // -1: an unlit tube (12-hour mode's first hour tube before 10)
     // a digit change crossfades with an afterglow (as 25.T9): the old cathode dies over 120 ms, the new lights over 60 ms
     property <int> cur: -1;
     property <int> old: -1;
@@ -92,7 +93,7 @@ component NixieGlass inherits Rectangle {
     }
     for w[i] in [{ s: 11px, c: #ff5a00, o: 0.16 }, { s: 6px, c: #ff7a1a, o: 0.42 }, { s: 3px, c: #ffb066, o: 0.9 }, { s: 1.2px, c: #fff0dc, o: 1.0 }]: Path {
         x: 1px; y: 18px; width: 52px; height: 88px; viewbox-x: -8; viewbox-y: -8; viewbox-width: 52; viewbox-height: 88;
-        fill: transparent; stroke: w.c; stroke-width: w.s; stroke-line-cap: round; stroke-line-join: round; opacity: w.o * root.new-k * (i < 3 ? root.f : 1);
+        fill: transparent; stroke: w.c; stroke-width: w.s; stroke-line-cap: round; stroke-line-join: round; opacity: w.o * root.new-k * root.lit * (i < 3 ? root.f : 1);
         commands: root.d >= 0 && root.d <= 9 ? root.nx[root.d] : root.nx[0]; }
     Path { x: 0; y: 0; width: 54px; height: 124px; viewbox-width: 54; viewbox-height: 124; fill: transparent; stroke: #b9967a; stroke-width: 0.6px; opacity: 0.34;
         commands: "M 43 14 L 47 18 M 11 14 L 7 18 M 34 14 L 47 27 M 20 14 L 7 27 M 25 14 L 47 36 M 29 14 L 7 36 M 16 14 L 47 45 M 38 14 L 7 45 M 7 14 L 47 54 M 47 14 L 7 54 M 7 23 L 47 63 M 47 23 L 7 63 M 7 32 L 47 72 M 47 32 L 7 72 M 7 41 L 47 81 M 47 41 L 7 81 M 7 50 L 47 90 M 47 50 L 7 90 M 7 59 L 47 99 M 47 59 L 7 99 M 7 68 L 47 108 M 47 68 L 7 108 M 7 77 L 42 112 M 47 77 L 12 112 M 7 86 L 33 112 M 47 86 L 21 112 M 7 95 L 24 112 M 47 95 L 30 112 M 7 104 L 15 112 M 47 104 L 39 112"; }
@@ -165,7 +166,8 @@ component WalnutPlinth inherits Rectangle {
 // Style 8: the nixie tubes as a clock (board C1): hh:mm, seconds optional, the colon as two neon dots, on the walnut
 // plinth; nothing else behind them. Native frame 302 x 168 (438 x 168 with seconds).
 export component NixieClock inherits Rectangle {
-    in property <string> hh;
+    in property <string> hh;              // the hour shown (12-hour mode: "6", its first tube dark)
+    in property <string> ampm;            // "" 24-hour; "AM" / "PM": a small neon lamp beside the minutes, lit for PM
     in property <string> mm;
     in property <float> seconds;          // 0..60
     in property <bool> show-seconds;
@@ -176,6 +178,7 @@ export component NixieClock inherits Rectangle {
     property <int> h: root.hh.to-float();
     property <int> m: root.mm.to-float();
     property <int> s: Math.floor(root.seconds);
+    property <int> lead: root.ampm != "" && root.h < 10 ? -1 : Math.floor(root.h / 10);
     // the glow of each tube, never quite steady (12 times a second)
     property <float> ft;
     Timer { interval: 80ms; running: root.live; triggered => { root.ft = animation-tick() / 1ms; } }
@@ -186,9 +189,9 @@ export component NixieClock inherits Rectangle {
         transform-scale-x: root.k; transform-scale-y: root.k; transform-origin: { x: self.width / 2, y: self.height / 2 };
         WalnutPlinth { x: 9px; y: 132px; wide: root.show-seconds; }
         // the digits: 60 px apart in a pair, 16 px for a colon (tube lefts from the board's layout)
-        for t[i] in root.show-seconds ? [{ x: 26, d: Math.floor(root.h / 10) }, { x: 86, d: Math.mod(root.h, 10) }, { x: 162, d: Math.floor(root.m / 10) },
+        for t[i] in root.show-seconds ? [{ x: 26, d: root.lead }, { x: 86, d: Math.mod(root.h, 10) }, { x: 162, d: Math.floor(root.m / 10) },
                 { x: 222, d: Math.mod(root.m, 10) }, { x: 298, d: Math.floor(root.s / 10) }, { x: 358, d: Math.mod(root.s, 10) }]
-            : [{ x: 26, d: Math.floor(root.h / 10) }, { x: 86, d: Math.mod(root.h, 10) }, { x: 162, d: Math.floor(root.m / 10) }, { x: 222, d: Math.mod(root.m, 10) }]:
+            : [{ x: 26, d: root.lead }, { x: 86, d: Math.mod(root.h, 10) }, { x: 162, d: Math.floor(root.m / 10) }, { x: 222, d: Math.mod(root.m, 10) }]:
             NixieGlass { x: t.x * 1px; y: 0; d: t.d; f: root.fl(i); }
         for c in root.show-seconds ? [151, 287] : [151]: Rectangle {
             for yy in [46, 80]: Rectangle {
@@ -197,6 +200,17 @@ export component NixieClock inherits Rectangle {
                 Rectangle { x: (c - 2.6) * 1px; y: (yy - 2.6) * 1px; width: 5.2px; height: 5.2px; border-radius: 2.6px; background: #ffd8a8; }
             }
         }
+        // 12-hour mode: the PM lamp at the right end (a small neon bulb, lit for PM), "PM" stamped on the plinth under it
+        if root.ampm != "": pm := Rectangle {
+            property <float> lx: root.show-seconds ? 426 : 290;
+            property <bool> on: root.ampm == "PM";
+            Rectangle { x: (pm.lx - 7) * 1px; y: 92px; width: 14px; height: 21px; border-radius: 7px; background: #180e0847; border-width: 1px; border-color: #ffffff47; }
+            if pm.on: Rectangle { x: (pm.lx - 11) * 1px; y: 91.5px; width: 22px; height: 22px; border-radius: 11px; background: #ff6a00; opacity: 0.2 * root.fl(7); }
+            if pm.on: Rectangle { x: (pm.lx - 6) * 1px; y: 96.5px; width: 12px; height: 12px; border-radius: 6px; background: #ff8a2a; opacity: 0.5; }
+            Rectangle { x: (pm.lx - 3.5) * 1px; y: 99px; width: 7px; height: 7px; border-radius: 3.5px; background: pm.on ? #ffd8a8 : #8a7462; opacity: pm.on ? 1 : 0.38; }
+            Text { x: (pm.lx - 23) * 1px; y: 138px; width: 30px; height: 14px; text: "PM"; font-size: 10px; font-weight: 700; letter-spacing: 1px;
+                color: #e0b884; opacity: 0.8; horizontal-alignment: center; vertical-alignment: center; }
+        }
     }
 }
 
@@ -204,7 +218,8 @@ export component NixieClock inherits Rectangle {
 // weekday and the date, AL when an alarm is on; the resin case (white in light mode) from 3 x 2 cells, the LCD alone
 // below that. A tap on the LCD lights it for 3 s.
 export component LcdClock inherits Rectangle {
-    in property <string> hh;
+    in property <string> hh;              // the hour shown ("6" in 12-hour mode; its first digit is blank before 10 anyway)
+    in property <string> ampm;            // "" 24-hour; "AM" / "PM": the PM segment above the seconds (a faint ghost for AM)
     in property <string> mm;
     in property <float> seconds;
     in property <string> weekday;         // "WE"
@@ -257,6 +272,7 @@ export component LcdClock inherits Rectangle {
                 Seg7 { d: Math.mod(root.m, 10); x0: 286; y0: 124; w: 40; h: 66; t: 8; ink: root.ink; lag: true; }
                 Seg7 { d: Math.floor(root.s / 10); x0: 334; y0: 162; w: 16; h: 28; t: 4; ink: root.ink; lag: true; }
                 Seg7 { d: Math.mod(root.s, 10); x0: 352; y0: 162; w: 16; h: 28; t: 4; ink: root.ink; lag: true; }
+                if root.ampm != "": Text { x: 336px; y: 134px; text: "PM"; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: root.ink; opacity: root.ampm == "PM" ? 1 : 0.08; }
                 Rectangle { x: 228.6px; y: 142.6px; width: 6.8px; height: 6.8px; border-radius: 3.4px; background: root.ink; opacity: root.colon; }
                 Rectangle { x: 225.6px; y: 168.6px; width: 6.8px; height: 6.8px; border-radius: 3.4px; background: root.ink; opacity: root.colon; }
             }
@@ -271,6 +287,7 @@ export component LcdClock inherits Rectangle {
                 Seg7 { d: Math.mod(root.m, 10); x0: 386; y0: 92; w: 28; h: 42; t: 6; ink: root.ink; lag: true; }
                 Seg7 { d: Math.floor(root.s / 10); x0: 420; y0: 114; w: 11; h: 20; t: 3; ink: root.ink; lag: true; }
                 Seg7 { d: Math.mod(root.s, 10); x0: 432; y0: 114; w: 11; h: 20; t: 3; ink: root.ink; lag: true; }
+                if root.ampm != "": Text { x: 421px; y: 96px; text: "PM"; font-size: 7px; font-weight: 700; letter-spacing: 0.5px; color: root.ink; opacity: root.ampm == "PM" ? 1 : 0.08; }
                 Rectangle { x: 342.6px; y: 101.6px; width: 4.8px; height: 4.8px; border-radius: 2.4px; background: root.ink; opacity: root.colon; }
                 Rectangle { x: 340.6px; y: 118.6px; width: 4.8px; height: 4.8px; border-radius: 2.4px; background: root.ink; opacity: root.colon; }
             }

@@ -1,9 +1,11 @@
 // Info / alert panel: what Home Assistant tells the panel (notify / announce, or alerts set in the integration).
-// A card pops up above any panel (info blue, warning amber; several in a row page through "1 of 3"); the notifications
-// page lists them, unread first. Critical alerts (smoke, CO, water) always take the whole screen in plain red, whatever the
-// look, and keep sounding until someone holds the button: the funky looks are for info and warnings only.
-import { Theme, Act, Words } from "theme.slint";
-import { Icon, GlowText, Crawl, DragSheet, Dropdown } from "widgets.slint";
+// The notifications page lists them, unread first; a tapped one opens in the page's look (the plain look: the
+// notification window's card, grown out of its row). Its settings come from the quick shade's page row, in the look's
+// own menu (39): a brand card, a magnetic whiteboard, the pager's LCD menu, the TV's on-screen menu. Critical alerts
+// (smoke, CO, water) always take the whole screen in plain red, whatever the look, and keep sounding until someone holds
+// the button: the funky looks are for info and warnings only.
+import { Theme, Act, Words, Clock } from "theme.slint";
+import { Icon, GlowText, Crawl, Dropdown, Segmented, TextButton, MenuHost, PageMenu } from "widgets.slint";
 
 export struct InfoNote {
     title: string,
@@ -41,33 +43,61 @@ component NoteRow inherits Rectangle {
     if root.n.unread: Rectangle { x: parent.width - 18px; y: 19px; width: 8px; height: 8px; border-radius: 4px; background: Theme.accent; }
 }
 
-// the pop-up card (also above any page for a new notification, with the prefix "pop")
-export component NoteCard inherits Rectangle {
+// A clock time (minutes of the day; below 0: not known yet) in the panel's time format (32.3). Style 0 "6:45 PM",
+// 1 "6:45PM" (the pager's LCD), 2 "6:45" (the TV news clock); 24-hour "18:45" in every style.
+export global NoteTime {
+    pure public function text(m: int, style: int) -> string {
+        if m < 0 {
+            return "--:--";
+        }
+        let h = Math.mod(Math.floor(m / 60), 24);
+        let mm = Math.mod(m, 60);
+        let m2 = (mm < 10 ? "0" : "") + mm;
+        if Clock.h24 {
+            return (h < 10 ? "0" : "") + h + ":" + m2;
+        }
+        let h12 = Math.mod(h, 12) == 0 ? 12 : Math.mod(h, 12);
+        return "" + h12 + ":" + m2 + (style == 2 ? "" : (style == 1 ? "" : " ") + (h < 12 ? "AM" : "PM"));
+    }
+}
+
+// The notification window's plain card (spec 30): 416 wide, padding 20 / 20 / 22, radius 26, the icon disc, title,
+// source · when, "i of n", the message (up to 5 lines), a picture, the buttons (the last the main one, in the level's
+// colour) and the time line. The window and the notifications page's plain look both show it (`prefix`: whose taps).
+export component PlainCard inherits Rectangle {
     in property <InfoNote> n;
-    in property <string> prefix: "info";
-    in property <int> index;
-    in property <int> count;
-    property <color> c: root.n.level == 1 ? Theme.warning : #4a8fe7;
-    height: cl.preferred-height; border-radius: 24px; background: Theme.surface;
-    TouchArea { }
-    cl := VerticalLayout { padding: 20px; spacing: 10px; alignment: start;
-        HorizontalLayout { spacing: 12px; alignment: start;
-            LevelIcon { icon: root.n.icon; level: root.n.level; size: 44px; }
+    in property <string> counter;
+    in property <float> left: 1;
+    in property <bool> until;
+    in property <string> prefix: "pop";
+    property <color> c: root.n.level == 1 ? #E0A840 : #4a8fe7;
+    border-radius: 26px;
+    background: Theme.dark ? #121314 : #ffffff;
+    border-width: 1px; border-color: Theme.dark ? #ffffff14 : #10111414;
+    drop-shadow-blur: 40px; drop-shadow-offset-y: 12px; drop-shadow-color: Theme.dark ? #00000073 : #00000040;
+    clip: true;
+    VerticalLayout { padding: 20px; padding-bottom: 22px; spacing: 10px; alignment: start;
+        HorizontalLayout { spacing: 12px; alignment: start; height: 44px;
+            Rectangle { width: 44px; height: 44px; border-radius: 22px; background: root.c.with-alpha(0.18);
+                Icon { width: parent.width; height: parent.height; text: root.n.icon; font-size: 24px; color: root.c; } }
             VerticalLayout { alignment: center; spacing: 0px; horizontal-stretch: 1;
                 Text { text: root.n.title; font-size: 20px; font-weight: 600; color: Theme.text; overflow: elide; }
                 Text { text: root.n.source + "  ·  " + root.n.when; font-size: 13px; color: Theme.muted; overflow: elide; } }
-            if root.count > 1: VerticalLayout { alignment: start;
-                Text { text: root.index + " of " + root.count; font-size: 12px; font-weight: 600; color: Theme.faint; } } }
-        Rectangle { height: min(mt.preferred-height, 88px); clip: true;
+            if root.counter != "": VerticalLayout { alignment: start;
+                Text { text: root.counter; font-size: 12px; font-weight: 600; color: Theme.faint; } } }
+        Rectangle { height: min(mt.preferred-height, 112px); clip: true;
             mt := Text { x: 0; y: 0; width: parent.width; height: parent.height; text: root.n.message; font-size: 16px; color: Theme.text; wrap: word-wrap; overflow: elide; } }
-        if root.n.has-image: Image { height: 196px; source: root.n.image; }
-        HorizontalLayout { spacing: 8px; alignment: end; padding-top: 4px;
+        if root.n.has-image: Image { height: 196px; source: root.n.image; image-fit: cover; }
+        HorizontalLayout { spacing: 8px; alignment: end; padding-top: 6px; height: 44px + 6px;
             for a[i] in root.n.actions: Rectangle { height: 44px; width: at.preferred-width + 36px; border-radius: 22px;
                 TouchArea { clicked => { Act.act(root.prefix + ".action", i); } }
                 background: i == root.n.actions.length - 1 ? root.c : Theme.surface-raised;
                 at := Text { x: 18px; y: 0; width: self.preferred-width; height: parent.height; text: a; font-size: 15px; font-weight: 600;
                     color: i == root.n.actions.length - 1 ? (root.n.level == 1 ? #1d1d1f : #ffffff) : Theme.text; vertical-alignment: center; } } }
     }
+    // the time: a 3 px Signal line at the bottom, shrinking from the right
+    if !root.until: Rectangle { x: 26px; y: parent.height - 8px - 3px; width: (parent.width - 52px) * root.left; height: 3px; border-radius: 1.5px;
+        background: #FF4A1C.with-alpha(0.65); }
 }
 
 // ---------------------------------------------------------------- pager look: a 90s pager with its LCD
@@ -98,14 +128,48 @@ component PagerLook inherits Rectangle {
     in property <image> led;               // the lit alert LED
     in property <int> first-row: 0;        // the first list row shown (the arrows scroll)
     in property <bool> backlight;          // 25.N3: lit while it buzzes for a new message
+    // its own menu on the LCD (39.3): MENU and the clock over the rule, then LOOK, FINISH, TIME and EXIT with a ▶ cursor
+    // and the chosen line inverted; the lines come on one after another (an LCD's lag)
+    in property <bool> menu;
+    in property <bool> menu-blank;         // leaving the menu: the LCD is empty for a moment, then the list comes back
+    in property <float> menu-t: 1000;      // ms since the menu came on
+    in property <int> menu-cur;
+    in property <[string]> menu-values;    // LOOK, FINISH, TIME
+    callback menu-key(int);                // ▲ 0, OK 1, ▼ 2 while the menu is on
+    callback menu-line(int);               // a tap on a menu line
     property <color> ink: #1e2a17;
+    property <bool> lcd-free: !root.menu && !root.menu-blank;
     Image { x: 0; y: 0; width: 480px; height: 480px; source: root.body; }
-    TouchArea { x: 78px; y: 332px; width: 100px; height: 56px; clicked => { Act.act("info.up", ""); } }
-    TouchArea { x: 190px; y: 332px; width: 100px; height: 56px; clicked => { Act.act("info.ok", ""); } }
-    TouchArea { x: 302px; y: 332px; width: 100px; height: 56px; clicked => { Act.act("info.down", ""); } }
+    for k[i] in [{ x: 78px, a: "info.up" }, { x: 190px, a: "info.ok" }, { x: 302px, a: "info.down" }]: TouchArea {
+        x: k.x; y: 332px; width: 100px; height: 56px;
+        clicked => {
+            if root.menu { root.menu-key(i); } else if root.lcd-free { Act.act(k.a, ""); }
+        }
+    }
     if root.notes.length > 0: Image { x: 390px; y: 64px; width: 44px; height: 44px; source: root.led; }
     if root.backlight: Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; background: #c8ff9a59; }
-    Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; clip: true;
+    if root.menu: Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; clip: true;
+        if root.menu-t >= 20: LcdText { x: 12px; y: 6px; width: parent.width - 24px; height: 22px; text: "MENU"; }
+        if root.menu-t >= 20: LcdText { x: 12px; y: 6px; width: parent.width - 24px; height: 22px; text: root.clock; align: TextHorizontalAlignment.right; }
+        if root.menu-t >= 20: Rectangle { x: 12px; y: 30px; width: parent.width - 24px; height: 2px; background: root.ink.with-alpha(0.6); }
+        for l[i] in ["LOOK", "FINISH", "TIME", "EXIT"]: Rectangle {
+            x: 12px; y: 38px + i * 30px; width: parent.width - 24px; height: 30px;
+            visible: root.menu-t >= 60 + i * 60;
+            background: i == root.menu-cur ? root.ink : transparent;
+            // the chosen line: inverted (lit ink on the dark bar, no shadow); the others in LCD ink with its shadow
+            if i != root.menu-cur: LcdText { x: 26px; y: 0; width: parent.width - 32px; height: parent.height; text: l; size: 16px; }
+            if i != root.menu-cur: LcdText { x: 26px; y: 0; width: parent.width - 32px; height: parent.height; size: 16px;
+                text: i < root.menu-values.length ? root.menu-values[i] : ""; align: TextHorizontalAlignment.right; }
+            if i == root.menu-cur: Text { x: 6px; y: 0; width: 14px; height: parent.height; text: "▶"; font-family: "DejaVu Sans Mono"; font-size: 16px;
+                font-weight: 700; color: #9aa77f; vertical-alignment: center; }
+            if i == root.menu-cur: Text { x: 26px; y: 0; width: parent.width - 32px; height: parent.height; text: l; font-family: "DejaVu Sans Mono"; font-size: 16px;
+                font-weight: 700; color: #9aa77f; vertical-alignment: center; }
+            if i == root.menu-cur: Text { x: 26px; y: 0; width: parent.width - 32px; height: parent.height; text: i < root.menu-values.length ? root.menu-values[i] : "";
+                font-family: "DejaVu Sans Mono"; font-size: 16px; font-weight: 700; color: #9aa77f; horizontal-alignment: right; vertical-alignment: center; }
+            TouchArea { clicked => { root.menu-line(i); } }
+        }
+    }
+    if root.lcd-free: Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; clip: true;
         LcdText { x: 12px; y: 6px; width: parent.width - 24px; height: 22px;
             text: root.notes.length == 0 ? "NO MSG" : root.open ? "MSG " + root.index + "/" + root.notes.length : root.notes.length + " MSG"; }
         LcdText { x: 12px; y: 6px; width: parent.width - 24px; height: 22px; text: root.clock; align: TextHorizontalAlignment.right; }
@@ -216,12 +280,13 @@ component FridgeLook inherits Rectangle {
 
 export component InfoPage inherits Rectangle {
     in property <bool> live: true;         // on screen (the news crawl runs only then)
+    in property <bool> current;            // the page shown (no screensaver over it): its menus close when it goes
     in property <int> look;                // 0 plain, 1 fridge, 2 pager, 3 news
     in property <[InfoNote]> notes;
     in property <length> scroll;
     in property <string> empty-title;      // the app picks these texts
     in property <string> empty-sub;
-    // the pop-up card (above any panel)
+    // the open notification (the plain look's window; the other looks show it in their own view)
     in property <bool> card;
     in property <InfoNote> card-note;
     in property <int> card-index;
@@ -235,9 +300,10 @@ export component InfoPage inherits Rectangle {
     in property <float> crit-hold;         // 0 … 1 while the button is held
     in property <float> crit-pulse: 1;
     in property <bool> crit-button: true;  // "hold to silence" (set in the integration; without it the alert ends when the sensor clears)
-    in property <bool> settings;
+    in property <bool> settings;           // the settings menu in the look's own object (39)
     // looks
-    in property <string> clock;
+    in property <int> minute: -1;          // the clock (minutes of the day) for the pager and the news clock
+    in property <int> finish;              // the pager's finish: 0 graphite, 1 purple, 2 clear, 3 off-white
     in property <string> pager-empty;
     in property <string> news-ticker;
     in property <int> news-epoch;
@@ -254,13 +320,39 @@ export component InfoPage inherits Rectangle {
     property <int> n-last;
     property <bool> arriving;
     property <duration> arrive-t0;
-    init => { root.n-last = root.n-count; }
+    init => { root.n-last = root.n-count; root.publish(); }
     changed n-count => { if root.n-count > root.n-last { root.arrive-t0 = animation-tick(); root.arriving = true; } root.n-last = root.n-count; }
     Timer { interval: 1100ms; running: root.arriving; triggered => { root.arriving = false; } }
     property <float> arrive-t: root.arriving ? (animation-tick() - root.arrive-t0) / 1ms : 10000;
     // N3: two 400 ms bursts at 30 Hz, +-2 px
     property <bool> buzzing: root.arrive-t < 400 || (root.arrive-t >= 600 && root.arrive-t < 1000);
     property <length> buzz: root.buzzing ? 2px * Math.sin(360deg * 30 * root.arrive-t / 1000) : 0px;
+
+    // ---------------------------------------------------------------- the page on screen
+    // The quick shade's page row (32.0) shows "Notifications settings · <look>" while this page is on screen and asks it to
+    // open its settings; a page that goes (another page, a temporary page, the screensaver, a ring) closes its menu and
+    // its open notification (#9).
+    property <[string]> look-names: [Words.line("ui.looks.info.0"), Words.line("ui.looks.info.1"), Words.line("ui.looks.info.2"), Words.line("ui.looks.info.3")];
+    property <string> look-name: Words.line("ui.looks.info." + root.look);
+    function publish() {
+        if root.current {
+            PageMenu.title = "Notifications settings";
+            PageMenu.look = root.look-name;
+            PageMenu.icon = root.look == 1 ? "\u{F028F}" : root.look == 2 ? "\u{F08D3}" : root.look == 3 ? "\u{F07F4}" : "\u{F0178}";
+            PageMenu.has-settings = true;
+        }
+    }
+    changed current => {
+        if root.current {
+            root.publish();
+        } else {
+            if root.settings { Act.act("info.settings-close", ""); }
+            if root.card { Act.act("info.close", ""); }
+        }
+    }
+    changed look-name => { root.publish(); }
+    property <int> open-request: PageMenu.open-request;
+    changed open-request => { if root.current { Act.act("info.settings", ""); } }
 
     // ---------------------------------------------------------------- plain: the notifications page
     if root.look == 0: Text { x: 16px; y: 46px; width: 330px; height: 34px; text: "Notifications"; font-size: 24px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
@@ -277,7 +369,8 @@ export component InfoPage inherits Rectangle {
         nl := VerticalLayout { x: 0; y: root.arrive-t < 220 ? -84px * Math.pow(1 - root.arrive-t / 220, 3) : 0px;
             width: root.width; padding-left: 16px; padding-right: 16px; padding-bottom: 40px; spacing: 8px; alignment: start;
             for m[i] in root.notes: NoteRow { n: m; opacity: i == 0 && root.arrive-t < 220 ? root.arrive-t / 220 : 1;
-                TouchArea { clicked => { Act.act("info.read", i); } } }
+                // the window grows out of this row (and shrinks back into it)
+                TouchArea { clicked => { root.read-y = parent.absolute-position.y - root.absolute-position.y; Act.act("info.read", i); } } }
             if root.notes.length == 0: Rectangle { height: 230px;
                 Icon { x: 0; y: 30px; width: parent.width; height: 72px; text: "\u{F0A91}"; font-size: 64px; color: Theme.faint; }
                 Text { x: 0; y: 112px; width: parent.width; height: 30px; text: root.empty-title; font-size: 22px; font-weight: 600; color: Theme.text;
@@ -288,28 +381,256 @@ export component InfoPage inherits Rectangle {
     // ---------------------------------------------------------------- looks
     if root.look == 1: FridgeLook { notes: root.notes; open: root.card; n: root.card-note; door: root.fridge-door; empty: root.fridge-empty; scroll: root.scroll;
         arrive-t: root.arrive-t; }
-    if root.look == 2: PagerLook { x: root.buzz; notes: root.notes; open: root.card; n: root.card-note; index: root.card-index; clock: root.clock; empty: root.pager-empty;
-        body: root.pager-body; led: root.pager-led; first-row: root.pager-first; backlight: root.arrive-t < 1100; }
-    if root.look == 3: NewsLook { live: root.live; notes: root.notes; open: root.card; n: root.card-note; clock: root.clock; ticker: root.news-ticker; ticker-epoch: root.news-epoch; empty: root.news-empty;
-        arrive-t: root.arrive-t; }
+    if root.look == 2: PagerLook { x: root.buzz; notes: root.notes; open: root.card; n: root.card-note; index: root.card-index; clock: NoteTime.text(root.minute, 1);
+        empty: root.pager-empty; body: root.pager-body; led: root.pager-led; first-row: root.pager-first; backlight: root.arrive-t < 1100;
+        menu: root.lcd-want && !root.lcd-leaving; menu-blank: root.lcd-want && root.lcd-leaving; menu-t: root.lcd-t; menu-cur: root.lcd-cur;
+        menu-values: [Words.line("ui.looks.info." + (root.lcd-pend >= 0 ? root.lcd-pend : root.look)).to-uppercase(), root.finish-names[root.finish],
+            Clock.h24 ? "24H" : "12H"];
+        menu-key(k) => {
+            if k == 0 { root.lcd-cur = Math.mod(root.lcd-cur + 3, 4); }
+            else if k == 2 { root.lcd-cur = Math.mod(root.lcd-cur + 1, 4); }
+            else { root.lcd-ok(); }
+        }
+        menu-line(i) => { root.lcd-cur = i; root.lcd-ok(); } }
+    if root.look == 3: NewsLook { live: root.live; notes: root.notes; open: root.card; n: root.card-note; clock: NoteTime.text(root.minute, 2); ticker: root.news-ticker;
+        ticker-epoch: root.news-epoch; empty: root.news-empty; arrive-t: root.arrive-t; }
 
-    // ---------------------------------------------------------------- plain pop-up card (the looks show their own)
-    if root.look == 0 && root.card: Rectangle { background: Theme.scrim; TouchArea { clicked => { Act.act("info.close", ""); } } }
-    if root.look == 0 && root.card: NoteCard { x: 16px; y: root.height - self.height - 24px; width: 448px; n: root.card-note; index: root.card-index; count: root.card-count; }
+    // ---------------------------------------------------------------- 39 plain: a tapped row opens the notification window
+    // Spec 30's plain card 1:1 (no time line) over a 55 % scrim, centred under the status bar. It grows out of the tapped row
+    // (from the row's box to its own, 220 ms ease-out); a button or a tap beside it shrinks it back into the row (140 ms
+    // ease-in), which is read now.
+    property <length> read-y: -1px;        // the tapped row's top (below 0: unknown, the window opens in place)
+    Rectangle { visible: false;
+        read-h := VerticalLayout { width: 416px; padding: 20px; padding-bottom: 22px; spacing: 10px;
+            Rectangle { height: 44px; }
+            Text { text: root.card-note.message; font-size: 16px; wrap: word-wrap; max-height: 112px; width: 376px; }
+            if root.card-note.has-image: Rectangle { height: 196px; }
+            Rectangle { height: 6px + 44px; } } }
+    read := MenuHost {
+        open: root.card && root.look == 0;
+        kind: 1; deep: true; in-ms: 220ms; out-ms: 140ms;
+        close => { Act.act("info.close", ""); }
+        property <length> wh: read-h.preferred-height;
+        property <length> wy: 263px - self.wh / 2;
+        property <float> k: self.open ? 1 - Math.pow(1 - clamp(self.t-in / 220, 0, 1), 3) : 1 - Math.pow(clamp(self.t-out / 140, 0, 1), 3);
+        property <bool> from-row: root.read-y >= 0;
+        if self.shown: Rectangle {
+            x: 32px; width: 416px; height: read.wh;
+            y: read.wy + (read.from-row ? (root.read-y + 36px - read.wy - read.wh / 2) * (1 - read.k) : 0px);
+            opacity: read.open ? Math.min(1, 0.4 + read.k) : read.k;
+            transform-scale-x: read.from-row ? 448 / 416 + (1 - 448 / 416) * read.k : 0.96 + 0.04 * read.k;
+            transform-scale-y: read.from-row ? 72px / read.wh + (1 - 72px / read.wh) * read.k : 0.96 + 0.04 * read.k;
+            transform-origin: { x: self.width / 2, y: self.height / 2 };
+            TouchArea { }
+            PlainCard { width: parent.width; height: parent.height; n: root.card-note; until: true; prefix: "info";
+                counter: root.card-count > 1 ? root.card-index + " of " + root.card-count : ""; }
+        }
+    }
 
-    // ---------------------------------------------------------------- the page's sheet: the look
-    // the settings: a sheet that follows the finger (DragSheet)
-    property <length> settings-need: 68px + 48px + 26px;
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.settings; need: root.settings-need;
+    // ---------------------------------------------------------------- 39 the settings, in the look's own menu
+    // Look (4) and Time format (32.3, panel-wide); the pager also its Finish (the same value as the integration's). A look
+    // change closes the menu and opens it again as the new look's menu.
+    property <[string]> finish-ids: ["graphite", "purple", "clear", "offwhite"];
+    property <[string]> finish-names: ["GRAPHITE", "PURPLE", "CLEAR", "OFF-WHITE"];
+    property <bool> swapping;
+    property <int> swap-to;
+    function switch-look(k: int) {
+        if k != root.look && !root.swapping {
+            root.swap-to = k;
+            root.swapping = true;
+        }
+    }
+    // the old menu leaves first; then the look changes and the new look's menu comes
+    Timer { interval: root.look == 3 ? 90ms : 120ms; running: root.swapping;
+        triggered => { root.swapping = false; Act.act("info.look", root.swap-to); } }
+    function set-h24(on: bool) { Act.act("set.h24", on ? "true" : "false"); }
+
+    // ---- 39.1 plain: the brand card (surface, "Notifications" in Space Grotesk 20, Done = 28.7 primary); 39.2 fridge: the
+    // magnetic whiteboard
+    set := MenuHost {
+        open: root.settings && !root.swapping && (root.look == 0 || root.look == 1);
+        kind: 1;
+        need: root.look == 1 ? 335px : 284px;
+        in-ms: root.look == 1 ? 340ms : 140ms; out-ms: 110ms;
         close => { Act.act("info.settings-close", ""); }
-        Text { x: 24px; y: 24px; height: 28px; text: "Notifications"; font-size: 18px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Icon { x: 146px; y: 24px; width: 28px; height: 28px; text: "\u{F02FD}"; font-size: 20px; color: Theme.muted; }
-        Text { x: parent.width - 24px - self.preferred-width; y: 24px; height: 28px; text: "Done"; font-size: 16px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Dropdown { x: 24px; y: 68px; width: parent.width - 48px;
-            options: [Words.line("ui.looks.info.0"), Words.line("ui.looks.info.1"), Words.line("ui.looks.info.2"), Words.line("ui.looks.info.3")];
-            selected: root.look; picked(i) => { Act.act("info.look", i); } }
+        // brand: 140 ms from 0.96 with a fade, from the top middle; it fades out in 110 ms
+        property <float> b-u: self.open ? 1 - Math.pow(1 - clamp(self.t-in / 140, 0, 1), 3) : 1;
+        property <float> b-o: self.open ? self.b-u : 1 - clamp(self.t-out / 110, 0, 1);
+        // whiteboard: it slaps onto the door like a note (25.N2: from 1.08 with a small bounce, the shadow settling, 200 ms),
+        // then its magnets land (1.35 → 1, 120 ms, 60 ms apart); it lifts off in 110 ms (to 1.04, fading)
+        property <float> w-t: self.open ? self.t-in : 1000;
+        property <float> w-k: clamp(self.w-t / 200, 0, 1);
+        property <float> w-s: self.open ? (self.w-t < 200 ? 1 + 0.08 * (1 - self.w-k) * Math.cos(self.w-k * 540deg) : 1)
+            : 1 + 0.04 * (1 - Math.pow(1 - clamp(self.t-out / 110, 0, 1), 3));
+        property <float> w-o: self.open ? clamp(self.w-t / 60, 0, 1) : 1 - clamp(self.t-out / 110, 0, 1);
+        property <float> w-lift: self.open ? 1 - clamp((self.w-t - 200) / 60, 0, 1) : 0;
+        if self.shown && root.look == 0: Rectangle {
+            x: set.menu-x; y: set.menu-y; width: set.menu-w; height: set.menu-h;
+            opacity: set.b-o;
+            transform-scale-x: 0.96 + 0.04 * set.b-u; transform-scale-y: 0.96 + 0.04 * set.b-u; transform-origin: { x: self.width / 2, y: 0 };
+            background: Theme.surface; border-radius: 14px; border-width: 1px; border-color: Theme.outline;
+            drop-shadow-blur: 32px; drop-shadow-offset-y: 12px; drop-shadow-color: #00000073;
+            TouchArea { }
+            Text { x: 16px; y: 16px; width: parent.width - 32px; height: 26px; text: "Notifications"; font-family: "Space Grotesk"; font-size: 20px;
+                font-weight: 500; color: Theme.text; vertical-alignment: center; }
+            Text { x: 16px; y: 54px; width: parent.width - 32px; height: 19px; text: "Look"; font-size: 14px; font-weight: 500; color: Theme.muted; vertical-alignment: center; }
+            Dropdown { x: 16px; y: 79px; width: parent.width - 32px; options: root.look-names; selected: root.look; picked(i) => { root.switch-look(i); } }
+            Text { x: 16px; y: 143px; width: parent.width - 32px; height: 19px; text: "Time format"; font-size: 14px; font-weight: 500; color: Theme.muted;
+                vertical-alignment: center; }
+            Segmented { x: 16px; y: 168px; width: parent.width - 32px; options: ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
+                picked(i) => { root.set-h24(i == 0); } }
+            TextButton { x: parent.width - 16px - self.width; y: 222px; width: 104px; text: "Done"; primary: true;
+                clicked => { Act.act("info.settings-close", ""); } }
+        }
+        if self.shown && root.look == 1: Rectangle {
+            x: set.menu-x; y: set.menu-y; width: set.menu-w; height: set.menu-h;
+            opacity: set.w-o;
+            transform-scale-x: set.w-s; transform-scale-y: set.w-s; transform-origin: { x: self.width / 2, y: self.height / 2 };
+            // the aluminium frame (5 px + 1 px) round the white gloss; the shadow is lifted until the board settles
+            background: #c9ccd0; border-radius: 6px;
+            drop-shadow-blur: 24px + 12px * set.w-lift; drop-shadow-offset-y: 10px + 14px * set.w-lift; drop-shadow-color: #00000073;
+            TouchArea { }
+            Rectangle { x: 5px; y: 5px; width: parent.width - 10px; height: parent.height - 10px; border-radius: 1px; border-width: 1px; border-color: #9ea2a8;
+                background: @linear-gradient(160deg, #ffffff 0%, #e8ebed 100%); }
+            // written in marker: the head in red, the labels in black
+            Text { x: 22px; y: 16px; width: parent.width - 44px; height: 36px; text: "Settings"; font-family: "Caveat"; font-size: 31px; font-weight: 700;
+                color: #d32f2f; vertical-alignment: center; }
+            Text { x: 22px; y: 65px; width: parent.width - 44px; height: 29px; text: "Look"; font-family: "Caveat"; font-size: 23px; font-weight: 700;
+                color: #1b1d22; vertical-alignment: center; }
+            Dropdown { x: 22px; y: 100px; width: parent.width - 44px; options: root.look-names; selected: root.look; picked(i) => { root.switch-look(i); }
+                tk-raised: #14161a0f; tk-line: #14161a47; tk-text: #1b1d22; tk-muted: #4a4e57; tk-menu: #fbfbfb; tk-pressed: #14161a1f; tk-accent: #d32f2f; }
+            Text { x: 22px; y: 164px; width: parent.width - 44px; height: 29px; text: "Time format"; font-family: "Caveat"; font-size: 23px; font-weight: 700;
+                color: #1b1d22; vertical-alignment: center; }
+            Segmented { x: 22px; y: 199px; width: parent.width - 44px; options: ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
+                picked(i) => { root.set-h24(i == 0); }
+                tk-raised: #14161a0f; tk-text: #1b1d22; tk-on-text: #f7f8f8; tk-accent: #d32f2f; }
+            TextButton { x: parent.width - 22px - self.width; y: 255px; width: 104px; text: "Done"; primary: true;
+                tk-raised: #14161a0f; tk-pressed: #14161a1f; tk-text: #1b1d22; tk-on-text: #f7f8f8;
+                clicked => { Act.act("info.settings-close", ""); } }
+            // the marker in its aluminium tray at the foot
+            Rectangle { x: 22px; y: parent.height - 16px; width: parent.width - 44px; height: 7px; border-radius: 3px;
+                background: @linear-gradient(180deg, #c3c6cb 0%, #8d9196 100%);
+                Rectangle { x: 30px; y: -9px; width: 92px; height: 11px; border-radius: 5.5px; background: #222222;
+                    drop-shadow-blur: 2px; drop-shadow-offset-y: 2px; drop-shadow-color: #0000004d;
+                    Rectangle { x: 66px; width: 26px; height: 11px; border-radius: 5.5px; background: #d32f2f; }
+                    Rectangle { x: 66px; width: 6px; height: 11px; background: #d32f2f; } } }
+            // two of the notes' round magnets on its top edge (red, green), landing one after the other
+            for g[i] in [{ x: 28px, c: #ce282e }, { x: 448px - 28px - 22px, c: #248c50 }]: Rectangle {
+                property <float> mt: set.open ? set.w-t - 140 - i * 60 : 1000;
+                property <float> ms: self.mt < 0 ? 1.35 : 1.35 - 0.35 * (1 - Math.pow(1 - clamp(self.mt / 120, 0, 1), 3));
+                x: g.x + 11px - 11px * self.ms; y: -7px + 11px - 11px * self.ms; width: 22px * self.ms; height: 22px * self.ms;
+                opacity: self.mt < 0 ? 0 : clamp(self.mt / 40, 0, 1);
+                Rectangle { x: 1px; y: 2px; width: parent.width; height: parent.height; border-radius: self.width / 2; background: #00000046; }
+                Rectangle { border-radius: self.width / 2; background: g.c; }
+                Rectangle { x: parent.width * 0.225; y: parent.height * 0.15; width: parent.width * 0.25; height: parent.height * 0.25;
+                    border-radius: self.width / 2; background: #ffffff5a; }
+            }
+        }
+    }
+
+    // ---- 39.3 pager: its own LCD menu (no scrim: the pager's keys stay usable). ▲ ▼ move the cursor, OK changes the chosen
+    // line (its next value) or leaves on EXIT; a tap on a line chooses and changes it at once. FINISH and TIME apply at once;
+    // LOOK cycles in the menu and takes effect when the menu is left.
+    property <bool> lcd-want: root.look == 2 && root.settings && !root.swapping;
+    property <int> lcd-cur;
+    property <int> lcd-pend: -1;
+    property <duration> lcd-t0;
+    property <bool> lcd-intro;
+    property <bool> lcd-leaving;
+    Timer { interval: 300ms; running: root.lcd-intro; triggered => { root.lcd-intro = false; } }
+    property <float> lcd-t: root.lcd-intro ? (animation-tick() - root.lcd-t0) / 1ms : 1000;
+    changed lcd-want => {
+        if root.lcd-want {
+            root.lcd-cur = 0;
+            root.lcd-pend = -1;
+            root.lcd-leaving = false;
+            root.lcd-t0 = animation-tick();
+            root.lcd-intro = true;
+        } else if root.lcd-pend >= 0 {
+            // closed from outside (the page went): the look chosen in the menu still takes effect
+            let p = root.lcd-pend;
+            root.lcd-pend = -1;
+            Act.act("info.look", p);
+        }
+    }
+    function lcd-ok() {
+        if root.lcd-cur == 0 {
+            let nx = Math.mod((root.lcd-pend >= 0 ? root.lcd-pend : root.look) + 1, 4);
+            root.lcd-pend = nx == root.look ? -1 : nx;
+        } else if root.lcd-cur == 1 {
+            Act.act("info.finish", root.finish-ids[Math.mod(root.finish + 1, 4)]);
+        } else if root.lcd-cur == 2 {
+            root.set-h24(!Clock.h24);
+        } else {
+            root.lcd-leaving = true;
+        }
+    }
+    // EXIT: the lines go, and 60 ms later the list comes back (or the new look comes, with its own menu)
+    Timer { interval: 60ms; running: root.lcd-leaving;
+        triggered => {
+            root.lcd-leaving = false;
+            let p = root.lcd-pend;
+            root.lcd-pend = -1;
+            if p >= 0 { Act.act("info.look", p); } else { Act.act("info.settings-close", ""); }
+        } }
+
+    // ---- 39.4 TV news: the TV's on-screen menu (x 40–440 from y 100). Lines LOOK and CLOCK with ◀ value ▶, and EXIT; a tap
+    // on a line takes its next value. It opens like an old TV's menu in three 40 ms steps from its middle line, and closes
+    // the same way.
+    property <int> osd-cur;
+    property <bool> osd-want: root.settings && root.look == 3;
+    changed osd-want => { if root.osd-want { root.osd-cur = 0; } }
+    function osd-change(i: int, d: int) {
+        root.osd-cur = i;
+        if i == 0 {
+            root.switch-look(Math.mod(root.look + d + 4, 4));
+        } else if i == 1 {
+            root.set-h24(!Clock.h24);
+        } else {
+            Act.act("info.settings-close", "");
+        }
+    }
+    osd := MenuHost {
+        open: root.settings && !root.swapping && root.look == 3;
+        kind: 1; in-ms: 80ms; out-ms: 80ms;
+        close => { Act.act("info.settings-close", ""); }
+        // the part of the box shown: in 36 %, 68 %, all; out 68 %, 36 %, gone (whole 40 ms steps)
+        property <float> f: self.open ? (self.t-in-40 < 40 ? 0.36 : self.t-in-40 < 80 ? 0.68 : 1) : (self.t-out-40 < 40 ? 0.68 : self.t-out-40 < 80 ? 0.36 : 0);
+        property <length> box-h: 214px;
+        property <length> vis-h: self.box-h * self.f;
+        property <length> vis-y: 100px + (self.box-h - self.vis-h) / 2;
+        if self.shown && root.look == 3 && osd.f > 0: Rectangle {
+            x: 39px; y: osd.vis-y - 1px; width: 402px; height: osd.vis-h + 2px; border-radius: 5px; background: #071230;
+            drop-shadow-blur: 30px; drop-shadow-offset-y: 14px; drop-shadow-color: #0000008c;
+        }
+        if self.shown && root.look == 3 && osd.f > 0: Rectangle {
+            x: 40px; y: osd.vis-y; width: 400px; height: osd.vis-h; clip: true;
+            TouchArea { }
+            Rectangle { x: 0; y: -(osd.box-h - osd.vis-h) / 2; width: 400px; height: osd.box-h;
+                background: #08163cfb; border-width: 2px; border-color: #c9d4ee; border-radius: 4px;
+                // the head bar: the TV's mark and MENU
+                Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: 38px; background: #d8202a;
+                    Icon { x: 14px; y: 0; width: 20px; height: parent.height; text: "\u{F07F4}"; font-size: 20px; color: #ffffff; }
+                    Text { x: 42px; y: 0; height: parent.height; text: "MENU"; font-size: 16px; font-weight: 900; letter-spacing: 2px; color: #ffffff;
+                        vertical-alignment: center; } }
+                for l[i] in [{ t: "LOOK", v: root.look-name.to-uppercase() }, { t: "CLOCK", v: Clock.h24 ? "24 HOUR" : "12 HOUR" }, { t: "EXIT", v: "" }]: Rectangle {
+                    x: 10px; y: 48px + i * 52px; width: parent.width - 20px; height: 48px;
+                    property <color> ink: i == root.osd-cur ? #0b1f4d : #ffffff;
+                    property <length> vw: Math.max(130px, vt.preferred-width + 8px);
+                    background: i == root.osd-cur ? #f2a51a : transparent;
+                    TouchArea { clicked => { root.osd-change(i, 1); } }
+                    Text { x: 12px; y: 0; height: parent.height; text: l.t; font-size: 15px; font-weight: 800; letter-spacing: 1px; color: parent.ink;
+                        vertical-alignment: center; }
+                    if i < 2: Icon { x: parent.width - 4px - 44px - parent.vw - 44px; y: 2px; width: 44px; height: 44px; text: "\u{F035E}"; font-size: 24px;
+                        color: parent.ink;
+                        TouchArea { clicked => { root.osd-change(i, -1); } } }
+                    vt := Text { x: parent.width - 4px - 44px - parent.vw; y: 0; width: parent.vw; height: parent.height; text: l.v; font-size: 15px; font-weight: 800;
+                        letter-spacing: 1px; color: parent.ink; horizontal-alignment: center; vertical-alignment: center; }
+                    if i < 2: Icon { x: parent.width - 4px - 44px; y: 2px; width: 44px; height: 44px; text: "\u{F035F}"; font-size: 24px; color: parent.ink;
+                        TouchArea { clicked => { root.osd-change(i, 1); } } }
+                }
+            }
+        }
     }
 
     // ---------------------------------------------------------------- critical: whole screen, plain red, breathing; hold to silence

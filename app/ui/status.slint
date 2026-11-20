@@ -1,8 +1,8 @@
 // Status screens: whole-screen states set up in the integration (a toilet in use, someone on a call, a nap …). Each has a
 // category whose text pack lives on the panel (headline, line and button picked at random, a surprise); the integration can
 // give its own headline, line, icon (an own pictogram or any MDI icon) and colour instead, and says whether there is a button.
-// Swiping away (or the button) leaves the screen; while the state lasts a strip in its colour stays on top of every panel,
-// and a tap on it brings the screen back. Critical alerts use the same strip in red.
+// Swiping away (or the button) leaves the screen; while the state lasts a strip in its colour stays under the status bar
+// on every panel, a tap on it brings the screen back and its × closes it. Critical alerts use the same strip in red.
 import { Icon } from "widgets.slint";
 import { Act } from "theme.slint";
 
@@ -56,7 +56,9 @@ export component StatusPage inherits Rectangle {
             horizontal-alignment: center; vertical-alignment: center; overflow: elide; } }
 }
 
-// the strip on top of every panel while a status screen (or a critical alert) is active; a tap opens it again
+// The strip while a status screen is folded (or a critical alert was silenced): right under the status bar, which stays
+// visible, on every page. A tap opens it again; the × at its right end closes the strip (the state itself goes on). A
+// critical alert's strip has no ×: it stays until its sensor clears.
 export component TopStrip inherits Rectangle {
     in property <string> title;
     in property <string> sub;              // "6 min", "3:48 left", "CO sensor · 2 min"
@@ -66,15 +68,27 @@ export component TopStrip inherits Rectangle {
     in property <color> tint;
     in property <bool> critical;           // red and breathing, like the alert itself
     in property <float> pulse: 1;
+    in property <bool> closable: !root.critical;
+    callback open();
+    callback close();
     height: 44px;
     background: root.critical ? #8e0d14 : root.tint;
     if root.critical: Rectangle { background: #d8202a.with-alpha(0.35 + 0.45 * root.pulse); }
+    TouchArea { clicked => { root.open(); } }
     if root.has-picto: Image { x: 14px; y: 10px; width: 24px; height: 24px; source: root.picto; }
     if !root.has-picto: Icon { x: 12px; y: 8px; width: 28px; height: 28px; text: root.icon; font-size: 22px; color: #ffffff; }
-    Text { x: 48px; y: 0; width: parent.width - 48px - sw.width - 46px; height: parent.height; text: root.title; font-size: 15px; font-weight: 700;
-        color: #ffffff; vertical-alignment: center; overflow: elide; }
-    sw := Text { x: parent.width - 40px - self.width; y: 0; width: self.preferred-width; height: parent.height; text: root.sub; font-size: 13px;
-        color: #ffffffcc; vertical-alignment: center; }
-    Icon { x: parent.width - 36px; y: 8px; width: 28px; height: 28px; text: "\u{F0140}"; font-size: 22px; color: #ffffff; }
+    // a long title wraps to a second line; the line after it (a time, a notification's text) takes at most 40 % of the strip
+    // (each text block is centred as a whole, so the first line always shows)
+    Text { x: 48px; width: parent.width - 48px - sw.width - 60px; height: Math.min(self.preferred-height, parent.height - 2px); y: (parent.height - self.height) / 2;
+        text: root.title; font-size: 15px; font-weight: 700; color: #ffffff; vertical-alignment: top; wrap: word-wrap; overflow: elide; }
+    sw := Text { x: parent.width - 48px - self.width; width: Math.min(self.preferred-width, parent.width * 0.4);
+        height: Math.min(self.preferred-height, parent.height - 2px); y: (parent.height - self.height) / 2;
+        text: root.sub; font-size: 13px; color: #ffffffcc; vertical-alignment: top; wrap: word-wrap; overflow: elide; }
+    // × closes the strip (a 44 × 44 key); a critical alert's strip shows the chevron of "tap to open" there instead
+    if root.closable: Rectangle { x: parent.width - 44px; y: 0; width: 44px; height: parent.height;
+        background: x-ta.pressed ? #00000033 : transparent;
+        Icon { x: 10px; y: 10px; width: 24px; height: 24px; text: "\u{F0156}"; font-size: 22px; color: #ffffff; }
+        x-ta := TouchArea { clicked => { root.close(); } } }
+    if !root.closable: Icon { x: parent.width - 38px; y: 8px; width: 28px; height: 28px; text: "\u{F0140}"; font-size: 22px; color: #ffffff; }
     Rectangle { y: parent.height - 1px; height: 1px; background: #00000040; }
 }

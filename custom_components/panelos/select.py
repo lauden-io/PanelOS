@@ -1,4 +1,4 @@
-"""Selects of a panel: dashboard, theme, screensaver, display mode.
+"""Selects of a panel: dashboard, theme, screensaver, display mode, time format.
 
 The panel sends the options with its report (the dashboards are the ones its
 Home Assistant user may open), so they always match its own settings screen.
@@ -25,6 +25,7 @@ DESCRIPTIONS = {
     "screensaver": _setting("screensaver", "mdi:timer-outline"),
     "screensaver_style": _setting("screensaver_style", "mdi:clock-outline"),
     "display_mode": _setting("display_mode", "mdi:monitor-dashboard"),
+    "time_format": _setting("time_format", "mdi:hours-24"),
 }
 
 
