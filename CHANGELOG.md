@@ -5,6 +5,9 @@
 ### Connection
 - When Sendspin music stalls (its buffer runs dry), the Wi-Fi roam check runs during the music and moves to an access point at least 10 dB stronger; a panel that fell to a farther access point during music no longer stays there until the music ends.
 
+### Music Assistant
+- Asking a panel for music by voice ("play Queen") plays on the player picked on its music page, or on the panel itself, as next, pause, stop and volume already did; a command that names a kind of device ("pause the TV") goes to Home Assistant's own handler.
+
 ### Home Assistant
 - HACS and the Marketplace install the integration from `panelos.zip` on the release (2 MB) instead of the whole repository (about 90 MB, close to the Marketplace's 100 MB download limit).
 

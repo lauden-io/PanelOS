@@ -155,14 +155,15 @@ Music commands said to a panel (play, next, pause, volume, stop) can follow the 
 
 ## Music by voice
 
-Home Assistant's own media commands work on a panel with no setup: said to the panel's voice satellite without naming a player, an area or a floor, they act on the player chosen on its music page (or on the panel itself, see Music commands above). Home Assistant brings the sentences, in every language it supports and in many variations, for example:
+Home Assistant's own media commands work on a panel with no setup: said to the panel's voice satellite without naming a player, a kind of device, an area or a floor, they act on the player chosen on its music page (or on the panel itself, see Music commands above). Home Assistant brings the sentences, in every language it supports and in many variations, for example:
 
+- **Play**: "play Queen", "play Bohemian Rhapsody" (searched on the player, the first result plays)
 - **Next**: "next song", "skip this", "skip to the next track"
 - **Previous**: "previous track", "go back to the previous song", "play the last song again"
-- **Pause / resume**: "pause", "pause the music", "resume", "unpause the music"
+- **Pause / stop / resume**: "pause", "pause the music", "stop the music", "resume", "unpause the music"
 - **Volume**: "volume up", "turn the volume down", "set the volume to 30 percent", "mute", "unmute"
 
-A command that names a player, another room or a floor ("pause the kitchen"), and every command said to another device, goes to Home Assistant's own handler unchanged. The reply is Home Assistant's own, in the language of the command (`custom_components/panelos/voice_intents.py`; the handlers of Home Assistant's media intents are wrapped once Home Assistant has started). Custom sentences of your own for the same commands take precedence over Home Assistant's built-in ones; to have them follow the panel too, ask `hass.data["panelos"]["voice_player"]` for the player.
+A command that names a player, a kind of device ("pause the TV"), another room or a floor ("pause the kitchen"), and every command said to another device, goes to Home Assistant's own handler unchanged; so does a search when the chosen player cannot search and play. A conversation agent's tool calls carry the panel too, so what an AI agent does with a command follows the same rule (Home Assistant has no built-in sentence for a plain "play"; an agent turns it into resume). The reply is Home Assistant's own, in the language of the command (`custom_components/panelos/voice_intents.py`; the handlers of Home Assistant's media intents are wrapped once Home Assistant has started). Custom sentences of your own for the same commands take precedence over Home Assistant's built-in ones; to have them follow the panel too, ask `hass.data["panelos"]["voice_player"]` for the player.
 
 ## Dashboard mode
 

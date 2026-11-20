@@ -1,11 +1,13 @@
 """Music by voice on a panel: Home Assistant's own media intents act on the panel's chosen player.
 
-Home Assistant brings the sentences itself, in every language it supports and in many variations ("next song",
-"skip this", "play the previous track", "pause", "resume", "volume up", "set the volume to 30 percent"; in Hungarian
-"következő szám", "játszd az előző számot", "szünet", "folytasd", "hangosabban" …). Said to a panel's voice
-satellite without naming a player, an area or a floor, they go to the player picked on the panel's music page, or to
-the panel itself (Voice page: Music commands; see ``panel.voice_player``). Everything else (another device, a named
-player or room, a panel without a player) goes to Home Assistant's own handler unchanged.
+Home Assistant brings the sentences itself, in every language it supports and in many variations ("play Queen",
+"next song", "skip this", "play the previous track", "pause", "stop the music", "resume", "volume up", "set the volume
+to 30 percent"; in Hungarian "következő szám", "játszd az előző számot", "szünet", "folytasd", "hangosabban" …). Said
+to a panel's voice satellite without naming a player, a kind of device, an area or a floor, they go to the player
+picked on the panel's music page, or to the panel itself (Voice page: Music commands; see ``panel.voice_player``).
+Everything else (another device, a named player or room, a panel without a player) goes to Home Assistant's own
+handler unchanged. A conversation agent's tool calls carry the device too, so the same holds for what an AI agent
+does with a command (a plain "play" becomes resume there).
 
 The handlers of the media player integration are wrapped once Home Assistant has started (it registers them while it
 sets up); the reply is Home Assistant's own for that intent, in the language of the command.
@@ -25,6 +27,7 @@ from homeassistant.components.media_player import (
     ATTR_MEDIA_VOLUME_MUTED,
     DOMAIN as MEDIA_PLAYER_DOMAIN,
     SERVICE_MEDIA_SEEK,
+    MediaPlayerEntityFeature,
 )
 from homeassistant.const import (
     ATTR_ENTITY_ID,
@@ -38,6 +41,7 @@ from homeassistant.const import (
     SERVICE_VOLUME_UP,
 )
 from homeassistant.core import HomeAssistant, callback
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.util import dt as dt_util
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, intent
 
@@ -53,10 +57,13 @@ _SERVICES = {
     "HassSetVolumeRelative": None,
     "HassMediaPlayerMute": SERVICE_VOLUME_MUTE,
     "HassMediaPlayerUnmute": SERVICE_VOLUME_MUTE,
+    "HassMediaSearchAndPlay": None,
 }
 # a target named in the command: Home Assistant's own handler finds it (an area slot that is the panel's own room is no
 # named target: Home Assistant fills it from the satellite's area when the sentence names none)
-_TARGET_SLOTS = ("name", "floor")
+_TARGET_SLOTS = ("name", "floor", "device_class")
+# search and play needs a player that can do both
+_SEARCH_AND_PLAY = MediaPlayerEntityFeature.SEARCH_MEDIA | MediaPlayerEntityFeature.PLAY_MEDIA
 
 
 def _slot(intent_obj: intent.Intent, key: str) -> Any:
@@ -126,7 +133,58 @@ def _panel_player(hass: HomeAssistant, intent_obj: intent.Intent) -> str | None:
     return player
 
 
+def _can_search(hass: HomeAssistant, player: str) -> bool:
+    """The player can search and play (a player that cannot: Home Assistant's own handler picks one)."""
+    state = hass.states.get(player)
+    features = int(state.attributes.get("supported_features") or 0) if state else 0
+    return features & _SEARCH_AND_PLAY == _SEARCH_AND_PLAY
+
+
+def _field(item: Any, key: str) -> Any:
+    return item.get(key) if isinstance(item, dict) else getattr(item, key, None)
+
+
+async def _search_and_play(hass: HomeAssistant, intent_obj: intent.Intent, player: str) -> intent.IntentResponse:
+    """As Home Assistant's own HassMediaSearchAndPlay, on the panel's player: search, then play the first result."""
+    query = _slot(intent_obj, "search_query")
+    if query is None:
+        raise intent.IntentHandleError("Nothing to search for")
+    search: dict[str, Any] = {ATTR_ENTITY_ID: player, "search_query": str(query)}
+    if media_class := _slot(intent_obj, "media_class"):
+        search["media_filter_classes"] = [media_class]
+    try:
+        found = await hass.services.async_call(
+            MEDIA_PLAYER_DOMAIN, "search_media", search, blocking=True, context=intent_obj.context, return_response=True
+        )
+    except HomeAssistantError as err:
+        raise intent.IntentHandleError(f"Error searching media: {err}") from err
+    results = _field((found or {}).get(player), "result") or []
+    if not results:
+        raise intent.IntentHandleError(f"No results found for {query}")
+    first = results[0]
+    try:
+        await hass.services.async_call(
+            MEDIA_PLAYER_DOMAIN,
+            "play_media",
+            {
+                ATTR_ENTITY_ID: player,
+                "media_content_id": _field(first, "media_content_id"),
+                "media_content_type": _field(first, "media_content_type"),
+            },
+            blocking=True,
+            context=intent_obj.context,
+        )
+    except HomeAssistantError as err:
+        raise intent.IntentHandleError(f"Error playing media: {err}") from err
+    _LOGGER.debug("HassMediaSearchAndPlay %r on %s (said to a panel)", query, player)
+    response = intent_obj.create_response()
+    response.async_set_speech_slots({"media": first.as_dict() if hasattr(first, "as_dict") else dict(first)})
+    return response
+
+
 async def _act(hass: HomeAssistant, intent_obj: intent.Intent, intent_type: str, player: str) -> intent.IntentResponse:
+    if intent_type == "HassMediaSearchAndPlay":
+        return await _search_and_play(hass, intent_obj, player)
     data: dict[str, Any] = {ATTR_ENTITY_ID: player}
     service = _SERVICES[intent_type]
     if intent_type == "HassSetVolume":
@@ -184,7 +242,7 @@ def async_setup_voice_intents(hass: HomeAssistant) -> None:
 
         async def async_handle(intent_obj: intent.Intent, _original=original, _type=intent_type) -> intent.IntentResponse:
             player = _panel_player(intent_obj.hass, intent_obj)
-            if player is None:
+            if player is None or (_type == "HassMediaSearchAndPlay" and not _can_search(intent_obj.hass, player)):
                 return await _original(intent_obj)
             return await _act(intent_obj.hass, intent_obj, _type, player)
 
