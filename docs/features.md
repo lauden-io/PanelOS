@@ -12,7 +12,7 @@
 ## Look and feel
 
 - The PanelOS look on every screen (its palette, type and mark), light, dark or automatic; one set of controls, shared with the PanelOS page in Home Assistant. Every page comes in several looks, and each look moves in its own way.
-- **Boot screen:** the PanelOS logo already in the bootloader (`assets/bootlogo.bmp`), then the own boot animation instead of kernel text, rendered pixel-exact from `assets/logo.svg` and `assets/logotype.svg` (`tools/splash/`). The logotype (white letters, the red logo as the first A) turns into the round logo, the white line draws itself, then the small logotype and the slogan appear under the logo. Until Wi-Fi is up and the app has the clock and the first Home Assistant data, a light band runs across the dimmed small logotype; then the UI takes over with current content. Power on to the dashboard in about 12 s (stock firmware: about 53 s). Details and timings in docs/bringup.md.
+- **Boot screen:** the PanelOS logo already in the bootloader, then a boot animation instead of kernel text until the UI takes over with current content. Power on to the dashboard in about 12 s (stock firmware: about 53 s); details in docs/bringup.md.
 
 - The app does not run Home Assistant's card code: it reads the entity states and draws everything itself, so the look is entirely the app's own. Home Assistant dashboards can still be shown in a web view (dashboard mode, secondary).
 - Icons: entity icons (`mdi:...`) from the Material Design Icons set that Home Assistant uses; selectable icon sets, including own icon sets (SVG files). Each icon set's licence is checked before it ships.
@@ -35,7 +35,7 @@
 
 ## Home Assistant entities (see docs/home_assistant.md)
 
-On the panel's device (PanelOS integration): screen, dashboard, theme, screensaver, display mode, brightness, automatic brightness, wake on approach, child lock, illuminance, presence, SoC temperature, Wi-Fi signal, IP address, app version, restart, reboot. On the voice device (ESPHome): the Assist satellite, volume, microphone switch, wake word sensors.
+On the panel's device (PanelOS integration): screen, dashboard, theme, screensaver, display mode, brightness, automatic brightness, wake on approach, child lock, rain on the glass, lightning, illuminance, presence, SoC temperature, Wi-Fi signal, IP address, app version, restart, reboot. On the voice device (ESPHome): the Assist satellite, volume, microphone switch, wake word sensors.
 
 Later: last touch, current page, stop audio, auto brightness limits, wake sensitivity.
 

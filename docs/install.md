@@ -204,7 +204,7 @@ cd /root/PanelOS && tools/flash_recovery_adb.sh $PANEL:5555 /tmp/nspanel_out/rec
 The command writes the image, checks it, and restarts the panel. On the panel you see:
 
 1. after a few seconds the **PanelOS logo** (the stock bootloader loads PanelOS), then a short black moment,
-2. the **PanelOS animation**, then a light band running across the logo until Wi-Fi is up,
+2. the **PanelOS boot animation**, which waits until Wi-Fi is up,
 3. the setup screen **"Connect to Home Assistant"** (step 10).
 
 You do this step **once**.

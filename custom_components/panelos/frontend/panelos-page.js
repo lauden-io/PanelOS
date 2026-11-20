@@ -3811,7 +3811,7 @@ class PanelOSPage extends HTMLElement {
           { info: "On: the sun and the moon stand where they really are in the sky. Off: they keep a fixed place." }),
           // the panel's own switches (its entities): the same on every weather page of the panel
           BACKGROUNDS[cur].theme <= 2 ? this._row("Rain on the glass", this._toggle(ps.rain_on_glass !== false, (v) => this._command(p, "rain_on_glass", v), { label: "Rain on the glass" }),
-            { info: "When it rains, drops land on the glass over the photo and run down; the wind bends their path. A finger stroke up or down wipes them away. This switch is the panel's: it applies to all its weather pages." }) : null,
+            { info: "Drops on the glass while it rains, over the photo backgrounds only. This switch is the panel's: it applies to all its weather pages." }) : null,
           this._row("Lightning", this._toggle(ps.lightning !== false, (v) => this._command(p, "lightning", v), { label: "Lightning" }),
             { info: "Flashes and lightning bolts in thunderstorms. Turn them off if the flashes disturb anyone. This switch is the panel's: it applies to all its weather pages." })));
     }

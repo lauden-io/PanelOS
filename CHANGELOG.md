@@ -9,17 +9,17 @@
 - A look, an option or a player set on the panel goes to the page it was set on; a request that names a kind (a ring, `show_view`, the doorbell) goes to the page of that kind on screen, else the first.
 
 ### Menus
-- No more bottom sheets: every picker and page settings menu comes out of what opened it, as an object of the look (a record sleeve, a J-card, a recipe card with a magnet, a parchment scroll, an arcade screen, a split-flap board, a pager's LCD menu, a TV's on-screen menu, till paper, embossed tapes, a remote's sliding lid, a wall unit's hinged door …), each with its own motion. A tap beside a menu, its chip again or Done closes it; a look change reopens it as the new look's menu; leaving the page closes it.
+- No more bottom sheets: every picker and page settings menu comes out of what opened it, as an object of the look, each with its own motion. A tap beside a menu, its chip again or Done closes it; a look change reopens it as the new look's menu; leaving the page closes it.
 - The quick shade's second step has a page row that opens the settings of the page on screen in its look's menu.
 - Dropdown lists take taps and stay between the status bar and the bottom edge.
 
 ### Music
-- "Play on" and the page's settings are menus of the look (brand card, record sleeve, J-card); long player names wrap.
+- "Play on" and the page's settings are menus of the look; long player names wrap.
 - A pause holds the time shown; after Next or Previous the page never flips back to the old track; a player switch leaves nothing of the old player on the page.
 - A flick across the time bar never seeks; the turntable's fader tells a flick from a tap.
 
 ### Thermostat
-- The rooms, options and settings come out of each look as its own object (brand card, the remote's zone LCD and sliding lid, the wall unit's zone plate and hinged door, the neon arcade screen).
+- The rooms, options and settings come out of each look as its own object.
 - The dial's ring and the neon tube turn with the finger like the wall knob; a drag that starts on a ring or knob never turns the page.
 - The remote's LCD clock follows the time format, and a tap on it switches 12H / 24H.
 - The device chip says "No device" when the page has none.
@@ -47,18 +47,18 @@
 - Replies at the door: with a speaker at the door, the visitor window's microphone opens up to four replies; a tap has Home Assistant say one on that speaker in the chosen language.
 
 ### Notifications
-- The settings open in each look's own menu with the look, the time format and, for the pager, its finish; in the plain look a tapped notification opens in the notification window's card, which grows out of its row.
+- The settings open in each look's own menu with the look, the time format and, for the pager, its finish; in the plain look a tapped notification opens in the notification window's card.
 - The pager's and the TV news clock turn exactly on the minute.
 - The status strip runs under the status bar, which stays visible; its × closes it (a critical alert's strip has none); long titles wrap to two lines.
 - The page lists the active status screens and critical alerts above the notifications.
 - A status screen stays when its sensor is unavailable for up to 2 minutes (a reconnect, a restart).
 
 ### To-do
-- The chip's list picker and the page settings are the look's own menus (brand card, till paper, the terminal's commands, embossed tapes, a page of the pad).
+- The chip's list picker and the page settings are the look's own menus.
 - A new item lands at the top of its list and opens in 250 ms; a ticked item stays struck through for 1.5 s, then folds away.
 
 ### Quick controls
-- A long press shows a control's details in every look (a card grown from the tile, the desk channel's rack unit, the deck switch's overhead panel), including colour, colour temperature, effect and cover keys.
+- A long press shows a control's details in every look, including colour, colour temperature, effect and cover keys.
 - Flight deck: painted group frames, automatic, off or custom, set in the integration; a colour light's lamp lights in its own colour at the throw, also after a restart.
 - Mixing desk / flight deck: long names fit their tape or plate in smaller letters or two lines.
 - Eight tiles a page; more go on another quick controls page (older pages with more are split when the integration starts).
@@ -71,8 +71,8 @@
 - People widget: each head shows the person's profile picture from Home Assistant ("Profile pictures", on by default); with "The ones away too", the people away are fainter inside a grey ring; its menu on the panel always offers every person.
 - Weather details page: a background and weather widgets on the custom page's grid, edited the same way.
 - Hourly and daily forecasts show as many cards as fit; the chance of rain reads on the light ground.
-- Rain on the glass: drops land on the glass over the photo backgrounds while it rains, merge and run down with a wet streak; the wind bends their path, and they dry up after the rain. A finger stroke up or down wipes them away. Rain on the glass and Lightning are switches of the panel, on by default.
-- Synthwave: cars drive on nine lanes, and a tap on the road asks for a car on the line under the finger; the Cars switch takes the cars off the road; the space scene has its ringed planet, nebula and cyan mountains by day, by night and at dawn, with shooting stars at any time; the timers' random scene is ready before the page opens and never changes on screen.
+- Rain on the glass: drops on the glass over the photo backgrounds while it rains. Rain on the glass and Lightning are switches of the panel, on by default.
+- Synthwave: cars drive on nine lanes; the Cars switch takes the cars off the road; the space scene changes by day, by night and at dawn; the timers' random scene is ready before the page opens and never changes on screen.
 
 ### Display and settings
 - Time format (24-hour / 12-hour) for every clock time: on the panel's Display page, in the integration and on the looks' own keys; a change anywhere applies everywhere.
@@ -85,7 +85,7 @@
 
 ### Voice
 - When a timer starts ringing during a voice run, the run's sentence stops the ring only when it is a stop phrase by itself; any other sentence goes on to the assistant.
-- The oscilloscope voice view shows "not understood" as a question mark drawn by the beam; the voice view measures the microphone only while it shows.
+- In the oscilloscope voice view "not understood" reads apart from the other states; the voice view measures the microphone only while it shows.
 - Voice assistants can set, list and cancel a panel's alarms.
 
 ### Music Assistant
@@ -172,10 +172,10 @@
 
 ### Pages and their looks
 
-- **Custom page**: widgets on a 4 × 4 grid (clock, date, weather now, next event, forecast curve, hourly and daily forecast, music) over a living weather background (photos, drawn scenes, a line drawing, a plain ground) or a synthwave night drive with neon letters, palms in the wind, cars and a patrol car; several custom pages, each with its own background and widgets. Taps on the scenes do things there: a shooting star, a car in a lane, a car shoved aside, a city window lit or dark, trees shaking, a flag flapping.
+- **Custom page**: widgets on a 4 × 4 grid (clock, date, weather now, next event, forecast curve, hourly and daily forecast, music) over a living weather background (photos, drawn scenes, a line drawing, a plain ground) or a synthwave night drive with neon letters and cars; several custom pages, each with its own background and widgets.
 - **Clock faces**: digital, big digits, round, square, minimal, numerals, wandering, split-flap, the time in words, nixie tubes on a walnut plinth, an LCD quartz watch and a twin-bell alarm clock; on the clock page, as a widget and on the screensaver.
 - **Weather**: cards, or a living photo of the sky as it is now.
-- **Music**: plain with the cover behind, full cover, a turntable (arm to seek, the record in the cover's colour, platter spinning up and coasting down), a cassette and half a cassette; player picker, moving music to another player, grouping.
+- **Music**: plain with the cover behind, full cover, a turntable (arm to seek), a cassette and half a cassette; player picker, moving music to another player, grouping.
 - **Timers, alarms and a stopwatch**: plain, kitchen timer, hourglass, synthwave and flip clock looks; the stopwatch as a chronograph, a timing tower, an LCD sports watch or nixie tubes; the alarms as a twin-bell clock, a sunrise, a clock radio or a 24-hour dial; a sheet per timer (+1 min, pause, cancel), alarms with days, label and sound.
 - **Thermostat**: a dial, a remote control, a wall thermostat and a neon one; room by room, with fan, swing and presets.
 - **Quick controls**: tiles with a details sheet, a mixing desk with faders and meters, a flight deck with toggle levers and lamps.
@@ -183,7 +183,7 @@
 - **Calendar**: agenda, day, three days, week and month, a departure board, a tear-off calendar and a wall calendar written in pen; event details from every view.
 - **To-do lists**: plain, a shop receipt, a terminal, label tapes and a notepad in handwriting; adding with a description and a due date, ticking and unticking, several lists.
 - **Notifications**: a list, fridge notes, a pager and the evening news.
-- **Every look moves in its own way**: digits that roll, fill or flip, nixie afterglow, LCD segments that lag, the hourglass turning over, the turntable's arm, a receipt that feeds, new notifications sliding, slapping, buzzing or breaking in, a lamp test, and many more small motions across every page.
+- **Every look moves in its own way**, with small motions across every page.
 
 ### Over the pages
 
@@ -315,7 +315,7 @@
 
 ### Panel app
 
-- The UI takes over the display only when it has current content: the clock is set and the first Home Assistant states are in. The boot animation's light band shows the wait.
+- The UI takes over the display only when it has current content: the clock is set and the first Home Assistant states are in. The boot animation shows the wait.
 - The clock comes from Home Assistant until NTP has set it, so it is right on the first screen, also on networks without internet access.
 - While the network is not up yet, the Home Assistant connection is retried every 0.5 s instead of with a growing delay.
 - Voice satellite: new sensors Wake level, Wake SNR and Wake score, sent with every wake word before the voice run, so Home Assistant can let the satellite that heard best answer.
@@ -339,7 +339,7 @@ First version.
 - Kernel patches: a panel descriptor for the Sitronix ST7701S display and CST226SE support in the Hynitron touch driver. Wi-Fi with rtw88 (RTL8723DS), audio through the RK809 codec, the PDM microphones, light and proximity sensor (STK3310).
 - Default boot into PanelOS through the stock U-Boot's bootloader message (`nspanel-bootmode open | android | status`); one-shot test boots that fall back to the stock firmware without network (`S41testboot`).
 - Settings, Wi-Fi configuration and the Home Assistant login on a persistent partition; Wi-Fi recovery by rebinding the SDIO controller.
-- Boot animation from the first second of user space (`tools/splash/`, `nspanel-splash`), with a light band until Wi-Fi is up; the UI comes as soon as Wi-Fi is up.
+- Boot animation from the first second of user space (`tools/splash/`, `nspanel-splash`); the UI comes as soon as Wi-Fi is up.
 
 ### Panel app (Rust + Slint, drawn straight to DRM/KMS)
 

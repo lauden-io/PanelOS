@@ -19,15 +19,15 @@ PanelOS draws its own interface on the panel's GPU: no browser, no web page, eve
 
 <img alt="PanelOS on the NSPanel Pro: a synthwave home page, a turntable, rain on the glass, a wall thermostat with running timers, a mixing desk, the oscilloscope voice view, a pager and a split-flap clock" src="docs/images/panelos-views.png" width="100%">
 
-**A custom page that looks outside.** Your clock, the weather and your widgets sit on a living picture of the sky as it is right now: rain runs down the glass, fog drifts, clouds travel with the wind, lightning flashes, and the sun and the moon stand where they really are. Pick a photo of nature, the countryside or a city, a drawn scene, a quiet line drawing, a synthwave night drive with neon letters and cars on the road, or simply a plain ground in the panel's own colour. Want more than one? Add another custom page with its own background and its own widgets.
+**A custom page that looks outside.** Your clock, the weather and your widgets sit on a living picture of the sky as it is right now: rain on the glass, fog, clouds that travel with the wind, lightning, and the sun and the moon where they really are. Pick a photo of nature, the countryside or a city, a drawn scene, a quiet line drawing, a synthwave night drive with neon letters and cars on the road, or simply a plain ground in the panel's own colour. Want more than one? Add another custom page with its own background and its own widgets.
 
 **Pages for everything you use, each in looks with character.**
-- **Music**: a clean cover, the cover full screen, a turntable whose arm follows the track and whose record takes the cover's colour, a cassette and half a cassette; pick any player of the house, move the music to another one or play in several rooms at once.
+- **Music**: a clean cover, the cover full screen, a turntable whose arm follows the track, a cassette and half a cassette; pick any player of the house, move the music to another one or play in several rooms at once.
 - **Timers, alarms and a stopwatch**: a plain ring, a kitchen timer, an hourglass, a flip clock or a synthwave sunset; the stopwatch as a chronograph, a timing tower, an LCD sports watch or nixie tubes, the alarms as a twin-bell clock, a sunrise, a clock radio or a 24-hour dial; quick starts, your own lengths, alarms for chosen days, and timers set by voice from any room.
 - **Thermostat**: a dial, a remote control, a wall thermostat with slide switches, or a neon one; room by room.
 - **Cameras**: one big or all of them, and when the doorbell rings the panel wakes with the visitor on screen, and with a lock, hold to open.
 - **Calendar**: agenda, day, three days, week and month, or a departure board, a tear-off calendar and a wall calendar with your events written in pen.
-- **To-do lists**: a plain list, a shop receipt, a terminal, embossed label tapes, or a yellow notepad in handwriting where every letter comes out a little different.
+- **To-do lists**: a plain list, a shop receipt, a terminal, embossed label tapes, or a yellow notepad in handwriting.
 - **Notifications**: a list, sticky notes on a fridge, a 90s pager, or the evening news.
 - **Clock**: digital or analog faces, a split-flap board, the time in words, nixie tubes, an LCD quartz watch or a twin-bell alarm clock; on its own page, as a widget and on the screensaver.
 - **Quick controls**: tiles, a mixing desk with faders, or a flight deck with toggle switches.
