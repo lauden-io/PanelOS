@@ -31,7 +31,7 @@ import { ClimateDev, ClimateRoom, ThermostatPage } from "thermostat.slint";
 import { CamItem, CamAction, CameraPage } from "camera.slint";
 import { TodoItem, TodoList, TodoPage } from "todo.slint";
 import { CalEvent, CalDay, CalCell, CalBoard, WallCell, CalItem, CalendarPage } from "calendar.slint";
-import { InfoNote, InfoPage } from "info.slint";
+import { InfoNote, InfoStatus, InfoPage } from "info.slint";
 import { NotifWindow } from "notify_window.slint";
 import { StatusScreen, StatusPage, TopStrip } from "status.slint";
 import { VoicePage } from "voice.slint";
@@ -43,7 +43,7 @@ import { AlarmNow } from "clocks.slint";
 export { WxIcons }
 export { Theme, Act, Clock, Words, Phrases, FoundHa, WifiNet, Person, TimerInfo, ClockData, WeatherHour, WeatherDay, WeatherData }
 export { HomeItem, HomeEvent, HomeMusic, HomeSensor, MusicPlayer, TimerItem, AlarmItem, SwCar, ClimateDev, ClimateRoom, CamItem, CamAction }
-export { TodoItem, TodoList, CalEvent, CalDay, CalCell, CalBoard, WallCell, InfoNote, StatusScreen, QuickTile, QuickGroup }
+export { TodoItem, TodoList, CalEvent, CalDay, CalCell, CalBoard, WallCell, InfoNote, InfoStatus, StatusScreen, QuickTile, QuickGroup }
 export { SetRow, SetBar, SetSeg, SetSection, WinRect }
 
 // One page of the pager: which kind, and the variant / look where a kind has several.
@@ -138,6 +138,8 @@ export component AppWindow inherits Window {
     in property <[string]> cam-reply-list;
     in property <int> info-look;
     in property <[InfoNote]> info-notes;
+    // the active status screens and the critical alert, listed above the notifications in every look
+    in property <[InfoStatus]> info-statuses;
     in property <length> info-scroll;
     in property <string> info-empty-title;
     in property <string> info-empty-sub;
@@ -1265,7 +1267,8 @@ export component AppWindow inherits Window {
                 }
                 if slot.kind == "info": InfoPage {
                     live: home-slot.on-view;
-                    look: slot.variant; notes: root.info-notes; scroll: root.info-scroll; empty-title: root.info-empty-title; empty-sub: root.info-empty-sub;
+                    look: slot.variant; notes: root.info-notes; statuses: root.info-statuses; scroll: root.info-scroll;
+                    empty-title: root.info-empty-title; empty-sub: root.info-empty-sub;
                     card: root.info-card; card-note: root.info-card-note; card-index: root.info-card-index; card-count: root.info-card-count;
                     critical: root.info-critical; crit-title: root.info-crit-title; crit-message: root.info-crit-message; crit-icon: root.info-crit-icon;
                     crit-source: root.info-crit-source; crit-hold: root.info-crit-hold; crit-pulse: root.info-crit-pulse; settings: root.info-settings;

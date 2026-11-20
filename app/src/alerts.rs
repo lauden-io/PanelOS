@@ -5,7 +5,10 @@
 //! the strip (the state goes on without it). A critical alert takes the whole
 //! screen on the notifications page, sounds until it is held (when the
 //! integration allows holding) and stays in the strip, red and without ×,
-//! until its sensor clears.
+//! until its sensor clears. The notifications page lists the active ones above
+//! its notifications (the critical alert first, then the status screens, the
+//! newest first); a tap on a status screen there opens it again, also when its
+//! strip was closed.
 
 use std::time::Instant;
 
@@ -13,7 +16,7 @@ use serde_json::Value;
 use slint::Color;
 
 use crate::pages::now;
-use crate::{icons, texts, with_state, AppWindow, StatusScreen};
+use crate::{icons, texts, with_state, AppWindow, InfoStatus, StatusScreen};
 
 #[derive(Clone, Debug)]
 pub struct Status {
@@ -27,6 +30,8 @@ pub struct Status {
     button: String,
     /// Air recovery and the like: ends by itself after this many seconds.
     countdown: Option<u64>,
+    /// When the countdown ends (the clock's time), for the notifications page.
+    ends: i64,
     since: i64,
     started: Instant,
     folded: bool,
@@ -128,8 +133,9 @@ pub fn show(ui: &AppWindow, v: &Value) {
                     // sent again (a reconnect): the same screen, the integration's changes only
                     old.tint = tint;
                     // the countdown it brings is what is left now: counted from now
-                    if countdown.is_some() {
+                    if let Some(c) = countdown {
                         old.started = Instant::now();
+                        old.ends = now() + c as i64;
                     }
                     old.countdown = countdown;
                     if !button {
@@ -153,6 +159,7 @@ pub fn show(ui: &AppWindow, v: &Value) {
                     // a kind without its own button words still gets its button
                     button: if button { Some(pick(text("button_label"), "buttons")).filter(|b| !b.is_empty()).unwrap_or_else(|| "OK".into()) } else { String::new() },
                     countdown,
+                    ends: now() + countdown.unwrap_or(0) as i64,
                     since: now(),
                     started: Instant::now(),
                     folded,
@@ -198,6 +205,69 @@ pub fn show(ui: &AppWindow, v: &Value) {
         crate::open_temporary_page(ui, "info");
     }
     refresh(ui);
+}
+
+/// A tap on an active status screen on the notifications page: it opens again (as from its strip), on top of the
+/// others, and its strip comes back when it is folded again. (A critical alert's row only shows it.)
+pub fn open(ui: &AppWindow, id: &str) {
+    with_state(|s| {
+        if let Some(i) = s.statuses.iter().position(|x| x.id == id) {
+            let mut t = s.statuses.remove(i);
+            t.folded = false;
+            t.closed = false;
+            s.statuses.push(t);
+        }
+    });
+    refresh(ui);
+}
+
+/// The ids of the notifications page's active rows, in their order (the critical alert, then the status screens, the
+/// newest first).
+pub fn listed_ids() -> Vec<String> {
+    with_state(|s| s.critical.iter().map(|c| c.id.clone()).chain(s.statuses.iter().rev().map(|t| t.id.clone())).collect())
+}
+
+/// What a status screen's row says about its time: "since 18:27", or when its countdown ends.
+fn row_when(countdown: Option<u64>, since: i64, ends: i64) -> String {
+    match countdown {
+        Some(_) => format!("until {}", crate::clock::local_hm(ends)),
+        None => format!("since {}", crate::clock::local_hm(since)),
+    }
+}
+
+/// The notifications page's rows of the active ones (they change only when one comes, goes or is sent again).
+fn rows(crit: Option<&Critical>, statuses: &[Status]) -> Vec<InfoStatus> {
+    let mut out = Vec::new();
+    if let Some(c) = crit {
+        let since = format!("since {}", crate::clock::local_hm(c.since));
+        out.push(InfoStatus {
+            id: c.id.as_str().into(),
+            title: c.title.as_str().into(),
+            message: c.message.as_str().into(),
+            icon: glyph(&c.icon).into(),
+            tint: Color::from_rgb_u8(0x8e, 0x0d, 0x14),
+            when: (if c.source.is_empty() { since } else { format!("{} · {since}", c.source) }).into(),
+            critical: true,
+            ..Default::default()
+        });
+    }
+    for t in statuses.iter().rev() {
+        let (picto, small) = picto(&t.picto);
+        let has = picto.size().width > 0;
+        out.push(InfoStatus {
+            id: t.id.as_str().into(),
+            title: t.title.as_str().into(),
+            message: t.line.as_str().into(),
+            icon: glyph(&t.icon).into(),
+            picto,
+            picto_small: small,
+            has_picto: has,
+            tint: t.tint,
+            when: row_when(t.countdown, t.since, t.ends).into(),
+            critical: false,
+        });
+    }
+    out
 }
 
 /// Taps: `status.fold`, `strip.open`, `strip.close`, `info.crit-silence`.
@@ -246,10 +316,16 @@ pub fn act(ui: &AppWindow, what: &str) {
 /// The screens and the strip from the active ones (on every change and once a second); the critical
 /// alert's sound while it sounds (not held, not silent).
 pub fn refresh(ui: &AppWindow) -> Option<String> {
-    let (top, crit, strip_was) = with_state(|s| {
+    let (top, crit, strip_was, listed) = with_state(|s| {
         s.statuses.retain(|x| x.countdown.map_or(true, |c| x.started.elapsed().as_secs() < c));
-        (s.statuses.last().cloned(), s.critical.clone(), s.alert_strip)
+        (s.statuses.last().cloned(), s.critical.clone(), s.alert_strip, rows(s.critical.as_ref(), &s.statuses))
     });
+    // the notifications page's list of them (its pager keeps its first row within the list)
+    let count = listed.len();
+    if let Some(m) = crate::pages::update_rows(&ui.get_info_statuses(), listed) {
+        ui.set_info_statuses(m);
+        crate::info::rows_changed(ui, count);
+    }
     // the critical alert on the notifications page, sounding until held
     let crit_on = crit.as_ref().is_some_and(|c| !c.silenced);
     ui.set_info_critical(crit_on);
@@ -327,4 +403,51 @@ pub fn refresh(ui: &AppWindow) -> Option<String> {
         None => {}
     }
     crit.filter(|c| crit_on && c.sound).map(|c| c.tone)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(id: &str, countdown: Option<u64>) -> Status {
+        Status {
+            id: id.into(),
+            title: format!("{id} title"),
+            line: String::new(),
+            strip: String::new(),
+            icon: "headset".into(),
+            picto: String::new(),
+            tint: Color::from_rgb_u8(0x3b, 0x5b, 0xdb),
+            button: String::new(),
+            countdown,
+            ends: 1_000_600,
+            since: 1_000_000,
+            started: Instant::now(),
+            folded: true,
+            closed: true,
+        }
+    }
+
+    #[test]
+    fn the_page_lists_the_critical_alert_first_then_the_newest_status_screen() {
+        let crit = Critical {
+            id: "own:leak".into(),
+            title: "Water leak detected".into(),
+            message: "Under the sink".into(),
+            icon: "mdi:water-alert".into(),
+            source: "Kitchen".into(),
+            hold: true,
+            silenced: true,
+            since: 1_000_000,
+            sound: true,
+            tone: "auto".into(),
+        };
+        let listed = rows(Some(&crit), &[status("older", None), status("newer", Some(600))]);
+        let ids: Vec<&str> = listed.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(ids, ["own:leak", "newer", "older"]);
+        assert!(listed[0].critical && listed[0].when.starts_with("Kitchen · since "));
+        assert!(!listed[1].critical && listed[1].when.starts_with("until "));
+        assert!(listed[2].when.starts_with("since ") && listed[2].tint == Color::from_rgb_u8(0x3b, 0x5b, 0xdb));
+        assert!(rows(None, &[]).is_empty());
+    }
 }
