@@ -813,12 +813,27 @@ export component TimersPage inherits Rectangle {
             triggered => { Act.act("timers.look", tm.swap-to); tm.swapping = false; } }
     }
 
-    // ---------------------------------------------------------------- the alarm tab's entrance (25.T15)
+    // ---------------------------------------------------------------- the alarm and stopwatch tabs' entrances (25.T15, T16)
     // As the timers tab's: every time the tab comes into view, once, ringing aside; each look runs from its zero to where
-    // it stands in its own way (in at most 700 ms); not on data updates.
+    // it stands in its own way (alarms in at most 700 ms, the stopwatch in at most 600 ms); not on data updates.
     al-ent := TabEntrance { width: 0px; height: 0px; shown: root.on-screen && root.mode == 0 && !root.ringing; length: 700ms; }
+    sw-ent := TabEntrance { width: 0px; height: 0px; shown: root.on-screen && root.mode == 2 && !root.ringing; length: 650ms;
+        started => { root.sw-w0 = root.watch; root.sw-l0 = Math.max(0, root.watch - root.lap-at); } }
     // the share of an alarm look's entrance done after `ms` (ease-out): 0 while the tab waits, 1 once it is over
     pure function ak(ms: float) -> float { return al-ent.armed ? 0 : root.eo(al-ent.ent / ms); }
+    pure function sk(ms: float) -> float { return sw-ent.armed ? 0 : root.eo(sw-ent.ent / ms); }
+    // the stopwatch's time and the running lap's when the entrance started
+    property <float> sw-w0;
+    property <float> sw-l0;
+    // a time as the stopwatch entrance shows it: it counts up from zero through the values in between and arrives at the
+    // live time (a running stopwatch goes on meanwhile), then it is the live time
+    pure function sw-run(now: float, from: float, ms: float) -> float {
+        return sw-ent.armed ? 0 : sw-ent.calm ? now : Math.max(0, now - (1 - root.sk(ms)) * from);
+    }
+    // a hand's place (0 .. period) as the entrance shows it: it sweeps forward from 0 to the live place, one turn at most
+    pure function sw-hand(now: float, from: float, period: float, ms: float) -> float {
+        return sw-ent.armed ? 0 : sw-ent.calm ? Math.mod(now, period) : Math.mod(now - (1 - root.sk(ms)) * Math.mod(from, period), period);
+    }
 
     // ---------------------------------------------------------------- timers, plain
     if !root.ringing && root.mode == 1 && root.theme == 0 && root.n == 1: one := Rectangle {
@@ -1590,20 +1605,26 @@ export component TimersPage inherits Rectangle {
     if !root.ringing && root.mode == 2 && root.sw-look == 1: Rectangle {
         x: -102px * root.chrono-k;
         Image { x: 109px; y: 95px; width: 262px; height: 262px; source: Theme.dark ? @image-url("timers/sw/chrono-dark.png") : @image-url("timers/sw/chrono-light.png"); }
-        property <angle> sa: root.flyback ? Math.mod(root.fly-from, 60) / 60 * 360deg * (1 - root.fly-k) : Math.mod(root.watch, 60) / 60 * 360deg;
-        property <angle> ma: root.flyback ? Math.mod(root.fly-from / 60, 30) / 30 * 360deg * (1 - root.fly-k) : Math.mod(root.watch / 60, 30) / 30 * 360deg;
+        // the entrance (25.T16): the hands sweep forward from 0 to the time (one turn at most, 500 ms, ease-out), the minute
+        // counter with them, the window counts up; the lap markers drop onto the bezel one after another with T6's bounce
+        property <angle> sa: root.flyback ? Math.mod(root.fly-from, 60) / 60 * 360deg * (1 - root.fly-k) : root.sw-hand(root.watch, root.sw-w0, 60, 500) / 60 * 360deg;
+        property <angle> ma: root.flyback ? Math.mod(root.fly-from / 60, 30) / 30 * 360deg * (1 - root.fly-k) : root.sw-hand(root.watch / 60, root.sw-w0 / 60, 30, 500) / 30 * 360deg;
         // the newest marker falls 10 px onto the bezel in 180 ms and bounces 2 px (120 ms)
         property <float> drop: root.lap-t < 180 ? 10 * (1 - Math.pow(root.lap-t / 180, 2)) : root.lap-t < 300 ? 2 * Math.sin(180deg * (root.lap-t - 180) / 120) : 0;
         // the minute counter's hand
         Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke: TFg.c; stroke-width: 2px; stroke-line-cap: round;
             commands: "M 240 180 L " + (240 + 19 * Math.sin(parent.ma)) + " " + (180 - 19 * Math.cos(parent.ma)); }
         Rectangle { x: 237px; y: 177px; width: 6px; height: 6px; border-radius: 3px; background: TFg.c; }
-        Text { x: 190px; y: 256px; width: 100px; height: 28px; text: root.lapfmt(root.watch); font-family: "Space Grotesk"; font-size: 17px; font-weight: 500;
+        Text { x: 190px; y: 256px; width: 100px; height: 28px; text: root.lapfmt(root.sw-run(root.watch, root.sw-w0, 500)); font-family: "Space Grotesk"; font-size: 17px; font-weight: 500;
             color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
         // the laps outside the dial
         for m[i] in root.lap-marks: Path {
             property <angle> a: Math.mod(m, 60) / 60 * 360deg;
-            property <float> dr: i == root.lap-marks.length - 1 ? parent.drop : 0;
+            // the entrance: ms into this marker's drop (30 ms after the one before), -1 before it
+            property <float> et: sw-ent.armed ? -1 : sw-ent.calm ? 1000 : sw-ent.ent - 30 * i;
+            property <float> edr: self.et < 180 ? 10 * (1 - Math.pow(Math.max(0, self.et) / 180, 2)) : self.et < 300 ? 2 * Math.sin(180deg * (self.et - 180) / 120) : 0;
+            visible: self.et >= 0;
+            property <float> dr: (i == root.lap-marks.length - 1 ? parent.drop : 0) + self.edr;
             x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
             fill: i == root.lap-marks.length - 1 ? #FF4A1C : root.sw-faint;
             commands: "M " + (240 + (123 + self.dr) * Math.sin(self.a)) + " " + (226 - (123 + self.dr) * Math.cos(self.a))
@@ -1624,10 +1645,10 @@ export component TimersPage inherits Rectangle {
         property <color> green: Theme.dark ? #3ddc84 : #13804a;
         property <color> red: Theme.dark ? #ff7a55 : #c8320c;
         Text { x: 24px; y: 100px; width: 260px; height: 16px; text: "LAP " + (root.laps.length + 1); font-size: 12px; font-weight: 700; letter-spacing: 1.6px; color: root.sw-faint; }
-        Text { x: 24px; y: 116px; width: 280px; height: 64px; text: root.lapfmt(root.lap-now); font-family: "Space Grotesk"; font-size: 58px; font-weight: 500;
+        Text { x: 24px; y: 116px; width: 280px; height: 64px; text: root.lapfmt(root.sw-run(root.lap-now, root.sw-l0, 420)); font-family: "Space Grotesk"; font-size: 58px; font-weight: 500;
             letter-spacing: -1px; color: TFg.c; vertical-alignment: center; }
         Text { x: 296px; y: 100px; width: 160px; height: 16px; text: "TOTAL"; font-size: 12px; font-weight: 700; letter-spacing: 1.6px; color: root.sw-faint; horizontal-alignment: right; }
-        Text { x: 296px; y: 116px; width: 160px; height: 30px; text: root.lapfmt(root.watch); font-family: "Space Grotesk"; font-size: 22px; font-weight: 500; color: TFg.c;
+        Text { x: 296px; y: 116px; width: 160px; height: 30px; text: root.lapfmt(root.sw-run(root.watch, root.sw-w0, 420)); font-family: "Space Grotesk"; font-size: 22px; font-weight: 500; color: TFg.c;
             horizontal-alignment: right; vertical-alignment: center; }
         if root.lap-best >= 0: Rectangle {
             property <float> d: root.lap-now - root.lap-best;
@@ -1648,8 +1669,11 @@ export component TimersPage inherits Rectangle {
             content-height: Math.max(self.height, root.laps.length * 30px);
         for l[i] in root.laps: row := Rectangle {
             property <bool> best: root.lap-best >= 0 && Math.abs(l - root.lap-best) < 0.0005;
-            x: 0; y: (i - 1 + tower.push) * 30px; width: 432px; height: 27px; border-radius: 6px; background: TFg.c.with-alpha(0.05);
-            opacity: i == 0 ? tower.push : 1;
+            // the entrance (25.T16): the rows drop in from the top one after another (14 px with a fade, 40 ms apart, 180 ms
+            // each, ease-out)
+            property <float> eu: sw-ent.armed ? 0 : root.eo((sw-ent.ent - 40 * i) / 180);
+            x: 0; y: (i - 1 + tower.push) * 30px - (1 - row.eu) * 14px; width: 432px; height: 27px; border-radius: 6px; background: TFg.c.with-alpha(0.05);
+            opacity: (i == 0 ? tower.push : 1) * row.eu;
             clip: true;
             // a new best lap: a purple shimmer sweeps across its row (500 ms)
             if i == 0 && row.best && root.lap-t < 500: Rectangle {
@@ -1677,6 +1701,12 @@ export component TimersPage inherits Rectangle {
         property <color> pusher: Theme.dark ? #3a3b40 : #c9c5bb;
         property <color> print: Theme.dark ? #a7a39b : #55524c;
         property <color> ink: #0b2723.mix(#1d2620, root.lcd-k);
+        // the entrance (25.T16), with a time on the stopwatch: every segment lights at once for 80 ms (all 8s and every
+        // mark), then the time shows with the LCD's lag (T8); while the tab waits the LCD is blank. st: 0 blank, 1 all lit,
+        // 2 the time
+        property <int> st: sw-ent.armed ? (root.watch > 0 ? 0 : 2) : sw-ent.calm || sw-ent.ent >= 80 || root.sw-w0 <= 0 ? 2 : 1;
+        pure function dg(v: int) -> int { return lcdw.st == 1 ? 8 : lcdw.st == 0 ? -1 : v; }
+        property <float> dots: lcdw.st == 0 ? 0.07 : 1;
         for pp in [{ x: 36, y: 134 }, { x: 36, y: 290 }, { x: 432, y: 134 }, { x: 432, y: 290 }]: Rectangle {
             x: pp.x * 1px; y: pp.y * 1px; width: 12px; height: 22px; border-radius: 3px; background: lcdw.pusher; }
         Rectangle { x: 44px; y: 102px; width: 392px; height: 242px; border-radius: 46px; background: lcdw.body; }
@@ -1690,23 +1720,24 @@ export component TimersPage inherits Rectangle {
             background: @linear-gradient(180deg, #7fe7d6.mix(#b6c2ac, root.lcd-k) 0%, #45c2b0.mix(#9cab95, root.lcd-k) 100%);
             border-width: 2px; border-color: #2e8f82.mix(#7d8a76, root.lcd-k);
             TouchArea { clicked => { root.lcd-glow = true; } } }
-        Text { x: 98px; y: 153px; text: "CHR"; font-size: 12px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink; }
-        Text { x: 140px; y: 154px; text: "LAP"; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink; opacity: root.laps.length > 0 ? 1 : 0.08; }
-        Text { x: 172px; y: 154px; text: "SPLIT"; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink; opacity: 0.08; }
+        Text { x: 98px; y: 153px; text: "CHR"; font-size: 12px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink; opacity: lcdw.st == 0 ? 0.08 : 1; }
+        Text { x: 140px; y: 154px; text: "LAP"; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink;
+            opacity: lcdw.st == 1 || (lcdw.st == 2 && root.laps.length > 0) ? 1 : 0.08; }
+        Text { x: 172px; y: 154px; text: "SPLIT"; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink; opacity: lcdw.st == 1 ? 1 : 0.08; }
         Text { x: 282px; y: 154px; width: 100px; text: "▶ RUN"; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: lcdw.ink; horizontal-alignment: right;
-            opacity: root.watch-running && Math.mod(Math.floor(animation-tick() / 500ms), 2) == 0 ? 1 : 0.08; }
+            opacity: lcdw.st == 1 ? 1 : lcdw.st == 2 && root.watch-running && Math.mod(Math.floor(animation-tick() / 500ms), 2) == 0 ? 1 : 0.08; }
         property <int> mins: Math.mod(Math.floor(root.watch / 60), 100);
         property <int> secs: Math.mod(Math.floor(root.watch), 60);
         property <int> cs: Math.mod(Math.floor(root.watch * 100), 100);
-        Seg7 { d: lcdw.mins >= 10 ? Math.floor(lcdw.mins / 10) : -1; x0: 102; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
-        Seg7 { d: Math.mod(lcdw.mins, 10); x0: 150; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
-        Seg7 { d: Math.floor(lcdw.secs / 10); x0: 214; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
-        Seg7 { d: Math.mod(lcdw.secs, 10); x0: 262; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
-        Seg7 { d: Math.floor(lcdw.cs / 10); x0: 322; y0: 210; w: 26; h: 40; t: 6; ink: lcdw.ink; lag: true; }
-        Seg7 { d: Math.mod(lcdw.cs, 10); x0: 352; y0: 210; w: 26; h: 40; t: 6; ink: lcdw.ink; lag: true; }
-        Rectangle { x: 201.4px; y: 201.4px; width: 7.2px; height: 7.2px; border-radius: 3.6px; background: lcdw.ink; }
-        Rectangle { x: 198.4px; y: 227.4px; width: 7.2px; height: 7.2px; border-radius: 3.6px; background: lcdw.ink; }
-        Rectangle { x: 312px; y: 246px; width: 5px; height: 5px; background: lcdw.ink; }
+        Seg7 { d: lcdw.dg(lcdw.mins >= 10 ? Math.floor(lcdw.mins / 10) : -1); x0: 102; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
+        Seg7 { d: lcdw.dg(Math.mod(lcdw.mins, 10)); x0: 150; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
+        Seg7 { d: lcdw.dg(Math.floor(lcdw.secs / 10)); x0: 214; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
+        Seg7 { d: lcdw.dg(Math.mod(lcdw.secs, 10)); x0: 262; y0: 184; w: 40; h: 66; t: 8; ink: lcdw.ink; lag: true; }
+        Seg7 { d: lcdw.dg(Math.floor(lcdw.cs / 10)); x0: 322; y0: 210; w: 26; h: 40; t: 6; ink: lcdw.ink; lag: true; }
+        Seg7 { d: lcdw.dg(Math.mod(lcdw.cs, 10)); x0: 352; y0: 210; w: 26; h: 40; t: 6; ink: lcdw.ink; lag: true; }
+        Rectangle { x: 201.4px; y: 201.4px; width: 7.2px; height: 7.2px; border-radius: 3.6px; background: lcdw.ink; opacity: lcdw.dots; }
+        Rectangle { x: 198.4px; y: 227.4px; width: 7.2px; height: 7.2px; border-radius: 3.6px; background: lcdw.ink; opacity: lcdw.dots; }
+        Rectangle { x: 312px; y: 246px; width: 5px; height: 5px; background: lcdw.ink; opacity: lcdw.dots; }
         // (#87) the laps in two LCD lines, L nn m:ss.cc, newest on top; the older ones scroll into view
         if root.laps.length > 0: Flickable {
             x: 96px; y: 256px; width: 290px; height: 48px;
@@ -1714,17 +1745,17 @@ export component TimersPage inherits Rectangle {
             for l[i] in root.laps: Rectangle {
                 property <int> n: root.laps.length - i;
                 y: i * 24px; height: 24px;
-                Seg7 { x: -96px; y: 0; d: 10; x0: 104; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: parent.n >= 10 ? Math.mod(Math.floor(parent.n / 10), 10) : -1; x0: 122; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: Math.mod(parent.n, 10); x0: 138; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: Math.mod(Math.floor(l / 60), 10); x0: 170; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Rectangle { x: 90px; y: 7px; width: 3px; height: 3px; background: lcdw.ink; }
-                Rectangle { x: 89px; y: 15px; width: 3px; height: 3px; background: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: Math.floor(Math.mod(Math.floor(l), 60) / 10); x0: 196; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: Math.mod(Math.floor(l), 10); x0: 212; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Rectangle { x: 133px; y: 19px; width: 3px; height: 3px; background: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: Math.floor(Math.mod(Math.floor(l * 100), 100) / 10); x0: 236; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
-                Seg7 { x: -96px; y: 0; d: Math.mod(Math.floor(l * 100), 10); x0: 252; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(10); x0: 104; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(parent.n >= 10 ? Math.mod(Math.floor(parent.n / 10), 10) : -1); x0: 122; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(Math.mod(parent.n, 10)); x0: 138; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(Math.mod(Math.floor(l / 60), 10)); x0: 170; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Rectangle { x: 90px; y: 7px; width: 3px; height: 3px; background: lcdw.ink; opacity: lcdw.dots; }
+                Rectangle { x: 89px; y: 15px; width: 3px; height: 3px; background: lcdw.ink; opacity: lcdw.dots; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(Math.floor(Math.mod(Math.floor(l), 60) / 10)); x0: 196; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(Math.mod(Math.floor(l), 10)); x0: 212; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Rectangle { x: 133px; y: 19px; width: 3px; height: 3px; background: lcdw.ink; opacity: lcdw.dots; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(Math.floor(Math.mod(Math.floor(l * 100), 100) / 10)); x0: 236; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
+                Seg7 { x: -96px; y: 0; d: lcdw.dg(Math.mod(Math.floor(l * 100), 10)); x0: 252; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; lag: true; }
             }
         }
     }
@@ -1777,8 +1808,12 @@ export component TimersPage inherits Rectangle {
             Rectangle { x: 4px; y: 0; width: 412px; height: 1.8px; border-radius: 1px; background: #ffffff3d; }
             Rectangle { x: 0; y: 32px; width: 420px; height: 2px; border-radius: 1px; background: #00000066; } }
         property <bool> cycling: root.flyback && (animation-tick() - root.fly-t0) < 400ms;
+        // the entrance (25.T16), with a time on the stopwatch: every tube runs through 0-9 once (T9's cycle, 400 ms), then
+        // stops on its digit; while the tab waits the tubes show 0
+        property <bool> ent-cycle: !sw-ent.armed && !sw-ent.calm && sw-ent.ent < 400 && root.sw-w0 > 0;
         for x[i] in [47, 107, 183, 243, 319, 379]: NixieTube { x: x * 1px; y: 124px; n: i; steady: root.watch-running && i >= 4;
             d: nix.cycling ? Math.mod(Math.floor((animation-tick() - root.fly-t0) / 40ms) + i, 10)
+                : nix.ent-cycle ? Math.mod(Math.floor(sw-ent.ent / 40) + i, 10) : sw-ent.armed ? 0
                 : i == 0 ? Math.floor(nix.mins / 10) : i == 1 ? Math.mod(nix.mins, 10) : i == 2 ? Math.floor(nix.secs / 10) : i == 3 ? Math.mod(nix.secs, 10)
                 : i == 4 ? Math.floor(nix.cs / 10) : Math.mod(nix.cs, 10); }
         // the three neon dots with their glow: drawn once
@@ -1795,9 +1830,13 @@ export component TimersPage inherits Rectangle {
     // ---------------------------------------------------------------- stopwatch
     if !root.ringing && root.mode == 2: sw := Rectangle {
         property <bool> plain: root.sw-look == 0;
-        property <int> cs: Math.mod(Math.floor(root.watch * 100), 100);
-        property <string> main: root.watch >= 3600 ? Math.floor(root.watch / 3600) + ":" + root.two(Math.mod(Math.floor(root.watch / 60), 60)) + ":" + root.two(Math.mod(Math.floor(root.watch), 60))
-            : Math.floor(root.watch / 60) + ":" + root.two(Math.mod(Math.floor(root.watch), 60));
+        // the entrance (25.T16): the time counts up through the values in between (M10, 420 ms, ease-out), then runs live;
+        // the laps list rolls in from the top
+        property <float> v: sw.plain ? root.sw-run(root.watch, root.sw-w0, 420) : root.watch;
+        property <length> roll: (1 - root.sk(420)) * Math.min(3, root.laps.length) * 34px;
+        property <int> cs: Math.mod(Math.floor(sw.v * 100), 100);
+        property <string> main: sw.v >= 3600 ? Math.floor(sw.v / 3600) + ":" + root.two(Math.mod(Math.floor(sw.v / 60), 60)) + ":" + root.two(Math.mod(Math.floor(sw.v), 60))
+            : Math.floor(sw.v / 60) + ":" + root.two(Math.mod(Math.floor(sw.v), 60));
         property <length> big: root.watch >= 3600 ? 60px : 76px;
         // the hundredths share the big digits' baseline (Noto Sans descent = 0.293 em)
         HorizontalLayout {
@@ -1813,7 +1852,7 @@ export component TimersPage inherits Rectangle {
         Flickable { visible: sw.plain; x: 40px; y: root.top + 156px; width: root.width - 80px; height: 3 * 34px;
             content-height: Math.max(self.height, root.laps.length * 34px);
         for l[i] in root.laps: Rectangle {
-            x: 0; y: i * 34px + root.lap-off; width: parent.width; height: 30px;
+            x: 0; y: i * 34px + root.lap-off - sw.roll; width: parent.width; height: 30px;
             opacity: i == 0 ? 1 + root.lap-off / 34px : 1;
             Text { x: 0; width: 100px; height: parent.height; text: "Lap " + (root.laps.length - i); font-size: 15px; color: TFg.c.with-alpha(0.60); vertical-alignment: center; }
             Text { x: parent.width - 140px; width: 140px; height: parent.height; text: (l >= 3600 ? Math.floor(l / 3600) + ":" + root.two(Math.mod(Math.floor(l / 60), 60)) : Math.floor(l / 60) + "") + ":" + root.two(Math.mod(Math.floor(l), 60)) + "." + root.two(Math.mod(Math.floor(l * 100), 100));
