@@ -359,6 +359,7 @@ export component RollDigit {
     in property <color> glow: #ff2bd6;
     in property <bool> paper;
     in property <duration> dur: 180ms;
+    in property <string> family;          // another font ("Space Grotesk"); empty: the default
     // the shown digit is a plain value (a binding to d would already hold the new digit when `changed` runs)
     property <int> now-d;
     property <int> old-d;
@@ -373,16 +374,17 @@ export component RollDigit {
     preferred-width: g.preferred-width; preferred-height: g.preferred-height;
     min-width: g.preferred-width; min-height: g.preferred-height;
     // the roll runs in a window around the digits (Noto Sans: the digits fill 0.36–1.07 em of the 1.36 em line;
-    // the window is 0.30–1.12 em, room for the rim), whatever height a layout gives the digit
+    // the window is 0.30–1.12 em, room for the rim; Space Grotesk: 0.27–1.00 em of 1.28 em, the window 0.22–1.04 em),
+    // whatever height a layout gives the digit
     property <length> lh: g.preferred-height;
-    property <length> ct: 0.30 * root.font-size;
+    property <length> ct: (root.family == "Space Grotesk" ? 0.22 : 0.30) * root.font-size;
     property <length> ch: 0.82 * root.font-size;
     Rectangle {
         x: -root.m; y: (root.height - root.lh) / 2 + root.ct; width: root.width + 2 * root.m; height: root.ch; clip: root.rolling;
         g := GlowText { x: root.m; y: -root.ct + (1 - root.e) * root.ch; width: root.width; height: root.lh; text: root.now-d; font-size: root.font-size;
-            font-weight: root.font-weight; color: root.color; k: root.k; neon: root.neon; glow: root.glow; paper: root.paper; }
+            font-weight: root.font-weight; color: root.color; k: root.k; neon: root.neon; glow: root.glow; paper: root.paper; family: root.family; }
         if root.rolling: GlowText { x: root.m; y: -root.ct - root.e * root.ch; width: root.width; height: root.lh; text: root.old-d; font-size: root.font-size;
-            font-weight: root.font-weight; color: root.color; k: root.k; neon: root.neon; glow: root.glow; paper: root.paper; }
+            font-weight: root.font-weight; color: root.color; k: root.k; neon: root.neon; glow: root.glow; paper: root.paper; family: root.family; }
     }
 }
 
