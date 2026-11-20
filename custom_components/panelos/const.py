@@ -147,7 +147,7 @@ PLATFORMS = ["binary_sensor", "button", "notify", "number", "select", "sensor", 
 # Entity keys per platform, as the panel names them in panelos/report and in
 # the commands it gets back.
 ENTITY_KEYS = {
-    "switch": ("screen", "auto_brightness", "proximity_wake"),
+    "switch": ("screen", "auto_brightness", "proximity_wake", "rain_on_glass", "lightning"),
     "select": ("dashboard", "theme", "screensaver", "screensaver_style", "display_mode"),
     "number": ("brightness",),
     "sensor": ("illuminance", "soc_temperature", "wifi_signal", "ip_address", "app_version"),

@@ -3050,6 +3050,7 @@ class PanelOSPage extends HTMLElement {
       const sw = BACKGROUNDS[cur].theme === 8;
       const plain = BACKGROUNDS[cur].theme === PLAIN_THEME;
       const pics = this._has(p, "images");
+      const ps = p.states || {};
       const items = BACKGROUNDS.map((b, k) => {
         const ok = pics || b.theme === PLAIN_THEME;
         return { id: k, name: b.name, pic: this._lookPic(p, `bg-${k}`, () => svgNode(bgArt(k, this._plainMode(p)))), disabled: !ok, why: ok ? null : this._reason(p, "images") };
@@ -3070,7 +3071,12 @@ class PanelOSPage extends HTMLElement {
           (v) => this._setPageOption(p, i, "light", v === "panel" ? undefined : v), { label: "Light or dark" }),
           { info: "Panel setting: the light scene with the panel's light theme, the dark one with its dark theme, and Auto follows the panel. Light or Dark keeps this background so." }) : null,
         sw || plain ? null : this._more(`bg:${p.entry_id}:${i}`, this._row("Real sun and moon", this._toggle(o.real_sun !== false, (v) => this._setPageOption(p, i, "real_sun", v), { label: "Real sun and moon" }),
-          { info: "On: the sun and the moon stand where they really are in the sky. Off: they keep a fixed place." })));
+          { info: "On: the sun and the moon stand where they really are in the sky. Off: they keep a fixed place." }),
+          // the panel's own switches (its entities): the same on every weather page of the panel
+          BACKGROUNDS[cur].theme <= 2 ? this._row("Rain on the glass", this._toggle(ps.rain_on_glass !== false, (v) => this._command(p, "rain_on_glass", v), { label: "Rain on the glass" }),
+            { info: "When it rains, drops land on the glass over the photo and run down; the wind bends their path. A finger stroke up or down wipes them away. This switch is the panel's: it applies to all its weather pages." }) : null,
+          this._row("Lightning", this._toggle(ps.lightning !== false, (v) => this._command(p, "lightning", v), { label: "Lightning" }),
+            { info: "Flashes and lightning bolts in thunderstorms. Turn them off if the flashes disturb anyone. This switch is the panel's: it applies to all its weather pages." })));
     }
     const looks = LOOKS[page.kind] || [];
     if (looks.length < 2) return null;
@@ -4640,6 +4646,13 @@ class PanelOSPage extends HTMLElement {
         if (fs[key] != null && (key !== "auto_brightness" || this._has(to, "light"))) await this._command(to, key, fs[key]);
       }
       if (fs.proximity_wake != null && this._has(to, "proximity")) await this._command(to, "proximity_wake", fs.proximity_wake);
+    }
+    // the backgrounds' switches of the panel (rain on the glass, lightning) go with its pages
+    if (ok && what.pages && to.connected) {
+      const fs = from.states || {};
+      for (const key of ["rain_on_glass", "lightning"]) {
+        if (typeof fs[key] === "boolean") await this._command(to, key, fs[key]);
+      }
     }
     return ok;
   }

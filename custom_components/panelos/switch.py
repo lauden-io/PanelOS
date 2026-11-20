@@ -1,4 +1,4 @@
-"""Switches of a panel: screen on/off, automatic brightness, wake on approach."""
+"""Switches of a panel: screen on/off, automatic brightness, wake on approach, rain on the glass, lightning."""
 
 from __future__ import annotations
 
@@ -25,6 +25,20 @@ DESCRIPTIONS = {
         key="proximity_wake",
         translation_key="proximity_wake",
         icon="mdi:motion-sensor",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    # Drops on the glass over the photo backgrounds when it rains.
+    "rain_on_glass": SwitchEntityDescription(
+        key="rain_on_glass",
+        translation_key="rain_on_glass",
+        icon="mdi:water-outline",
+        entity_category=EntityCategory.CONFIG,
+    ),
+    # Flashes and bolts in the storm scenes.
+    "lightning": SwitchEntityDescription(
+        key="lightning",
+        translation_key="lightning",
+        icon="mdi:weather-lightning",
         entity_category=EntityCategory.CONFIG,
     ),
 }

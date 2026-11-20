@@ -255,6 +255,12 @@
       },
       "proximity_wake": {
         "name": "Wake on approach"
+      },
+      "rain_on_glass": {
+        "name": "Rain on the glass"
+      },
+      "lightning": {
+        "name": "Lightning"
       }
     },
     "notify": {
