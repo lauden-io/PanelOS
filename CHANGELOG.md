@@ -62,6 +62,7 @@
 - Flight deck: painted group frames, automatic, off or custom, set in the integration; a colour light's lamp lights in its own colour at the throw, also after a restart.
 - Mixing desk / flight deck: long names fit their tape or plate in smaller letters or two lines.
 - Eight tiles a page; more go on another quick controls page (older pages with more are split when the integration starts).
+- An on / off light's tile shows no level.
 
 ### Home and weather
 - Editing a custom page on the panel (long press, lock, move, resize, remove, settings, add, background), switched on in the integration ("Allow editing on the panel"); the edit mode's menus are objects of the look.
@@ -96,6 +97,11 @@
 - When Sendspin music stalls (its buffer runs dry), the Wi-Fi roam check runs during the music and moves to an access point at least 10 dB stronger.
 - Wi-Fi roaming can be switched off in the integration (on by default); the link watch keeps working.
 - The connection log has wpa_supplicant's own link events: beacon losses, disconnects with their reason, connections; the roam check asks for the network by its real name.
+
+### Security
+- A panel's commands work only for the panel's own Home Assistant user (kept on its first connection) and administrators; the PanelOS page shows that user under Device → About, with Forget.
+- Dashboard mode: the login token goes only to Home Assistant's own pages; other sites do not open in the web view.
+- NTP from `pool.ntp.org` (with the next image).
 
 ### Home Assistant
 - The integration's switches, segmented controls, weekday rows and checkboxes have the panel's jelly motion, with the mouse and with touch.
