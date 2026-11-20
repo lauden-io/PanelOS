@@ -311,7 +311,19 @@ export component CalendarPage inherits Rectangle {
         PageMenu.has-settings = true;
     }
     init => { if root.on-screen { root.name-menu(); } }
-    changed on-screen => { if root.on-screen { root.name-menu(); } else { Act.act("cal.close-all", ""); } }
+    // on screen again (a swipe, the screensaver gone): the time grids show the period with today in it (the app), round
+    // now and at their own hour height
+    changed on-screen => {
+        if root.on-screen {
+            root.name-menu();
+            root.zh = 0px;
+            root.centre-req += 1;
+            Act.act("cal.shown", "");
+        } else {
+            Act.act("cal.close-all", "");
+        }
+    }
+    changed view => { root.zh = 0px; root.centre-req += 1; }
     changed look => { if root.on-screen { root.name-menu(); } }
     property <int> menu-request: PageMenu.open-request;
     changed menu-request => { if root.on-screen { Act.act("cal.settings", ""); } }
@@ -321,13 +333,26 @@ export component CalendarPage inherits Rectangle {
         return (Math.mod(h, 12) == 0 ? 12 : Math.mod(h, 12)) + (h < 12 ? " AM" : " PM");
     }
 
-    property <length> hh: 44px;            // day view: an hour
-    property <length> wh: 24px;            // week view: an hour
-    property <length> wx: 56px;            // week view: first column
-    property <length> ww: 58px;            // week view: column width
-    property <int> gn: root.view == 4 ? 3 : 7;                  // week / 3 days: columns, their width, an hour
+    // The time grids (day, 3 days, week): an hour is 44 px in the day view; the week and 3-day views fit 08:00–18:00 on
+    // their grid. Two fingers zoom the hours (zh, 0: the view's own height) from the whole day to four hours on the
+    // grid. When the page comes on screen or the view changes, the zoom goes back and the grid scrolls now to its middle.
+    property <length> zh;
+    property <int> centre-req;
+    property <length> hh: root.zh > 0px ? root.zh : 44px;                  // day view: an hour
+    property <length> wx: 56px;                                            // week view: first column
+    property <int> gn: root.view == 4 ? 3 : 7;                             // week / 3 days: columns, their width, an hour
     property <length> gw: (464px - root.wx) / root.gn;
-    property <length> gh: root.view == 4 ? 34px : 24px;
+    property <length> gh: root.zh > 0px ? root.zh : (root.height - 172px) / 10;
+    property <length> day-y;                                               // the day grid's scroll (the now dot's ring follows it)
+    property <bool> menu-open: root.detail || root.edit || root.day-sheet || root.picker || root.settings;   // no zoom under a menu
+    // the scroll that puts now in the middle of a grid `view-h` high with hours `h` high (within the day)
+    pure function centred(h: length, view-h: length) -> length {
+        return -clamp(root.now-min / 60 * h - view-h / 2, 0px, Math.max(0px, 24 * h + 40px - view-h));
+    }
+    // the scroll that keeps the hour `at` under the fingers' midpoint `y` with hours `h` high
+    pure function anchored(at: float, y: length, h: length, view-h: length) -> length {
+        return -clamp(at * h - y, 0px, Math.max(0px, 24 * h + 40px - view-h));
+    }
     background: Theme.background;
 
     // ---------------------------------------------------------------- header: title and date, view chip (top right), back / forward
@@ -392,13 +417,19 @@ export component CalendarPage inherits Rectangle {
         if root.day-allday.length == 0: Text { height: 26px; text: root.day-events.length == 0 ? root.day-free : ""; font-size: 14px; color: Theme.faint;
             vertical-alignment: center; overflow: elide; }
     }
-    if root.look == 0 && root.view == 1: Flickable {
+    if root.look == 0 && root.view == 1: Rectangle {
+      x: 0; y: 140px; width: root.width; height: root.height - 140px;
+      dayfl := Flickable {
         cache-rendering-hint: true;
-        x: 0; y: 140px; width: root.width; height: root.height - 140px;
-        content-width: root.width; content-height: 24 * root.hh + 40px; content-y: -root.scroll;
+        width: parent.width; height: parent.height;
+        content-width: root.width; content-height: 24 * root.hh + 40px;
+        property <int> req: root.centre-req;
+        init => { self.content-y = root.centred(root.hh, self.height); root.day-y = self.content-y; }
+        changed req => { self.content-y = root.centred(root.hh, self.height); }
+        changed content-y => { root.day-y = self.content-y; }
         for h in 25: Rectangle { x: 0; y: h * root.hh; width: root.width; height: 1px;
             Rectangle { x: 60px; y: 0; width: root.width - 76px; height: 1px; background: Theme.outline; }
-            if h < 24: Text { x: 4px; y: -8px; width: 48px; height: 16px; text: root.hour-label(h, true); font-size: Clock.h24 ? 12px : 11px; color: Theme.muted;
+            if h < 24 && Math.mod(h, root.hh >= 22px ? 1 : 2) == 0: Text { x: 4px; y: -8px; width: 48px; height: 16px; text: root.hour-label(h, true); font-size: Clock.h24 ? 12px : 11px; color: Theme.muted;
                 horizontal-alignment: right; vertical-alignment: center; } }
         for e in root.day-events: db := Rectangle {
             x: 66px + e.lane * (398px / max(1, e.lanes)); width: 398px / max(1, e.lanes) - 4px;
@@ -416,6 +447,18 @@ export component CalendarPage inherits Rectangle {
         if root.day-today: Rectangle { x: 52px; y: root.now-min / 60 * root.hh - 4px; width: root.width - 68px; height: 8px;
             Rectangle { x: 0; y: 0; width: 8px; height: 8px; border-radius: 4px; background: Theme.accent; }
             Rectangle { x: 6px; y: 3px; width: parent.width - 6px; height: 2px; background: Theme.accent; } }
+      }
+      // two fingers: the hours grow or shrink round the hour under the fingers' midpoint
+      ScaleRotateGestureHandler {
+        enabled: !root.menu-open;
+        property <length> h0;
+        property <float> at;
+        started => { self.h0 = root.hh; self.at = (self.center.y - dayfl.content-y) / root.hh; }
+        updated => {
+            root.zh = clamp(self.h0 * self.scale, self.height / 24, self.height / 4);
+            dayfl.content-y = root.anchored(self.at, self.center.y, root.zh, self.height);
+        }
+      }
     }
     // 25.K1: the now line's dot breathes (1.6 s): a soft ring round it, over the timeline (which is drawn once into a layer)
     property <float> breath-t;
@@ -423,7 +466,7 @@ export component CalendarPage inherits Rectangle {
     property <float> breath: 0.5 - 0.5 * Math.cos(360deg * root.breath-t / 1600);
     if root.look == 0 && root.view == 1 && root.day-today: Rectangle {
         x: 0; y: 140px; width: root.width; height: root.height - 140px; clip: true;
-        property <length> dy: root.now-min / 60 * root.hh - root.scroll;
+        property <length> dy: root.now-min / 60 * root.hh + root.day-y;
         Rectangle { x: 56px - (6px + 5px * root.breath); y: parent.dy - (6px + 5px * root.breath); width: 2 * (6px + 5px * root.breath); height: self.width;
             border-radius: self.width / 2; background: Theme.accent.with-alpha(0.35 * (1 - root.breath)); }
     }
@@ -442,16 +485,21 @@ export component CalendarPage inherits Rectangle {
             TouchArea { clicked => { root.detail-ev = e; root.detail-when = root.week-names[e.day] + " " + root.week-nums[e.day] + " · " + e.time; root.detail = true; } }
             Text { x: 4px; y: 0; width: parent.width - 8px; height: parent.height; text: e.title; font-size: root.view == 4 ? 12px : 10px; font-weight: 600; color: Theme.text;
                 vertical-alignment: center; overflow: elide; } } }
-    if root.look == 0 && (root.view == 2 || root.view == 4): Flickable {
+    if root.look == 0 && (root.view == 2 || root.view == 4): Rectangle {
+      x: 0; y: 172px; width: root.width; height: root.height - 172px;
+      weekfl := Flickable {
         cache-rendering-hint: true;
-        x: 0; y: 172px; width: root.width; height: root.height - 172px;
-        content-width: root.width; content-height: 24 * root.gh + 40px; content-y: -root.scroll;
+        width: parent.width; height: parent.height;
+        content-width: root.width; content-height: 24 * root.gh + 40px;
+        property <int> req: root.centre-req;
+        init => { self.content-y = root.centred(root.gh, self.height); }
+        changed req => { self.content-y = root.centred(root.gh, self.height); }
         // M25: the today column slides to the new day (midnight, navigation) in 300 ms
         if root.week-today >= 0: Rectangle { x: root.wx + root.week-today * root.gw; y: 0; width: root.gw; height: 24 * root.gh; background: Theme.surface.with-alpha(0.6);
             animate x { duration: 300ms; easing: ease-in-out; } }
         for h in 25: Rectangle { x: 0; y: h * root.gh; width: root.width; height: 1px;
             Rectangle { x: root.wx; y: 0; width: root.gn * root.gw; height: 1px; background: Theme.outline; }
-            if h < 24 && Math.mod(h, root.view == 4 ? 1 : 2) == 0: Text { x: 2px; y: -8px; width: 46px; height: 16px; text: root.hour-label(h, false); font-size: Clock.h24 ? 11px : 10px;
+            if h < 24 && Math.mod(h, root.gh >= 22px ? 1 : root.gh >= 12px ? 2 : 3) == 0: Text { x: 2px; y: -8px; width: 46px; height: 16px; text: root.hour-label(h, false); font-size: Clock.h24 ? 11px : 10px;
                 color: Theme.muted; horizontal-alignment: right; vertical-alignment: center; } }
         for i in root.gn + 1: Rectangle { x: root.wx + i * root.gw; y: 0; width: 1px; height: 24 * root.gh; background: Theme.outline.with-alpha(0.6); }
         for e in root.week-events: wb := Rectangle {
@@ -481,6 +529,17 @@ export component CalendarPage inherits Rectangle {
             Rectangle { x: 0; y: 0; width: 6px; height: 6px; border-radius: 3px; background: Theme.accent; }
             Rectangle { x: 4px; y: 2px; width: parent.width - 4px; height: 2px; background: Theme.accent; }
             animate x { duration: 300ms; easing: ease-in-out; } }
+      }
+      ScaleRotateGestureHandler {
+        enabled: !root.menu-open;
+        property <length> h0;
+        property <float> at;
+        started => { self.h0 = root.gh; self.at = (self.center.y - weekfl.content-y) / root.gh; }
+        updated => {
+            root.zh = clamp(self.h0 * self.scale, self.height / 24, self.height / 4);
+            weekfl.content-y = root.anchored(self.at, self.center.y, root.zh, self.height);
+        }
+      }
     }
 
     // ---------------------------------------------------------------- month: the grid with up to two event labels a day (a tap opens that day)

@@ -4,6 +4,8 @@
 // rods, the station's printed timetable, a boarding pass. Tear-off: slips from the pad, its cardboard back, an
 // appointment card. Wall calendar: ruled index cards pinned on. Every menu is placed and dimmed by MenuHost and moves
 // with the look's own motion (animation spec 25.K5).
+// Every wrapped text has min-width 0: a wrapped text's narrowest width is its longest word, so one long link in an
+// event's description would make the whole card wider than its place and push its rows out of sight.
 import { Theme, Act, Words, Clock } from "theme.slint";
 import { Icon, MenuHost, Jelly, Segmented, Dropdown, Toggle, CheckBox, TextButton } from "widgets.slint";
 import { Keyboard } from "overlays.slint";
@@ -303,7 +305,7 @@ component CalEditForm inherits VerticalLayout {
         border-width: root.typing ? 2px : 1px; border-color: root.typing ? root.sk.accent : root.sk.line;
         HorizontalLayout { padding-left: 14px; padding-right: 14px; padding-top: 8px; padding-bottom: 8px; spacing: 10px;
             Icon { width: 20px; text: "\u{F03EB}"; font-size: 18px; color: root.sk.muted; vertical-alignment: center; }
-            Text { height: self.preferred-height; text: root.title + (root.typing ? "|" : ""); font-family: root.look == 2 || root.look == 3 ? "Caveat" : "";
+            Text { min-width: 0px; height: self.preferred-height; text: root.title + (root.typing ? "|" : ""); font-family: root.look == 2 || root.look == 3 ? "Caveat" : "";
                 font-size: root.look == 2 ? 24px : root.look == 3 ? 25px : 17px; font-weight: root.look == 1 || root.look == 2 || root.look == 3 ? 700 : 400;
                 color: root.look == 2 ? #1b348a : root.sk.text; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; } }
         TouchArea { clicked => { Act.act("cal.title", ""); } }
@@ -481,7 +483,7 @@ export component CalMenus inherits Rectangle {
                         height: max(52px, pr.preferred-height);
                         HorizontalLayout { x: i == root.shake-i ? root.shake-x : 0px; padding-left: 10px; padding-right: 12px; spacing: 10px;
                             VerticalLayout { alignment: center; Rectangle { width: 12px; height: 12px; border-radius: 6px; background: c.tint; } }
-                            pr := Text { text: c.name; font-size: 15px; font-weight: c.on ? 600 : 400; color: Theme.text; wrap: word-wrap; vertical-alignment: center;
+                            pr := Text { min-width: 0px; text: c.name; font-size: 15px; font-weight: c.on ? 600 : 400; color: Theme.text; wrap: word-wrap; vertical-alignment: center;
                                 horizontal-stretch: 1; min-height: 52px; }
                             VerticalLayout { alignment: center; CheckBox { checked: c.on; } } }
                         TouchArea { clicked => { root.toggle(i, c); } } }
@@ -560,7 +562,7 @@ export component CalMenus inherits Rectangle {
                                         LineTo { x: 5 + 4.2 * Math.min(1, slip.tick * 2.4); y: 12.5 + 4.3 * Math.min(1, slip.tick * 2.4); }
                                         LineTo { x: 9.2 + 9.8 * Math.max(0, slip.tick * 1.7 - 0.7); y: 16.8 - 10.3 * Math.max(0, slip.tick * 1.7 - 0.7); } } } }
                             VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: c.tint; } }
-                            tn := Text { height: self.preferred-height; text: c.name; font-size: 15px; color: #1d1d20; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; } }
+                            tn := Text { min-width: 0px; height: self.preferred-height; text: c.name; font-size: 15px; color: #1d1d20; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; } }
                         TouchArea { clicked => { root.toggle(i, c); } } }
                 }
             }
@@ -595,7 +597,7 @@ export component CalMenus inherits Rectangle {
                             VerticalLayout { alignment: center;
                                 Path { width: 40px; height: 12px; viewbox-width: 40; viewbox-height: 12; fill: transparent; stroke: c.ink; stroke-width: 3px; stroke-line-cap: round;
                                     commands: "M 2 8 C 7 2 11 12 16 7 S 25 2 29 7 S 35 9 38 5"; } }
-                            wn := Text { height: self.preferred-height; text: c.name; font-family: "Caveat"; font-size: 24px; font-weight: 600; color: c.ink; wrap: word-wrap; vertical-alignment: center;
+                            wn := Text { min-width: 0px; height: self.preferred-height; text: c.name; font-family: "Caveat"; font-size: 24px; font-weight: 600; color: c.ink; wrap: word-wrap; vertical-alignment: center;
                                 horizontal-stretch: 1; } }
                         if line.st > 0.01: Path { x: 48px + (i == root.shake-i ? root.shake-x : 0px); y: parent.height / 2 - 4px;
                             width: (Math.min(parent.width - 54px, wn.preferred-width) + 8px) * line.st; height: 10px;
@@ -785,7 +787,7 @@ export component CalMenus inherits Rectangle {
                             letter-spacing: 1px; color: #111111; horizontal-alignment: right; vertical-alignment: center; }
                         Rectangle { y: 33px; height: 3px; background: #111111; } }
                     if root.dy-look == 2: VerticalLayout { padding-bottom: 12px;
-                        Text { height: self.preferred-height; text: root.day-caps; font-size: 13px; font-weight: 800; letter-spacing: 3px; color: #c8202a; horizontal-alignment: center; wrap: word-wrap; }
+                        Text { min-width: 0px; height: self.preferred-height; text: root.day-caps; font-size: 13px; font-weight: 800; letter-spacing: 3px; color: #c8202a; horizontal-alignment: center; wrap: word-wrap; }
                         Rectangle { height: 8px; } Rectangle { height: 1px; background: #d9d6cc; } }
                     if root.dy-look == 3: Rectangle { height: 38px; Text { x: 2px; y: 0; height: 30px; text: root.day-short; font-family: "Caveat"; font-size: 27px; font-weight: 700;
                         color: #c0242a; vertical-alignment: center; } }
@@ -811,8 +813,8 @@ export component CalMenus inherits Rectangle {
                                 spacing: root.dy-look == 0 ? 12px : root.dy-look == 3 ? 8px : 10px;
                                 if root.dy-look == 0: Rectangle { width: 4px; Rectangle { y: 4px; height: parent.height - 8px; border-radius: 2px; background: e.tint; } }
                                 if root.dy-look == 0: VerticalLayout { spacing: 1px; alignment: center; horizontal-stretch: 1;
-                                    Text { height: self.preferred-height; text: e.title; font-size: 15px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
-                                    Text { height: self.preferred-height; text: e.time + "  ·  " + e.cal; font-size: 12px; color: Theme.muted; wrap: word-wrap; } }
+                                    Text { min-width: 0px; height: self.preferred-height; text: e.title; font-size: 15px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
+                                    Text { min-width: 0px; height: self.preferred-height; text: e.time + "  ·  " + e.cal; font-size: 12px; color: Theme.muted; wrap: word-wrap; } }
                                 if root.dy-look != 0: Text {
                                     width: root.dy-look == 1 ? (Clock.h24 ? 58px : 84px) : root.dy-look == 2 ? (Clock.h24 ? 46px : 70px) : (Clock.h24 ? 52px : 74px);
                                     text: e.all-day ? (root.dy-look == 3 ? "all day" : "—") : e.t1;
@@ -820,7 +822,7 @@ export component CalMenus inherits Rectangle {
                                     font-weight: root.dy-look == 1 ? 800 : root.dy-look == 2 ? 700 : 500;
                                     color: root.dy-look == 1 ? #111111 : root.dy-look == 2 ? (e.now ? #c8202a : #1d1d20) : #56565c;
                                     vertical-alignment: root.dy-look == 3 ? TextVerticalAlignment.bottom : TextVerticalAlignment.center; }
-                                if root.dy-look != 0: Text { height: self.preferred-height; text: e.title; horizontal-stretch: 1; wrap: word-wrap;
+                                if root.dy-look != 0: Text { min-width: 0px; height: self.preferred-height; text: e.title; horizontal-stretch: 1; wrap: word-wrap;
                                     font-family: root.dy-look == 3 ? "Caveat" : ""; font-size: root.dy-look == 1 ? 15px : root.dy-look == 2 ? 14px : 23px;
                                     font-weight: root.dy-look == 1 ? 500 : root.dy-look == 2 ? 400 : 600;
                                     color: root.dy-look == 1 ? #111111 : root.dy-look == 2 ? #33332f : e.ink;
@@ -926,48 +928,48 @@ export component CalMenus inherits Rectangle {
                             HorizontalLayout { padding-left: 18px; padding-right: 18px; padding-top: 12px; padding-bottom: 8px; spacing: 10px;
                                 Text { text: root.edit ? "RESCHEDULE" : "APPOINTMENT"; font-size: 14px; font-weight: 800; letter-spacing: 3px; color: #c8202a;
                                     vertical-alignment: bottom; horizontal-stretch: 1; }
-                                Text { height: self.preferred-height; text: (root.edit ? root.edit-cal : root.ev.date).to-uppercase(); font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #8a8880;
+                                Text { min-width: 0px; height: self.preferred-height; text: (root.edit ? root.edit-cal : root.ev.date).to-uppercase(); font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #8a8880;
                                     vertical-alignment: bottom; horizontal-alignment: right; wrap: word-wrap; max-width: 180px; } }
                             Rectangle { height: 2px; background: #c8202a; } }
                         // ================= the details
                         if !root.edit && root.dt-look == 0: VerticalLayout { padding-left: 20px; padding-right: 20px; padding-top: 18px; padding-bottom: 8px; spacing: 0px;
                             HorizontalLayout { spacing: 8px; alignment: start;
                                 VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.ev.tint; } }
-                                Text { height: self.preferred-height; text: root.ev.cal; font-size: 13px; font-weight: 600; color: Theme.muted; wrap: word-wrap; horizontal-stretch: 1; } }
-                            Text { height: self.preferred-height; text: root.ev.title; font-size: 21px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.cal; font-size: 13px; font-weight: 600; color: Theme.muted; wrap: word-wrap; horizontal-stretch: 1; } }
+                            Text { min-width: 0px; height: self.preferred-height; text: root.ev.title; font-size: 21px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
                             Rectangle { height: 8px; }
                             HorizontalLayout { spacing: 8px; padding-top: 4px; padding-bottom: 4px;
                                 Icon { width: 18px; text: "\u{F0150}"; font-size: 18px; color: Theme.muted; vertical-alignment: top; }
-                                Text { height: self.preferred-height; text: root.when; font-size: 15px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.when; font-size: 15px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; } }
                             if root.ev.rel != "": HorizontalLayout { padding-left: 26px;
                                 Text { text: root.ev.rel; font-size: 14px; font-weight: 600; color: #FF4A1C; } }
                             if root.ev.place != "": HorizontalLayout { spacing: 8px; padding-top: 4px; padding-bottom: 4px;
                                 Icon { width: 18px; text: "\u{F07D9}"; font-size: 18px; color: Theme.muted; vertical-alignment: top; }
-                                Text { height: self.preferred-height; text: root.ev.place; font-size: 15px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.place; font-size: 15px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; } }
                             if root.ev.note != "": VerticalLayout { padding-top: 8px;
-                                Text { height: self.preferred-height; text: root.ev.note; font-size: 14px; color: Theme.muted; wrap: word-wrap; } } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.note; font-size: 14px; color: Theme.muted; wrap: word-wrap; } } }
                         if !root.edit && root.dt-look == 1: VerticalLayout { padding-left: 16px; padding-right: 16px; padding-top: 12px; padding-bottom: 2px; spacing: 10px;
                             VerticalLayout { spacing: 2px; Text { text: "EVENT"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                Text { height: self.preferred-height; text: root.ev.title; font-size: 21px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.title; font-size: 21px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
                             HorizontalLayout { spacing: 14px;
-                                VerticalLayout { spacing: 10px; horizontal-stretch: 1;
+                                VerticalLayout { spacing: 10px; horizontal-stretch: 1; preferred-width: 1px; alignment: start;
                                     VerticalLayout { spacing: 2px; Text { text: "DATE"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                        Text { height: self.preferred-height; text: root.ev.date; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                                        Text { min-width: 0px; height: self.preferred-height; text: root.ev.date; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
                                     VerticalLayout { spacing: 2px; Text { text: "ARRIVES"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                        Text { height: self.preferred-height; text: root.ev.all-day ? "—" : root.ev.t2; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } } }
-                                VerticalLayout { spacing: 10px; horizontal-stretch: 1;
+                                        Text { min-width: 0px; height: self.preferred-height; text: root.ev.all-day ? "—" : root.ev.t2; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } } }
+                                VerticalLayout { spacing: 10px; horizontal-stretch: 1; preferred-width: 1px; alignment: start;
                                     VerticalLayout { spacing: 2px; Text { text: "DEPARTS"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                        Text { height: self.preferred-height; text: root.ev.all-day ? "All day" : root.ev.t1; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                                        Text { min-width: 0px; height: self.preferred-height; text: root.ev.all-day ? "All day" : root.ev.t1; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
                                     VerticalLayout { spacing: 2px; Text { text: "GATE"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                        Text { height: self.preferred-height; text: root.ev.code + " · " + root.ev.cal; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } } } }
+                                        Text { min-width: 0px; height: self.preferred-height; text: root.ev.code + " · " + root.ev.cal; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } } } }
                             if root.ev.place != "": VerticalLayout { spacing: 2px; Text { text: "TERMINAL"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                Text { height: self.preferred-height; text: root.ev.place; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.place; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
                             if root.ev.rel != "": HorizontalLayout { alignment: start;
                                 Rectangle { width: bt.preferred-width + 16px; height: 24px; border-radius: 4px; background: root.ev.rel == "now" ? #4cd96438 : #f2a51a33;
                                     bt := Text { x: 8px; text: (root.ev.rel == "now" ? "Boarding now" : "Boards " + root.ev.rel).to-uppercase(); font-size: 13px; font-weight: 800;
                                         letter-spacing: 1.4px; color: root.ev.rel == "now" ? #0d6b28 : #7a4f00; vertical-alignment: center; } } }
                             if root.ev.note != "": VerticalLayout { spacing: 2px; Text { text: "NOTE"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
-                                Text { height: self.preferred-height; text: root.ev.note; font-size: 13px; color: #4b4d52; wrap: word-wrap; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.note; font-size: 13px; color: #4b4d52; wrap: word-wrap; } }
                             // the perforation with two punched notches
                             Rectangle { height: 22px;
                                 for dx in 48: Rectangle { x: 12px + dx * 8px; y: 10px; width: 4px; height: 2px; visible: self.x < parent.width - 14px; background: #00000038; }
@@ -991,26 +993,26 @@ export component CalMenus inherits Rectangle {
                                     HorizontalLayout { spacing: 8px; padding-top: 6px; padding-bottom: 4px;
                                         VerticalLayout { width: 70px; padding-top: 7px; alignment: start;
                                             Text { text: row.l; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #8a8880; } }
-                                        Text { height: self.preferred-height; text: row.v; font-family: "Caveat"; font-size: row.s; font-weight: row.w; color: #1b348a; wrap: word-wrap; horizontal-stretch: 1; } }
+                                        Text { min-width: 0px; height: self.preferred-height; text: row.v; font-family: "Caveat"; font-size: row.s; font-weight: row.w; color: #1b348a; wrap: word-wrap; horizontal-stretch: 1; } }
                                     if row.l == "WHEN" && root.ev.rel != "": HorizontalLayout { padding-left: 78px; padding-bottom: 4px;
                                         Text { text: root.ev.rel; font-size: 13px; font-weight: 700; color: #c8202a; } }
                                     Rectangle { height: 1px; background: #dedbd2; } }
                             HorizontalLayout { spacing: 8px; padding-top: 8px; padding-bottom: 4px;
                                 Text { width: 70px; text: "CALENDAR"; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #8a8880; vertical-alignment: center; }
                                 VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.ev.tint; } }
-                                Text { height: self.preferred-height; text: root.ev.cal; font-size: 14px; font-weight: 500; color: #1d1d20; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; } } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.cal; font-size: 14px; font-weight: 500; color: #1d1d20; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; } } }
                         if !root.edit && root.dt-look == 3: VerticalLayout { padding-left: 18px; padding-right: 18px; padding-top: 18px; padding-bottom: 2px; spacing: 2px;
-                            Text { height: self.preferred-height; text: root.ev.title; font-family: "Caveat"; font-size: 30px; font-weight: 700; color: root.ev.ink; wrap: word-wrap; }
-                            Text { height: self.preferred-height; text: root.when; font-family: "Caveat"; font-size: 22px; font-weight: 500; color: #56565c; wrap: word-wrap; }
+                            Text { min-width: 0px; height: self.preferred-height; text: root.ev.title; font-family: "Caveat"; font-size: 30px; font-weight: 700; color: root.ev.ink; wrap: word-wrap; }
+                            Text { min-width: 0px; height: self.preferred-height; text: root.when; font-family: "Caveat"; font-size: 22px; font-weight: 500; color: #56565c; wrap: word-wrap; }
                             if root.ev.rel != "": Text { text: root.ev.rel; font-family: "Caveat"; font-size: 21px; font-weight: 700; color: #c0242a; }
                             if root.ev.place != "": HorizontalLayout { spacing: 4px;
                                 Icon { width: 18px; text: "\u{F07D9}"; font-size: 17px; color: #56565c; vertical-alignment: top; }
-                                Text { height: self.preferred-height; text: root.ev.place; font-family: "Caveat"; font-size: 22px; font-weight: 500; color: #56565c; wrap: word-wrap; horizontal-stretch: 1; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.place; font-family: "Caveat"; font-size: 22px; font-weight: 500; color: #56565c; wrap: word-wrap; horizontal-stretch: 1; } }
                             if root.ev.note != "": VerticalLayout { padding-top: 6px;
-                                Text { height: self.preferred-height; text: root.ev.note; font-family: "Caveat"; font-size: 20px; font-weight: 500; color: #3b3b40; wrap: word-wrap; } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.note; font-family: "Caveat"; font-size: 20px; font-weight: 500; color: #3b3b40; wrap: word-wrap; } }
                             HorizontalLayout { spacing: 8px; padding-top: 6px;
                                 VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.ev.tint; } }
-                                Text { height: self.preferred-height; text: root.ev.cal; font-family: "Caveat"; font-size: 21px; font-weight: 600; color: root.ev.ink; wrap: word-wrap; horizontal-stretch: 1; } } }
+                                Text { min-width: 0px; height: self.preferred-height; text: root.ev.cal; font-family: "Caveat"; font-size: 21px; font-weight: 600; color: root.ev.ink; wrap: word-wrap; horizontal-stretch: 1; } } }
                         // Edit (calendars that allow it), or the read-only line
                         if !root.edit && root.dt-look != 1 && root.ev.editable: HorizontalLayout { alignment: start;
                             padding-left: root.dt-look == 0 ? 20px : root.dt-look == 2 ? 18px : 14px; padding-top: 10px; padding-bottom: 14px;
@@ -1026,7 +1028,7 @@ export component CalMenus inherits Rectangle {
                         if !root.edit && root.dt-look != 1 && !root.ev.editable: HorizontalLayout { spacing: 6px; alignment: start;
                             padding-left: root.dt-look == 0 ? 20px : 18px; padding-top: 10px; padding-bottom: 14px;
                             Icon { width: 18px; text: "\u{F0341}"; font-size: 16px; color: root.dt-look == 3 ? #56565c : root.dt-look == 2 ? #8a8880 : Theme.faint; }
-                            Text { height: self.preferred-height; text: "Read-only calendar"; font-family: root.dt-look == 3 ? "Caveat" : ""; font-size: root.dt-look == 3 ? 20px : 13px;
+                            Text { min-width: 0px; height: self.preferred-height; text: "Read-only calendar"; font-family: root.dt-look == 3 ? "Caveat" : ""; font-size: root.dt-look == 3 ? 20px : 13px;
                                 color: root.dt-look == 3 ? #56565c : root.dt-look == 2 ? #8a8880 : Theme.faint; vertical-alignment: center; wrap: word-wrap; } }
                         // ================= the edit form
                         if root.edit && root.dt-look == 0: Rectangle { height: 46px; Text { x: 20px; y: 12px; height: 28px; text: "Edit event"; font-family: "Space Grotesk";
@@ -1059,7 +1061,7 @@ export component CalMenus inherits Rectangle {
         x: 16px; y: 464px - self.height; width: 448px; height: Math.max(52px, ut.preferred-height + 16px); border-radius: 14px; background: Theme.surface-raised; border-width: 1px; border-color: Theme.outline;
         drop-shadow-blur: 20px; drop-shadow-offset-y: 6px; drop-shadow-color: #00000066;
         TouchArea { }
-        ut := Text { x: 16px; y: 0; width: parent.width - 140px; height: parent.height; text: root.undo-text; font-size: 15px; color: Theme.text; vertical-alignment: center;
+        ut := Text { min-width: 0px; x: 16px; y: 0; width: parent.width - 140px; height: parent.height; text: root.undo-text; font-size: 15px; color: Theme.text; vertical-alignment: center;
             wrap: word-wrap; }
         TextButton { x: parent.width - self.width - 6px; y: (parent.height - self.height) / 2; width: 110px; height: 40px; text: "Undo";
             clicked => { Act.act("cal.undo", ""); } }
