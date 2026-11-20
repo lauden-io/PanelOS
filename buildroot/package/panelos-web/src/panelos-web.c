@@ -45,7 +45,10 @@
  *                FAILED <reason>
  * Login: Home Assistant's external authentication, as in its mobile apps
  * (the page is opened with external_auth=1 and asks for tokens through
- * window.webkit.messageHandlers).
+ * window.webkit.messageHandlers). The token goes only to a page on the
+ * origin (scheme, host, port) of the page the app loaded: the view never
+ * shows a document of another origin and opens no windows. Frames inside
+ * the page and what it loads (pictures, card scripts) are not limited.
  */
 #define _GNU_SOURCE
 #include <errno.h>
@@ -85,6 +88,7 @@ static struct {
     WebKitWebView *view;
     WebKitUserContentManager *content;
     int hide_header, hide_sidebar;
+    char *origin;  /* origin of the page the app loaded (LOAD): the token goes only there */
     GPtrArray *auth_callbacks;  /* pending externalAuthSetToken names */
     GString *line;
     int touching;
@@ -432,6 +436,54 @@ static gboolean plain(const char *s)
     return TRUE;
 }
 
+/* Callback names: one JavaScript name, no path through other objects. */
+static gboolean identifier(const char *s)
+{
+    if (!s || !*s || g_ascii_isdigit(*s))
+        return FALSE;
+    for (; *s; s++)
+        if (!g_ascii_isalnum(*s) && *s != '_')
+            return FALSE;
+    return TRUE;
+}
+
+/* The origin of a URI as WebKit writes it ("http://host:8123"; location.origin
+ * in the page reads the same), NULL for none (an opaque origin). */
+static char *origin_of(const char *uri)
+{
+    if (!uri || !*uri)
+        return NULL;
+    WebKitSecurityOrigin *o = webkit_security_origin_new_for_uri(uri);
+    char *s = webkit_security_origin_to_string(o);
+    webkit_security_origin_unref(o);
+    return s;
+}
+
+/* Is the URI on the origin of the page the app loaded? */
+static gboolean own_origin(const char *uri)
+{
+    char *o = origin_of(uri);
+    gboolean same = o && S.origin && strcmp(o, S.origin) == 0;
+    g_free(o);
+    return same;
+}
+
+/* The page the app loads: its origin is the only one that gets the token
+ * (it goes into JavaScript: only the characters an origin consists of). */
+static void set_origin(const char *uri)
+{
+    g_free(S.origin);
+    S.origin = origin_of(uri);
+    for (const char *c = S.origin; c && *c; c++) {
+        if (!g_ascii_isalnum(*c) && !strchr(".:/[]_-", *c)) {
+            g_clear_pointer(&S.origin, g_free);
+            break;
+        }
+    }
+    if (!S.origin)
+        fprintf(stderr, "panelos-web: the page has no origin to log in to\n");
+}
+
 static void on_get_auth(WebKitUserContentManager *m, JSCValue *value, gpointer data)
 {
     (void)m; (void)data;
@@ -442,7 +494,14 @@ static void on_get_auth(WebKitUserContentManager *m, JSCValue *value, gpointer d
             callback = jsc_value_to_string(cb);
         g_object_unref(cb);
     }
-    if (!plain(callback)) {
+    if (!identifier(callback)) {
+        g_free(callback);
+        return;
+    }
+    /* Only Home Assistant's page asks (the answer goes to the page itself,
+     * never into a frame inside it; answer_auth checks it again there). */
+    if (!own_origin(webkit_web_view_get_uri(S.view))) {
+        fprintf(stderr, "panelos-web: no token for a page of another site\n");
         g_free(callback);
         return;
     }
@@ -459,7 +518,7 @@ static void on_revoke_auth(WebKitUserContentManager *m, JSCValue *value, gpointe
     JSCValue *cb = jsc_value_object_get_property(value, "callback");
     char *callback = jsc_value_is_string(cb) ? jsc_value_to_string(cb) : NULL;
     g_object_unref(cb);
-    if (plain(callback)) {
+    if (identifier(callback)) {
         char *js = g_strdup_printf("window.%s && window.%s(true);", callback, callback);
         run_js(js);
         g_free(js);
@@ -528,10 +587,17 @@ static void answer_auth(const char *token, int expires)
 {
     if (!plain(token))
         return;
+    if (!S.origin) {
+        g_ptr_array_set_size(S.auth_callbacks, 0);
+        return;
+    }
     for (guint i = 0; i < S.auth_callbacks->len; i++) {
         const char *cb = g_ptr_array_index(S.auth_callbacks, i);
-        char *js = g_strdup_printf("window.%s && window.%s(true, {access_token: '%s', expires_in: %d});", cb, cb,
-                                   token, expires);
+        /* Checked in the document that runs it: the page may have changed
+         * since it asked. */
+        char *js = g_strdup_printf("location.origin === '%s' && window.%s && "
+                                   "window.%s(true, {access_token: '%s', expires_in: %d});",
+                                   S.origin, cb, cb, token, expires);
         run_js(js);
         g_free(js);
     }
@@ -764,6 +830,7 @@ static void handle_line(char *l)
     int a = 0, b = 0, d = 0, e = 0;
     char c = 0;
     if (sscanf(l, "LOAD %2047s", arg) == 1) {
+        set_origin(arg);
         set_kiosk_script();
         if (S.filter_saving) {
             g_free(S.waiting_uri);
@@ -981,6 +1048,36 @@ static gboolean on_load_failed(WebKitWebView *v, WebKitLoadEvent ev, char *uri, 
     return FALSE;
 }
 
+/* The view stays on Home Assistant's origin: no new windows, and a document
+ * of another origin never replaces the page (its response is refused before
+ * it is shown, also after a redirect). Navigation decisions come for the
+ * frames inside the page too, without saying which frame, so the main
+ * document is checked at its response; frames (an iframe card) and what the
+ * page loads stay free. */
+static gboolean on_decide_policy(WebKitWebView *v, WebKitPolicyDecision *decision, WebKitPolicyDecisionType type,
+                                 gpointer data)
+{
+    (void)v; (void)data;
+    if (type == WEBKIT_POLICY_DECISION_TYPE_NEW_WINDOW_ACTION) {
+        webkit_policy_decision_ignore(decision);
+        return TRUE;
+    }
+    if (type != WEBKIT_POLICY_DECISION_TYPE_RESPONSE)
+        return FALSE;
+    WebKitResponsePolicyDecision *response = WEBKIT_RESPONSE_POLICY_DECISION(decision);
+    if (!webkit_response_policy_decision_is_main_frame_main_resource(response))
+        return FALSE;
+    const char *uri = webkit_uri_response_get_uri(webkit_response_policy_decision_get_response(response));
+    if (own_origin(uri))
+        return FALSE;
+    char *o = origin_of(uri);
+    fprintf(stderr, "panelos-web: page of another site not opened (%s)\n", o ? o : "no origin");
+    g_free(o);
+    webkit_policy_decision_ignore(decision);
+    ready("other site");  /* the page on the screen stays: no cover over it */
+    return TRUE;
+}
+
 static gboolean on_crash(WebKitWebView *v, WebKitWebProcessTerminationReason reason, gpointer data)
 {
     (void)v; (void)data;
@@ -1044,6 +1141,7 @@ int main(int argc, char **argv)
     g_signal_connect(S.view, "load-changed", G_CALLBACK(on_load_changed), NULL);
     g_timeout_add(300, check_ready, NULL);
     g_signal_connect(S.view, "load-failed", G_CALLBACK(on_load_failed), NULL);
+    g_signal_connect(S.view, "decide-policy", G_CALLBACK(on_decide_policy), NULL);
     g_signal_connect(S.view, "web-process-terminated", G_CALLBACK(on_crash), NULL);
     set_visible(1);
 
