@@ -802,8 +802,10 @@ export component Dropdown inherits Rectangle {
         y: Math.max(48px - root.absolute-position.y, Math.min(468px - root.absolute-position.y - root.menu-h,
             root.opens-up ? -root.menu-h - 6px : root.height + 6px));
         width: root.width;
+        height: root.menu-h;
         close-policy: close-on-click-outside;
         Rectangle {
+            x: 0; y: 0;
             property <float> k: 0;
             init => { self.k = 1; }
             animate k { duration: 140ms; easing: ease-out; }

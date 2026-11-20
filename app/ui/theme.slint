@@ -15,6 +15,20 @@ export global Act {
     callback act(string, string);
     // a drag on a page that moves sideways (the turntable's arm): the pages do not swipe meanwhile
     in-out property <bool> hold-swipe;
+    // a rotary control on the page on screen (the thermostat's dial or knob): a drag that starts on its ring never turns
+    // the page. The ring from lock-r0 to lock-r1 around (lock-cx, lock-cy), over the arc lock-a0 … lock-a1 (degrees,
+    // 0 = right, clockwise); lock-r1 0: none. The page sets it while it is on screen.
+    in-out property <length> lock-cx;
+    in-out property <length> lock-cy;
+    in-out property <length> lock-r0;
+    in-out property <length> lock-r1;
+    in-out property <float> lock-a0;
+    in-out property <float> lock-a1: 360;
+    public pure function locked(x: length, y: length) -> bool {
+        let r = Math.sqrt(Math.pow((x - self.lock-cx) / 1px, 2) + Math.pow((y - self.lock-cy) / 1px, 2)) * 1px;
+        let a = atan2((y - self.lock-cy) / 1px, (x - self.lock-cx) / 1px) / 1deg;
+        self.lock-r1 > 0px && r >= self.lock-r0 && r <= self.lock-r1 && Math.mod(Math.mod(a - self.lock-a0, 360) + 360, 360) <= self.lock-a1 - self.lock-a0
+    }
 }
 
 // The animations' clock base. Slint turns a time into a 32-bit float before any arithmetic, and the

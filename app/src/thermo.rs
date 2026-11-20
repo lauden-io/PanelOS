@@ -2,7 +2,7 @@
 //! time (the device chip opens them all), its modes, target and options.
 
 use serde_json::{json, Value};
-use slint::{Color, ModelRc, SharedString, VecModel};
+use slint::{ModelRc, SharedString, VecModel};
 
 use crate::ha::EntityState;
 use crate::{icons, with_state, AppWindow, ClimateDev, ClimateRoom};
@@ -112,25 +112,76 @@ pub fn device(id: &str, st: Option<&EntityState>) -> ClimateDev {
     }
 }
 
-/// The rooms view: one card per device (its name, the room's temperature
-/// and humidity as the device measures them, what it does).
+/// A temperature as the page writes it: whole degrees without a decimal ("23"), else one decimal ("20.5").
+fn deg(t: f32) -> String {
+    let tenths = (t * 10.0).round() as i64;
+    if tenths % 10 == 0 { format!("{}", tenths / 10) } else { format!("{:.1}", tenths as f32 / 10.0) }
+}
+
+const MODE_WORDS: [&str; 6] = ["Off", "Heat", "Cool", "Auto", "Dry", "Fan"];
+const ACTION_WORDS: [&str; 6] = ["", "heating", "cooling", "", "drying", "fan"];
+
+/// A device's line in the rooms menu: its mode, the target and what it does now ("Heat 23° · heating",
+/// "Heat 20° · idle", "Dry", "Off").
+fn device_line(code: i32, action: i32, target: Option<f32>) -> String {
+    let code = code.clamp(0, 5) as usize;
+    if code == 0 {
+        return MODE_WORDS[0].to_string();
+    }
+    let mut line = MODE_WORDS[code].to_string();
+    if let Some(t) = target {
+        line += &format!(" {}°", deg(t));
+    }
+    // what it does, unless the mode already says it (dry: drying, fan only: blowing)
+    let busy = if code >= 4 && action as usize == code {
+        ""
+    } else {
+        ACTION_WORDS.get(action.clamp(0, 5) as usize).copied().unwrap_or("")
+    };
+    if !busy.is_empty() {
+        line += &format!(" · {busy}");
+    } else if target.is_some() {
+        line += " · idle";
+    }
+    line
+}
+
+/// The same for the remote's zone LCD, in short capitals: "HEAT 23" while heating, "IDLE 20" while it waits, "DRY",
+/// "OFF".
+fn lcd_caps(code: i32, action: i32, target: Option<f32>) -> String {
+    let code = code.clamp(0, 5) as usize;
+    if code == 0 {
+        return "OFF".into();
+    }
+    match target {
+        Some(t) if matches!(action, 1 | 2 | 4 | 5) => format!("{} {}", MODE_WORDS[action as usize].to_uppercase(), deg(t)),
+        Some(t) => format!("IDLE {}", deg(t)),
+        None => MODE_WORDS[code].to_uppercase(),
+    }
+}
+
+/// The rooms menu: one card per device (its name, the room's temperature and humidity as the device measures them,
+/// what it does).
 fn rooms(devices: &[ClimateDev], sel: usize) -> Vec<ClimateRoom> {
-    let tints = [0x9aa0a6u32, 0xff7a3d, 0x3d9bff, 0x2fd27a, 0xc9a227, 0x7fd1ae];
     devices
         .iter()
         .enumerate()
         .map(|(i, d)| {
             let code = slint::Model::row_data(&d.modes, d.mode as usize).unwrap_or(0);
-            let line = if d.show_target { format!("{} {:.0}°", d.label, d.target) } else { d.label.to_string() };
-            let c = tints[code.clamp(0, 5) as usize];
+            let target = d.show_target.then_some(d.target);
             ClimateRoom {
                 name: d.name.clone(),
                 temp: format!("{:.1}°", d.current).into(),
                 hum: if d.humidity >= 0.0 { format!("{:.0} %", d.humidity).into() } else { SharedString::new() },
+                temp_v: d.current,
+                hum_v: if d.humidity >= 0.0 { d.humidity.round() } else { -1.0 },
                 outside: false,
-                dev: ModelRc::new(VecModel::from(vec![SharedString::from(line)])),
+                dev: ModelRc::new(VecModel::from(vec![SharedString::from(device_line(code, d.action, target))])),
                 dev_icon: ModelRc::new(VecModel::from(vec![d.icon.clone()])),
-                dev_tint: ModelRc::new(VecModel::from(vec![Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8)])),
+                dev_mode: ModelRc::new(VecModel::from(vec![code])),
+                dev_busy: ModelRc::new(VecModel::from(vec![code != 0 && d.action > 0])),
+                dev_caps: ModelRc::new(VecModel::from(vec![SharedString::from(lcd_caps(code, d.action, target))])),
+                dev_index: ModelRc::new(VecModel::from(vec![i as i32])),
                 sel: if i == sel { 0 } else { -1 },
             }
         })
@@ -163,6 +214,13 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         })
         .collect();
     if devices.is_empty() {
+        // none picked (or all gone): the chip says so and opens nothing
+        if slint::Model::row_count(&ui.get_thermo_devices()) > 0 {
+            ui.set_thermo_devices(ModelRc::default());
+            ui.set_thermo_rooms(ModelRc::default());
+        }
+        ui.set_thermo_picker(false);
+        ui.set_thermo_sheet(false);
         return;
     }
     let sel = (ui.get_thermo_sel().max(0) as usize).min(devices.len() - 1);
@@ -191,6 +249,21 @@ fn set_pending(id: &str, t: f32) {
 
 /// Taps on the page (`thermo.*`).
 pub fn act(ui: &AppWindow, what: &str, value: &str) {
+    // the page's menus: the rooms (the device chip), the options (the pills); all of them close when the page leaves
+    // the screen
+    match what {
+        "thermo.sheet" => return ui.set_thermo_sheet(true),
+        "thermo.sheet-close" => return ui.set_thermo_sheet(false),
+        "thermo.picker" => return ui.set_thermo_picker(true),
+        "thermo.picker-close" => return ui.set_thermo_picker(false),
+        "thermo.menus-close" => {
+            ui.set_thermo_sheet(false);
+            ui.set_thermo_picker(false);
+            ui.set_thermo_settings(false);
+            return;
+        }
+        _ => {}
+    }
     let (entities, states) = with_state(|s| (crate::page_entities(s, "thermostat"), s.states.clone()));
     let sel = ui.get_thermo_sel().max(0) as usize;
     let Some(id) = entities.get(sel).cloned() else { return };
@@ -213,7 +286,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 slint::Model::set_row_data(&devs, sel, cur);
             }
         }
-        // a value from the wall look's knob, to the device's step
+        // a value from a turned knob or dial (wall, dial and neon looks), to the device's step
         "thermo.target" => {
             let d = device(&id, st);
             let v: f32 = value.parse().unwrap_or(d.target);
@@ -278,10 +351,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 }
             }
         }
-        "thermo.sheet" => ui.set_thermo_sheet(true),
-        "thermo.sheet-close" => ui.set_thermo_sheet(false),
-        "thermo.picker" => ui.set_thermo_picker(true),
-        "thermo.picker-close" => ui.set_thermo_picker(false),
+        // a device picked in the rooms menu (its index among the page's devices)
         "thermo.room" => {
             if n < entities.len() {
                 ui.set_thermo_sel(n as i32);
@@ -297,3 +367,36 @@ fn call(service: &str, id: &str, data: Value) {
     crate::call("climate", service, id, data);
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn degrees_drop_a_zero_decimal() {
+        assert_eq!(deg(23.0), "23");
+        assert_eq!(deg(20.5), "20.5");
+        assert_eq!(deg(19.96), "20");
+        assert_eq!(deg(-2.5), "-2.5");
+    }
+
+    #[test]
+    fn device_lines() {
+        assert_eq!(device_line(1, 1, Some(23.0)), "Heat 23° · heating");
+        assert_eq!(device_line(1, 0, Some(20.0)), "Heat 20° · idle");
+        assert_eq!(device_line(2, 2, Some(24.5)), "Cool 24.5° · cooling");
+        assert_eq!(device_line(3, 1, Some(22.0)), "Auto 22° · heating");
+        assert_eq!(device_line(4, 4, None), "Dry");
+        assert_eq!(device_line(5, 0, None), "Fan");
+        assert_eq!(device_line(5, 5, None), "Fan");
+        assert_eq!(device_line(0, 0, Some(21.0)), "Off");
+    }
+
+    #[test]
+    fn lcd_caps_lines() {
+        assert_eq!(lcd_caps(1, 1, Some(23.0)), "HEAT 23");
+        assert_eq!(lcd_caps(1, 0, Some(20.0)), "IDLE 20");
+        assert_eq!(lcd_caps(3, 2, Some(24.5)), "COOL 24.5");
+        assert_eq!(lcd_caps(4, 4, None), "DRY");
+        assert_eq!(lcd_caps(0, 1, Some(20.0)), "OFF");
+    }
+}

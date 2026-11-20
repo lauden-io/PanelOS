@@ -36,7 +36,7 @@ export component ArcadeText {
     preferred-width: t.preferred-width;
     preferred-height: t.preferred-height;
     min-height: t.preferred-height;
-    for o in [{ x: -1.5, y: 0 }, { x: 1.5, y: 0 }, { x: 0, y: -1.5 }, { x: 0, y: 1.5 }]: Text {
+    for o in [{ x: -1.5, y: 0 }, { x: 1.5, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }]: Text {
         visible: root.glow.alpha > 0;
         x: o.x * 1px; y: o.y * 1px; width: root.width; height: root.height;
         text: root.text; font-family: Arcade.font; font-size: root.font-size; letter-spacing: 0.4px;
@@ -51,8 +51,9 @@ export component ArcadeText {
     }
 }
 
-// a vertical gradient in a rounded box (top colour to bottom colour), drawn as three bands and four corner pieces
-component RoundedGlass inherits Rectangle {
+// A vertical gradient in a rounded box (top colour to bottom colour), drawn as three bands and four corner pieces (the
+// software renderer fills gradients without rounded corners); other looks' menus use it for their plastic too.
+export component RoundedGlass inherits Rectangle {
     in property <color> top;
     in property <color> bottom;
     in property <length> radius: 16px;
@@ -125,6 +126,8 @@ export component ArcadeScreen inherits Rectangle {
         Rectangle {
             x: -root.ix; y: -root.iy; width: root.width; height: root.height;
             RoundedGlass { width: parent.width; height: parent.height; radius: root.radius; top: #1a0938ed; bottom: #060210f2; }
+            // a tap on the screen stays on it (a menu closes on a tap beside it)
+            TouchArea { }
             // the picture
             Rectangle {
                 visible: root.picture;
