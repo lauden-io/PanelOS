@@ -436,6 +436,9 @@ export component AppWindow inherits Window {
     in property <HomeSensor> home-sensor-demo;
     in property <[string]> home-sensor-names;
     in property <int> home-sensor-sel: -1;
+    in property <[Person]> home-people;          // the People widgets' heads, each in its widget's group (Person.group)
+    in property <[string]> home-person-names;    // the people a People widget's menu offers
+    in property <[bool]> home-person-on;         // … the open menu's widget shows them
     // music page
     in property <string> music-title;
     in property <string> music-artist;
@@ -562,7 +565,7 @@ export component AppWindow inherits Window {
     in property <string> home-week: "Week 46";
     in property <image> weather-sky-frame;   // optional per-frame sky from the app (radial cloud flow)
     in property <[Person]> people;
-    in property <bool> show-people: true;
+    in property <bool> show-people;      // the small heads at the bottom of every page (the settings' show_people)
     in property <int> info-unread;       // unread notifications (the bell's count)
     in property <string> wake-hint: "";
     in property <[TimerInfo]> timers;
@@ -989,7 +992,8 @@ export component AppWindow inherits Window {
                         picker: root.home-picker;
                         place: root.home-place; free: root.home-free; layer-back: root.home-layer-back; layer-fwd: root.home-layer-fwd;
                         neon-on: root.home-neon-on; sensors: root.home-sensors; sensor-demo: root.home-sensor-demo;
-                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.people;
+                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.home-people;
+                        person-names: root.home-person-names; person-on: root.home-person-on;
                     }
                 }
                 // the weather picture changes softly: on a new condition the new picture fades in over the old one,
@@ -1104,7 +1108,8 @@ export component AppWindow inherits Window {
                         picker: root.home-picker;
                         place: root.home-place; free: root.home-free; layer-back: root.home-layer-back; layer-fwd: root.home-layer-fwd;
                         neon-on: root.home-neon-on; sensors: root.home-sensors; sensor-demo: root.home-sensor-demo;
-                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.people;
+                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.home-people;
+                        person-names: root.home-person-names; person-on: root.home-person-on;
                     }
                 }
                 if home-slot.grid-page && home-slot.home-theme == 8: FastLane {
@@ -1148,7 +1153,8 @@ export component AppWindow inherits Window {
                         picker: root.home-picker;
                         place: root.home-place; free: root.home-free; layer-back: root.home-layer-back; layer-fwd: root.home-layer-fwd;
                         neon-on: root.home-neon-on; sensors: root.home-sensors; sensor-demo: root.home-sensor-demo;
-                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.people;
+                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.home-people;
+                        person-names: root.home-person-names; person-on: root.home-person-on;
                     }
                 }
                 if slot.kind == "clock": ClockFace {

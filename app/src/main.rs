@@ -532,6 +532,8 @@ fn extra_entities(s: &UiState) -> Vec<String> {
         out.push(sp);
     }
     out.extend(s.states.keys().filter(|k| k.starts_with("person.")).cloned());
+    // the People widgets' people (everyone Home Assistant has, from the integration, for a widget that shows everyone)
+    out.extend(home_edit::people_entities(s.panel_config.as_ref()));
     // the sensor widgets' sensors
     out.extend(home_edit::item_entities(s));
     if let Some(list) = s.panel_config.as_ref().and_then(|c| c.get("entities")).and_then(Value::as_array) {
@@ -886,6 +888,8 @@ fn refresh_pages(ui: &AppWindow) {
         if ui.get_clock_accent() != a {
             ui.set_clock_accent(a);
         }
+        // the People widgets' groups are collected again as the widgets are read
+        home_edit::people_start(s.panel_config.as_ref());
         let items = pages::home_items(s.panel_config.as_ref(), a);
         if !same_rows(&ui.get_home_items(), &items) {
             ui.set_home_items(ModelRc::new(VecModel::from(items)));
@@ -926,7 +930,8 @@ fn refresh_pages(ui: &AppWindow) {
         if !same_rows(&ui.get_people(), &people) {
             ui.set_people(ModelRc::new(VecModel::from(people)));
         }
-        ui.set_show_people(s.panel_config.as_ref().and_then(|c| c.get("show_people")).and_then(Value::as_bool).unwrap_or(true));
+        // the small heads at the bottom of every page (the settings' show_people): only when asked for
+        ui.set_show_people(s.panel_config.as_ref().and_then(|c| c.get("show_people")).and_then(Value::as_bool).unwrap_or(false));
         let hint = wake_hint_text(s);
         if ui.get_wake_hint().as_str() != hint {
             ui.set_wake_hint(hint.into());

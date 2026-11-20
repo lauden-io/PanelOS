@@ -235,8 +235,13 @@ fn items_from(a: &[Value], accent: Color, neon: bool) -> Vec<HomeItem> {
                 row: n("row", 0),
                 w: n("w", 4),
                 h: n("h", 1),
-                // the sensor widget: its sensor's place in the page's sensor list
-                style: if n("kind", 0) == 8 { crate::home_edit::sensor_slot(i) } else { n("style", 0) },
+                // the sensor widget: its sensor's place in the page's sensor list; the People widget: its group in
+                // the People list
+                style: match n("kind", 0) {
+                    8 => crate::home_edit::sensor_slot(i),
+                    10 => crate::home_edit::people_slot(i),
+                    _ => n("style", 0),
+                },
                 accent: i.get("accent").and_then(Value::as_str).and_then(parse_color).unwrap_or(accent),
                 weight: n("weight", 600),
                 tap: i.get("tap").and_then(Value::as_bool).unwrap_or(true),
@@ -628,24 +633,58 @@ pub fn home_music(states: &HashMap<String, EntityState>, player: &str, art: Opti
 
 const PERSON_TINTS: [(u8, u8, u8); 6] = [(0x3b, 0x82, 0xf6), (0x22, 0xa0, 0x6b), (0xa8, 0x55, 0xf7), (0xf5, 0x9e, 0x0b), (0xef, 0x44, 0x44), (0x06, 0xb6, 0xd4)];
 
-/// Small heads of the people in Home Assistant (person.*), home or away.
-pub fn people(states: &HashMap<String, EntityState>, wanted: &[String]) -> Vec<Person> {
-    let mut ids: Vec<&String> = if wanted.is_empty() {
-        states.keys().filter(|k| k.starts_with("person.")).collect()
-    } else {
-        wanted.iter().filter(|k| states.contains_key(*k)).collect()
-    };
+/// Every person the panel follows (person.*), in entity id order: their order on the widgets and in the menus, and
+/// their colour (by their place here, so a person has the same colour everywhere).
+pub fn person_ids(states: &HashMap<String, EntityState>) -> Vec<String> {
+    let mut ids: Vec<String> = states.keys().filter(|k| k.starts_with("person.")).cloned().collect();
     ids.sort();
-    ids.iter()
+    ids
+}
+
+/// One person's head: the initials of the name, at home or not (away, another zone, unknown), the colour of their
+/// place among everyone.
+fn head(id: &str, st: &EntityState, place: usize) -> Person {
+    let name = attr_str(st, "friendly_name").unwrap_or(id.trim_start_matches("person."));
+    let initials: String = name.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect::<String>().to_uppercase();
+    let (r, g, b) = PERSON_TINTS[place % PERSON_TINTS.len()];
+    Person { initials: initials.into(), home: st.state == "home", tint: Color::from_rgb_u8(r, g, b), ..Default::default() }
+}
+
+/// Small heads of the people in Home Assistant (person.*), home or away: the ones in `wanted` (none: everyone).
+pub fn people(states: &HashMap<String, EntityState>, wanted: &[String]) -> Vec<Person> {
+    person_ids(states)
+        .iter()
         .enumerate()
-        .map(|(i, id)| {
-            let st = &states[*id];
-            let name = attr_str(st, "friendly_name").unwrap_or(id.trim_start_matches("person."));
-            let initials: String = name.split_whitespace().filter_map(|w| w.chars().next()).take(2).collect::<String>().to_uppercase();
-            let (r, g, b) = PERSON_TINTS[i % PERSON_TINTS.len()];
-            Person { initials: initials.into(), home: st.state == "home", tint: Color::from_rgb_u8(r, g, b) }
-        })
+        .filter(|(_, id)| wanted.is_empty() || wanted.contains(id))
+        .map(|(i, id)| head(id, &states[id], i))
         .collect()
+}
+
+/// What a People widget shows: the people it names (none: everyone), and the ones away too or only the ones at home.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PeopleGroup {
+    pub away: bool,
+    pub ids: Vec<String>,
+}
+
+/// The People widgets' heads, group by group: each group's people in entity id order, each with its place in the
+/// group and the group's size (the widget lays them out in rows from these).
+pub fn people_groups(states: &HashMap<String, EntityState>, groups: &[PeopleGroup]) -> Vec<Person> {
+    let all = person_ids(states);
+    let mut out = Vec::new();
+    for (g, group) in groups.iter().enumerate() {
+        let shown: Vec<(usize, &String)> = all
+            .iter()
+            .enumerate()
+            .filter(|(_, id)| group.ids.is_empty() || group.ids.contains(id))
+            .filter(|(_, id)| group.away || states[*id].state == "home")
+            .collect();
+        let n = shown.len() as i32;
+        for (at, (place, id)) in shown.into_iter().enumerate() {
+            out.push(Person { group: g as i32, at: at as i32, n, ..head(id, &states[id], place) });
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------- timers
@@ -905,6 +944,47 @@ mod tests {
         assert_eq!(slots[0].theme, -1);
         assert_eq!(slots[0].layout, -1);
         assert!(home_layouts(Some(&c), Color::from_rgb_u8(0, 0, 0)).is_empty());
+    }
+
+    fn person(state: &str, name: &str) -> EntityState {
+        EntityState { state: state.into(), attrs: serde_json::from_value(json!({ "friendly_name": name })).unwrap() }
+    }
+
+    fn crowd() -> HashMap<String, EntityState> {
+        let mut m = HashMap::new();
+        m.insert("person.cleo".to_string(), person("unknown", "Cleo Brandt"));
+        m.insert("person.anna".to_string(), person("home", "Anna"));
+        m.insert("person.ben".to_string(), person("not_home", "Ben Okafor"));
+        m.insert("person.dora".to_string(), person("home", "Dora"));
+        m.insert("sensor.temperature".to_string(), person("21", "Temperature"));
+        m
+    }
+
+    #[test]
+    fn people_widgets_show_their_own_people_in_entity_order() {
+        let states = crowd();
+        assert_eq!(person_ids(&states), ["person.anna", "person.ben", "person.cleo", "person.dora"]);
+        let groups = [
+            PeopleGroup { away: true, ids: vec![] },
+            PeopleGroup { away: false, ids: vec![] },
+            PeopleGroup { away: true, ids: vec!["person.dora".into(), "person.cleo".into()] },
+        ];
+        let heads = people_groups(&states, &groups);
+        let of = |g: i32| heads.iter().filter(|p| p.group == g).map(|p| format!("{} {} {}/{}", p.initials, p.home, p.at, p.n)).collect::<Vec<_>>();
+        // everyone, the ones away (and unknown) too, faint
+        assert_eq!(of(0), ["A true 0/4", "BO false 1/4", "CB false 2/4", "D true 3/4"]);
+        // only the ones at home
+        assert_eq!(of(1), ["A true 0/2", "D true 1/2"]);
+        // the widget's own two, in entity id order
+        assert_eq!(of(2), ["CB false 0/2", "D true 1/2"]);
+        // a person keeps their colour in every group
+        let tint = |g: i32| heads.iter().find(|p| p.group == g && p.initials == "D").map(|p| p.tint);
+        assert_eq!(tint(0), tint(1));
+        assert_eq!(tint(1), tint(2));
+        // the old list of the settings: its people only
+        let bottom = people(&states, &["person.ben".to_string()]);
+        assert_eq!(bottom.len(), 1);
+        assert_eq!(bottom[0].initials, "BO");
     }
 
     #[test]
