@@ -56,11 +56,153 @@ export struct PageSlot {
     layout: int,
     // drawn, line and plain backgrounds: 0 the panel's setting, 1 light, 2 dark
     light: int,
+    // which page of its kind (0 the first): the row of the kind's per-page data (quick-inst, todo-inst …)
+    n: int,
+    // its place in the integration's page list (-1: not on it, a temporary page)
+    cfg: int,
 }
 
 // the widgets of one more weather page
 export struct HomeLayout {
     items: [HomeItem],
+}
+
+// One notifications page's own data: the pager's finish (0 graphite, 1 purple, 2 clear, 3 off-white) and its body
+export struct InfoInst {
+    finish: int,
+    pager-body: image,
+}
+
+// One clock page's own options (the integration's page options)
+export struct ClockInst {
+    own-accent: bool,
+    accent: color,
+    weight: int,
+    width: float,
+    date: bool,
+    weather: bool,
+    next: bool,
+    seconds: bool,
+    speed: float,
+}
+
+// One timers page's own data: the tab shown, its functions, the stopwatch's and the alarms' looks, its colours and its
+// synthwave scene (the timers themselves are the panel's, here in this page's colours)
+export struct TimersInst {
+    // set once the row has its first tab (a new page opens on the timers)
+    ready: bool,
+    list: [TimerItem],
+    mode: int,
+    colourful: bool,
+    alarm-on: bool,
+    timer-on: bool,
+    watch-on: bool,
+    sw-look: int,
+    alarm-look: int,
+    sw-choice: int,
+    sw-scene: int,
+    sw-back: image,
+    sw-floor: image,
+}
+
+// One music page's own data: its player's track, cover and colours, and its options
+export struct MusicInst {
+    title: string,
+    artist: string,
+    album: string,
+    playing: bool,
+    dur: float,
+    shuffle: bool,
+    repeat: int,
+    volume: float,
+    player: string,
+    record: color,
+    has-record: bool,
+    art: image,
+    art-bg: image,
+    has-art: bool,
+    accent: color,
+    cs-cover: bool,
+    cover-blur: bool,
+    holds: int,
+    scroll: bool,
+    scroll-speed: float,
+    wood: int,
+    tt-deck: image,
+    cs-back: image,
+    cs-front: image,
+    cs-hub: image,
+}
+
+// One custom page's own widget data: the music widget (the page's player) and the next event (the page's calendars)
+export struct HomeInst {
+    music: HomeMusic,
+    event: HomeEvent,
+}
+
+// One calendar page's own data: its view (the plain look's) and its calendars' events in every view and look
+export struct CalInst {
+    view: int,
+    title: string,
+    sub: string,
+    chip: string,
+    agenda: [CalDay],
+    day-events: [CalEvent],
+    day-allday: [CalEvent],
+    day-today: bool,
+    day-free: string,
+    week-names: [string],
+    week-nums: [int],
+    week-today: int,
+    week-events: [CalEvent],
+    week-allday: [CalEvent],
+    month-cells: [CalCell],
+    board-rows: [CalBoard],
+    tear-events: [CalEvent],
+    tear-more: string,
+    wall-cells: [WallCell],
+    cals: [CalItem],
+}
+
+// One to-do page's own data
+export struct TodoInst {
+    lists: [TodoList],
+    sel: int,
+    open-items: [TodoItem],
+    leaving: int,
+    done-items: [TodoItem],
+    show-done: bool,
+    label-head: image,
+    label-done-head: image,
+    label-empty-tape: image,
+    note-head: image,
+    note-done: image,
+}
+
+// One cameras page's own data
+export struct CamInst {
+    items: [CamItem],
+    sel: int,
+    view: int,
+    fit: int,
+    bg: image,
+    bg-corners: [color],
+}
+
+// One thermostat page's own data
+export struct ThermoInst {
+    devices: [ClimateDev],
+    sel: int,
+    rooms: [ClimateRoom],
+}
+
+// One quick controls page's own data (a page of the kind each: PageSlot.n)
+export struct QuickInst {
+    tiles: [QuickTile],
+    title: string,
+    mood: string,
+    groups: [QuickGroup],
+    deck-panel: image,
 }
 
 export component AppWindow inherits Window {
@@ -93,7 +235,6 @@ export component AppWindow inherits Window {
     // Assistant mode panels (new design)
     in property <int> panel-variant: 0;
     in property <ClockData> clock;
-    in property <float> clock-speed: 20;     // wandering clock, px/s
     in property <WeatherData> weather;
     // home page: widgets on the living weather background
     in property <[HomeItem]> home-items;
@@ -101,13 +242,11 @@ export component AppWindow inherits Window {
     // a weather details page without widgets of its own: the weather widgets it shows (weather now, details, hours, days)
     in property <[HomeItem]> weather-items;
     // thermostat panel: the climate devices, the one on the dial, the rooms (device picker), the options sheet
-    in property <[ClimateDev]> thermo-devices;
-    in property <int> thermo-sel;
-    in property <[ClimateRoom]> thermo-rooms;
+    // each thermostat page's own devices, the one shown and the rooms
+    in property <[ThermoInst]> thermo-inst;
     in property <bool> thermo-picker;
     in property <bool> thermo-sheet;
     in property <bool> thermo-settings;
-    in property <int> thermo-look;            // 0 dial, 1 remote control, 2 wall thermostat, 3 neon (synthwave, the home page's Fast Lane views)
     in property <float> thermo-pulse: 1;
     in property <int> thermo-key-down: -1;
     in property <bool> thermo-fahrenheit;
@@ -115,16 +254,13 @@ export component AppWindow inherits Window {
     in property <int> thermo-clock-m;
     // camera panel: the cameras, the one shown, one / all, whole picture / fill, the blurred copy, linked entities;
     // the visitor overlay (doorbell)
-    in property <[CamItem]> cam-items;
-    in property <int> cam-sel;
-    in property <int> cam-view;
-    in property <int> cam-fit;
-    in property <image> cam-bg;
-    in property <[color]> cam-bg-corners;
+    // each cameras page's own cameras, the one shown, one / all, the picture's fit and its blurred copy
+    in property <[CamInst]> cam-inst;
     in property <[CamAction]> cam-actions;
     in property <bool> cam-settings;
     in property <length> cam-grid-scroll;
     in property <bool> cam-ring;
+    in property <int> cam-ring-n;              // the cameras page whose doorbell rang (PageSlot.n)
     in property <image> cam-ring-frame;
     in property <image> cam-ring-bg;
     in property <string> cam-ring-title;
@@ -137,7 +273,8 @@ export component AppWindow inherits Window {
     in property <float> cam-pulse: 0.5 + 0.5 * Math.sin((animation-tick() - Clock.base) / 1600ms * 360deg);
     in property <bool> cam-replies;
     in property <[string]> cam-reply-list;
-    in property <int> info-look;
+    // each notifications page's own pager finish and the pager's body in it
+    in property <[InfoInst]> info-inst;
     in property <[InfoNote]> info-notes;
     // the active status screens and the critical alert, listed above the notifications in every look
     in property <[InfoStatus]> info-statuses;
@@ -168,35 +305,30 @@ export component AppWindow inherits Window {
     in property <float> info-crit-pulse: 0.5 + 0.5 * Math.sin((animation-tick() - Clock.base) / 2000ms * 360deg);
     in property <bool> info-settings;
     in property <int> info-minute: -1;       // the clock (minutes of the day) for the pager and the TV news
-    in property <int> info-pager-finish;     // the pager's finish: 0 graphite, 1 purple, 2 clear, 3 off-white
     in property <string> info-pager-empty;
     in property <string> info-news-ticker;
     in property <int> info-news-epoch;
     in property <string> info-news-empty;
     in property <image> info-fridge-door;
     in property <image> info-fridge-empty;
-    in property <image> info-pager-body;
     in property <image> info-pager-led;
     in property <int> info-pager-first;
     in property <bool> info-crit-button: true;
-    in property <int> quick-look;
-    in property <[QuickTile]> quick-tiles;
-    in property <string> quick-title: "Quick controls";
-    in property <string> quick-mood;
+    // each quick controls page's own tiles, title, line under them, group frames and the deck's plate
+    in property <[QuickInst]> quick-inst;
     in property <string> quick-placard;
     in-out property <bool> quick-sheet;
     in-out property <bool> quick-settings;
     in property <QuickTile> quick-sheet-tile;
     in property <int> quick-sheet-index;
     in property <QuickDetails> quick-details; in property <image> quick-settings-tape;
-    in property <image> quick-mixer-panel; in property <image> quick-fader; in property <image> quick-deck-panel;
+    in property <image> quick-mixer-panel; in property <image> quick-fader;
     in property <[image]> quick-lever-frames;
     in property <image> quick-toggle-up; in property <image> quick-toggle-down; in property <image> quick-lamp-on;
     in property <image> quick-lamp-amber; in property <image> quick-lamp-off; in property <image> quick-screw;
     in property <image> quick-lamp-glow; in property <image> quick-lamp-spec; in property <int> quick-grid;
     in property <[color]> quick-sheet-colours;
     in property <[string]> quick-sheet-effects;
-    in property <[QuickGroup]> quick-groups;
     // status screens (whole screen, above any panel) and the strip on top while one (or a critical alert) is active
     in property <bool> status-on;
     in property <StatusScreen> status-screen;
@@ -242,9 +374,8 @@ export component AppWindow inherits Window {
     in property <float> strip-pulse: 0.5 + 0.5 * Math.sin((animation-tick() - Clock.base) / 2000ms * 360deg);
     // nothing animated in view (screensaver, screen off): the animations' clock starts again
     public function reset-clock() { Clock.base = animation-tick(); }
-    in property <int> cal-view;
-    in property <int> cal-look;
-    in property <[CalBoard]> cal-board-rows;
+    // each calendar page's own view and what its calendars show in it
+    in property <[CalInst]> cal-inst;
     in property <string> cal-board-clock;
     in property <string> cal-board-date;
     in property <string> cal-board-ticker;
@@ -255,32 +386,15 @@ export component AppWindow inherits Window {
     in property <string> cal-tear-weekday;
     in property <bool> cal-tear-sunday;
     in property <string> cal-tear-info;
-    in property <[CalEvent]> cal-tear-events;
-    in property <string> cal-tear-more;
     in property <string> cal-tear-line;
     in property <string> cal-wall-month;
     in property <string> cal-wall-year;
     in property <image> cal-wall-photo;
-    in property <[WallCell]> cal-wall-cells;
-    in property <string> cal-title;
-    in property <string> cal-chip;        // the calendar page's chip: its calendar, or how many
-    in property <string> cal-sub;
     in property <length> cal-scroll;
-    in property <[CalDay]> cal-agenda;
     in property <string> cal-empty-title;
     in property <string> cal-empty-sub;
-    in property <[CalEvent]> cal-day-events;
-    in property <[CalEvent]> cal-day-allday;
-    in property <bool> cal-day-today;
-    in property <string> cal-day-free;
     in property <int> cal-now-min;
-    in property <[string]> cal-week-names;
-    in property <[int]> cal-week-nums;
-    in property <int> cal-week-today: -1;
-    in property <[CalEvent]> cal-week-events;
-    in property <[CalEvent]> cal-week-allday;
     in property <[string]> cal-month-names;
-    in property <[CalCell]> cal-month-cells;
     in property <bool> cal-edit;
     in property <string> cal-edit-title;
     in property <string> cal-edit-cal;
@@ -297,7 +411,6 @@ export component AppWindow inherits Window {
     in property <bool> cal-undo;
     in property <string> cal-undo-text;
     in property <bool> cal-picker;        // the chip's picker: the plain look's view and the calendars shown
-    in property <[CalItem]> cal-cals;
     in property <[string]> cal-board-clock-cells;
     in property <string> cal-desk-line;
     in property <bool> cal-settings;
@@ -311,12 +424,8 @@ export component AppWindow inherits Window {
     in-out property <bool> cal-detail;
     in-out property <CalEvent> cal-detail-ev;
     in-out property <string> cal-detail-when;
-    in property <[TodoList]> todo-lists;
-    in property <int> todo-sel;
-    in property <[TodoItem]> todo-open;
-    in property <int> todo-leaving;            // ticked items still in todo-open while their tick plays (M24)
-    in property <[TodoItem]> todo-done;
-    in property <bool> todo-show-done;
+    // each to-do page's own lists, the one shown, its open (with the ticked ones still leaving, M24) and done items
+    in property <[TodoInst]> todo-inst;
     in property <length> todo-scroll;
     in property <bool> todo-picker;
     in property <bool> todo-settings;          // the to-do page settings in the look's own menu (spec 40)
@@ -331,7 +440,6 @@ export component AppWindow inherits Window {
     in property <int> todo-due-pick: -1;
     in property <string> todo-due-picked;
     in property <int> todo-kb-layer;
-    in property <int> todo-look;
     in property <string> todo-note-draft;
     in property <bool> todo-note-on;
     in property <bool> todo-can-note;
@@ -339,11 +447,6 @@ export component AppWindow inherits Window {
     in property <string> todo-receipt-footer;
     in property <string> todo-receipt-empty;
     in property <string> todo-term-empty;
-    in property <image> todo-label-head;
-    in property <image> todo-label-done-head;
-    in property <image> todo-label-empty-tape;
-    in property <image> todo-note-head;
-    in property <image> todo-note-done;
     in property <image> todo-note-empty;
     // the synthwave home background (weather.theme 8): scene, the two views being faded (a -> b by mix),
     // the view's colour, night amount (shooting star), floor time, cars (empty = switched off), palms,
@@ -408,7 +511,10 @@ export component AppWindow inherits Window {
     in property <float> home-fl-palm-rk: root.palm-fr - root.palm-ir;
     in property <bool> home-fl-neon;
     in property <bool> home-bg-sheet;
-    in property <HomeMusic> home-music;
+    // each custom page's music widget (its player) and next event (its calendars), with the music's position apart
+    in property <[HomeInst]> home-inst;
+    in property <[float]> home-music-pos;
+    // the next event of the first custom page (the clock faces' "next" line)
     in property <HomeEvent> home-event;
     in property <string> home-weekday: "Monday";
     in property <string> home-day-month: "9 November";
@@ -442,45 +548,23 @@ export component AppWindow inherits Window {
     in property <[Person]> home-people;          // the People widgets' heads, each in its widget's group (Person.group)
     in property <[string]> home-person-names;    // the people a People widget's menu offers
     in property <[bool]> home-person-on;         // … the open menu's widget shows them
-    // music page
-    in property <string> music-title;
-    in property <string> music-artist;
-    in property <string> music-album;
-    in property <bool> music-playing;
-    in property <float> music-pos;
-    in property <float> music-dur;
-    in property <bool> music-shuffle;
-    in property <int> music-repeat;
-    in property <float> music-volume: 0.5;
-    in property <string> music-player;
-    in property <color> music-record;       // the record on the turntable: the cover's own colour
-    in property <bool> music-has-record;
-    in property <image> music-art;
-    in property <image> music-art-bg;
-    in property <bool> music-cover-blur: true;
-    in property <bool> music-has-art: true;
+    // music pages: each its own player's track, cover and colours, and its own options
+    in property <[MusicInst]> music-inst;
+    // … and each its position (s), apart from the rest: it changes every second while the music plays
+    in property <[float]> music-pos;
     in property <string> music-kind-icon: "\u{F0387}";
-    in property <color> music-accent: #e8262d;
     in property <[MusicPlayer]> music-players;
     in property <bool> music-picker;
-    in property <int> music-style;
-    in property <bool> music-cs-cover;
     in property <int> music-tape-scope;
     in property <float> music-q-played;
     in property <float> music-q-total;
     in property <int> music-q-index;
     in property <int> music-q-count;
-    in property <image> music-tt-deck;
     in property <image> music-tt-grooves;
-    in property <image> music-cs-back;
-    in property <image> music-cs-front;
-    in property <image> music-cs-hub;
     in property <image> music-cs-hub-r;
     in property <float> music-tt-arm-r: -1;
     in property <float> music-tt-lift: -1;
     in property <float> music-tape-rem: -1;
-    in property <bool> music-scroll;
-    in property <float> music-scroll-speed: 3;
     in property <bool> music-settings;
     // timers page
     in property <[TimerItem]> timers-list;
@@ -488,13 +572,11 @@ export component AppWindow inherits Window {
     in property <string> timers-ring-label;
     in property <float> timers-ring-over;
     in property <float> timers-pulse;
-    in property <int> timers-mode: 1;
-    in property <int> timers-theme;
+    // each timers page's own tab, functions, looks and colours, and its timers in its colours
+    in property <[TimersInst]> timers-inst;
     in property <float> timers-lap-at;
     in property <float> timers-lap-best: -1;
     in property <[float]> timers-lap-marks;
-    in property <int> timers-sw-look;
-    in property <int> timers-alarm-look;
     in property <float> timers-next-h: -1;
     in property <int> timers-next-in: -1;
     in property <string> timers-next-time;
@@ -524,10 +606,6 @@ export component AppWindow inherits Window {
     in property <string> timers-ring-time;
     in property <color> timers-ring-tint: #e8262d;
     in property <bool> timers-settings;
-    in property <bool> timers-colourful: true;
-    in property <bool> timers-alarm-on: true;
-    in property <bool> timers-timer-on: true;
-    in property <bool> timers-watch-on: true;
     in property <color> timers-next-tint: #ffb21e;
     in property <color> timers-watch-tint: #3d9bff;
     in property <image> timers-hg-sand-mask;
@@ -535,10 +613,6 @@ export component AppWindow inherits Window {
     in property <float> timers-hg-peak: 214;
     in property <image> timers-hg-stream-mask;
     in property <image> timers-hg-stream-shade;
-    in property <int> timers-sw-scene;
-    in property <int> timers-sw-choice: -1;
-    in property <image> timers-sw-back;
-    in property <image> timers-sw-floor;
     in property <float> timers-sw-t: root.scene-t;
     in property <[SwCar]> timers-sw-cars;
     in property <image> timers-sw-palm-l: root.palms-l[root.palm-il];
@@ -561,8 +635,6 @@ export component AppWindow inherits Window {
     in property <bool> timers-edit-keyboard;
     in property <bool> timers-edit-info;
     in property <color> timers-edit-tint: #ffb21e;
-    in property <int> music-holds;
-    in property <int> music-wood;
     in property <[image]> music-woods;
     in property <string> home-year: "2026";
     in property <string> home-week: "Week 46";
@@ -574,14 +646,8 @@ export component AppWindow inherits Window {
     in property <[TimerInfo]> timers;
     in-out property <bool> island-away;       // the timer island was flicked into the timer mark (the app brings it back)
     in property <color> clock-accent: Theme.accent;
-    in property <int> clock-weight: 600;
-    in property <bool> clock-date: true;
-    in property <bool> clock-weather: true;
-    in property <bool> clock-next: true;
-    in property <bool> clock-seconds: true;
-    // the clock page's own colour (empty in the integration: the panel's) and digit width
-    in property <color> clock-page-accent: root.clock-accent;
-    in property <float> clock-width: 1;
+    // each clock page's own colour (empty in the integration: the panel's), letters, digit width, parts and speed
+    in property <[ClockInst]> clock-inst;
     in property <bool> connected: false;
     in property <bool> mic-muted: false;
     in property <bool> speaker-muted: false;
@@ -694,8 +760,6 @@ export component AppWindow inherits Window {
     // minute hand made of minute + seconds never flicks back; a sync later than 0.3 s lets them run on as before.
     property <float> sec-run: root.sec-base + (animation-tick() - root.sec-tick) / 1s;
     out property <float> clock-sec: root.sec-run < 60.3 ? Math.min(59.999, root.sec-run) : Math.mod(root.sec-run, 60);
-    // The music widget's position (seconds), apart from the rest of its data.
-    in property <float> home-music-pos;
 
     // ---- pager ----
     in property <[PageSlot]> pages;
@@ -807,7 +871,7 @@ export component AppWindow inherits Window {
         (p.light == 1 || (p.light == 0 && !Theme.dark)) && (p.theme >= 0 ? p.theme : root.weather.theme) >= 3 && (p.theme >= 0 ? p.theme : root.weather.theme) != 8
     }
     pure function on-color(p: PageSlot) -> bool {
-        ((p.kind == "home" || p.kind == "weather") && !root.light-home(p)) || (p.kind == "music" && !(p.variant == 1 && !Theme.dark)) || (p.kind == "timers" && (root.timers-ringing || (p.variant == 3 && root.timers-mode == 1))) || (p.kind == "thermostat" && p.variant == 3) || (p.kind == "todo" && p.variant == 2) || (p.kind == "calendar" && p.variant == 1) || (p.kind == "info" && (root.info-critical || p.variant == 3)) || root.status-on || (p.kind == "quick" && p.variant > 0) || (p.kind == "camera" && (root.cam-ring || (root.cam-view == 0 && root.cam-items.length > 0 && root.cam-items[root.cam-sel].state == 0 && (root.cam-fit == 0 || Theme.dark))))
+        ((p.kind == "home" || p.kind == "weather") && !root.light-home(p)) || (p.kind == "music" && !(p.variant == 1 && !Theme.dark)) || (p.kind == "timers" && (root.timers-ringing || (p.variant == 3 && root.timers-inst[p.n].mode == 1))) || (p.kind == "thermostat" && p.variant == 3) || (p.kind == "todo" && p.variant == 2) || (p.kind == "calendar" && p.variant == 1) || (p.kind == "info" && (root.info-critical || p.variant == 3)) || root.status-on || (p.kind == "quick" && p.variant > 0) || (p.kind == "camera" && ((root.cam-ring && p.n == root.cam-ring-n) || (root.cam-inst[p.n].view == 0 && root.cam-inst[p.n].items.length > 0 && root.cam-inst[p.n].items[root.cam-inst[p.n].sel].state == 0 && (root.cam-inst[p.n].fit == 0 || Theme.dark))))
     }
 
     // ---- the pages, side by side ----
@@ -966,10 +1030,10 @@ export component AppWindow inherits Window {
                         weather-only: slot.kind == "weather";
                         data: root.weather;
                         clock: root.clock;
-                        event: root.home-event;
-                        music: root.home-music;
+                        event: root.home-inst[slot.n].event;
+                        music: root.home-inst[slot.n].music;
                         seconds: root.clock-sec;
-                        music-pos: root.home-music-pos;
+                        music-pos: root.home-music-pos[slot.n];
                         weekday-long: root.home-weekday;
                         day-month: root.home-day-month;
                         accent: root.clock-accent;
@@ -1082,10 +1146,10 @@ export component AppWindow inherits Window {
                         weather-only: slot.kind == "weather";
                         data: root.weather;
                         clock: root.clock;
-                        event: root.home-event;
-                        music: root.home-music;
+                        event: root.home-inst[slot.n].event;
+                        music: root.home-inst[slot.n].music;
                         seconds: root.clock-sec;
-                        music-pos: root.home-music-pos;
+                        music-pos: root.home-music-pos[slot.n];
                         weekday-long: root.home-weekday;
                         day-month: root.home-day-month;
                         accent: root.clock-accent;
@@ -1126,10 +1190,10 @@ export component AppWindow inherits Window {
                         weather-only: slot.kind == "weather";
                         data: root.weather;
                         clock: root.clock;
-                        event: root.home-event;
-                        music: root.home-music;
+                        event: root.home-inst[slot.n].event;
+                        music: root.home-inst[slot.n].music;
                         seconds: root.clock-sec;
-                        music-pos: root.home-music-pos;
+                        music-pos: root.home-music-pos[slot.n];
                         weekday-long: root.home-weekday;
                         day-month: root.home-day-month;
                         halo: 1;
@@ -1164,45 +1228,55 @@ export component AppWindow inherits Window {
                     data: root.clock;
                     live: home-slot.on-view;
                     style: slot.variant;
-                    accent: root.clock-page-accent;
-                    weight: root.clock-weight;
-                    width-k: root.clock-width;
-                    show-date: root.clock-date;
-                    show-weather: root.clock-weather;
-                    show-next: root.clock-next;
-                    show-seconds: root.clock-seconds;
-                    wander-speed: root.clock-speed;
+                    accent: root.clock-inst[slot.n].own-accent ? root.clock-inst[slot.n].accent : root.clock-accent;
+                    weight: root.clock-inst[slot.n].weight;
+                    width-k: root.clock-inst[slot.n].width;
+                    show-date: root.clock-inst[slot.n].date;
+                    show-weather: root.clock-inst[slot.n].weather;
+                    show-next: root.clock-inst[slot.n].next;
+                    show-seconds: root.clock-inst[slot.n].seconds;
+                    wander-speed: root.clock-inst[slot.n].speed;
                     seconds: root.clock-sec;
                 }
                 if slot.kind == "music": MusicPage {
-                    title: root.music-title; artist: root.music-artist; album: root.music-album;
-                    playing: root.music-playing; pos: root.music-pos; dur: root.music-dur;
-                    shuffle: root.music-shuffle; repeat: root.music-repeat; volume: root.music-volume;
-                    player: root.music-player; art: root.music-art; art-bg: root.music-art-bg; cs-cover: root.music-cs-cover; cover-blur: root.music-cover-blur; has-art: root.music-has-art;
-                    kind-icon: root.music-kind-icon; accent: root.music-accent; record: root.music-record; has-record: root.music-has-record; players: root.music-players; picker: root.music-picker;
+                    title: root.music-inst[slot.n].title; artist: root.music-inst[slot.n].artist; album: root.music-inst[slot.n].album;
+                    playing: root.music-inst[slot.n].playing; pos: root.music-pos[slot.n]; dur: root.music-inst[slot.n].dur;
+                    shuffle: root.music-inst[slot.n].shuffle; repeat: root.music-inst[slot.n].repeat; volume: root.music-inst[slot.n].volume;
+                    player: root.music-inst[slot.n].player; art: root.music-inst[slot.n].art; art-bg: root.music-inst[slot.n].art-bg;
+                    cs-cover: root.music-inst[slot.n].cs-cover; cover-blur: root.music-inst[slot.n].cover-blur; has-art: root.music-inst[slot.n].has-art;
+                    kind-icon: root.music-kind-icon; accent: root.music-inst[slot.n].accent; record: root.music-inst[slot.n].record;
+                    has-record: root.music-inst[slot.n].has-record; players: root.music-players;
+                    // (the menus are the page on screen's)
+                    picker: root.music-picker && root.page == i;
                     style: slot.variant; tape-scope: root.music-tape-scope; q-played: root.music-q-played; q-total: root.music-q-total;
-                    q-index: root.music-q-index; q-count: root.music-q-count; tt-deck: root.music-tt-deck; tt-grooves: root.music-tt-grooves;
-                    cs-back: root.music-cs-back; cs-front: root.music-cs-front; cs-hub: root.music-cs-hub; cs-hub-r: root.music-cs-hub-r;
+                    q-index: root.music-q-index; q-count: root.music-q-count; tt-deck: root.music-inst[slot.n].tt-deck; tt-grooves: root.music-tt-grooves;
+                    cs-back: root.music-inst[slot.n].cs-back; cs-front: root.music-inst[slot.n].cs-front; cs-hub: root.music-inst[slot.n].cs-hub; cs-hub-r: root.music-cs-hub-r;
                     tt-arm-r: root.music-tt-arm-r; tt-lift: root.music-tt-lift; tape-rem: root.music-tape-rem;
-                    scroll: root.music-scroll; scroll-speed: root.music-scroll-speed; settings: root.music-settings; holds: root.music-holds; wood: root.music-wood; woods: root.music-woods;
+                    scroll: root.music-inst[slot.n].scroll; scroll-speed: root.music-inst[slot.n].scroll-speed; settings: root.music-settings && root.page == i;
+                    holds: root.music-inst[slot.n].holds; wood: root.music-inst[slot.n].wood; woods: root.music-woods;
                     shown: root.page == i && !root.screensaver-on;
                 }
                 if slot.kind == "timers": TimersPage {
-                    timers: root.timers-list; ringing: root.timers-ringing; ring-label: root.timers-ring-label; ring-over: root.timers-ring-over;
-                    pulse: root.timers-pulse; mode: root.timers-mode; theme: slot.variant; pick: root.timers-focus; alarms: root.timers-alarms; quick: root.timers-quick; sheet: root.timers-sheet;
+                    timers: root.timers-inst[slot.n].list; ringing: root.timers-ringing; ring-label: root.timers-ring-label; ring-over: root.timers-ring-over;
+                    pulse: root.timers-pulse; mode: root.timers-inst[slot.n].mode; theme: slot.variant; pick: root.timers-focus; alarms: root.timers-alarms;
+                    // (the menus are the page on screen's)
+                    quick: root.timers-quick && root.page == i; sheet: root.page == i ? root.timers-sheet : -1;
                     next-alarm: root.timers-next-alarm; watch: root.timers-watch; watch-running: root.timers-watch-running; laps: root.timers-laps;
-                    lap-at: root.timers-lap-at; lap-best: root.timers-lap-best; lap-marks: root.timers-lap-marks; sw-look: root.timers-sw-look; alarm-look: root.timers-alarm-look;
+                    lap-at: root.timers-lap-at; lap-best: root.timers-lap-best; lap-marks: root.timers-lap-marks;
+                    sw-look: root.timers-inst[slot.n].sw-look; alarm-look: root.timers-inst[slot.n].alarm-look;
                     now-h: root.clock.hh.to-float() + root.clock.mm.to-float() / 60; now-s: root.clock-sec; next-h: root.timers-next-h; next-in: root.timers-next-in; next-time: root.timers-next-time; next-label: root.timers-next-label; dawn-from: root.timers-dawn-from;
                     sunrise-h: root.timers-sunrise-h; sunset-h: root.timers-sunset-h;
-                    ring-alarm: root.timers-ring-alarm; ring-time: root.timers-ring-time; ring-tint: root.timers-ring-tint; settings: root.timers-settings;
-                    colourful: root.timers-colourful; alarm-on: root.timers-alarm-on; timer-on: root.timers-timer-on; watch-on: root.timers-watch-on;
+                    ring-alarm: root.timers-ring-alarm; ring-time: root.timers-ring-time; ring-tint: root.timers-ring-tint; settings: root.timers-settings && root.page == i;
+                    colourful: root.timers-inst[slot.n].colourful; alarm-on: root.timers-inst[slot.n].alarm-on; timer-on: root.timers-inst[slot.n].timer-on;
+                    watch-on: root.timers-inst[slot.n].watch-on;
                     next-tint: root.timers-next-tint; watch-tint: root.timers-watch-tint;
                     hg-sand-mask: root.timers-hg-sand-mask; hg-sand-shade: root.timers-hg-sand-shade; hg-peak: root.timers-hg-peak;
                     hg-stream-mask: root.timers-hg-stream-mask; hg-stream-shade: root.timers-hg-stream-shade;
-                    sw-scene: root.timers-sw-scene; sw-choice: root.timers-sw-choice; sw-back: root.timers-sw-back; sw-floor: root.timers-sw-floor; sw-t: root.timers-sw-t;
+                    sw-scene: root.timers-inst[slot.n].sw-scene; sw-choice: root.timers-inst[slot.n].sw-choice; sw-back: root.timers-inst[slot.n].sw-back;
+                    sw-floor: root.timers-inst[slot.n].sw-floor; sw-t: root.timers-sw-t;
                     sw-cars: root.timers-sw-cars; sw-palm-l: root.timers-sw-palm-l; sw-palm-r: root.timers-sw-palm-r; sw-palm-l2: root.timers-sw-palm-l2; sw-palm-r2: root.timers-sw-palm-r2; sw-palm-lk: root.timers-sw-palm-lk; sw-palm-rk: root.timers-sw-palm-rk;
-                    edit: root.timers-edit; edit-new: root.timers-edit-new; edit-timer: root.timers-edit-timer; edit-h <=> root.timers-edit-h; edit-m <=> root.timers-edit-m; edit-days: root.timers-edit-days;
-                    edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; ha-sounds: root.timers-ha-sounds; edit-keyboard: root.timers-edit-keyboard; kb-layer: root.timers-kb-layer; kb-layout: root.kb-layout;
+                    edit: root.timers-edit && root.page == i; edit-new: root.timers-edit-new; edit-timer: root.timers-edit-timer; edit-h <=> root.timers-edit-h; edit-m <=> root.timers-edit-m; edit-days: root.timers-edit-days;
+                    edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; ha-sounds: root.timers-ha-sounds; edit-keyboard: root.timers-edit-keyboard && root.page == i; kb-layer: root.timers-kb-layer; kb-layout: root.kb-layout;
                     edit-info: root.timers-edit-info; edit-tint: root.timers-edit-tint;
                     on-screen: i == root.shown-page && !root.screensaver-on; snooze-h: root.timers-snooze-h; ring-h: root.timers-ring-h; cells: root.timers-grid;
                 }
@@ -1213,8 +1287,10 @@ export component AppWindow inherits Window {
                     palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r; palm-l2: root.home-fl-palm-l2; palm-r2: root.home-fl-palm-r2; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
                 }
                 if slot.kind == "thermostat": ThermostatPage {
-                    devices: root.thermo-devices; sel: root.thermo-sel; rooms: root.thermo-rooms; picker: root.thermo-picker; sheet: root.thermo-sheet;
-                    settings: root.thermo-settings; look: slot.variant; pulse: root.thermo-pulse; clock-h: root.thermo-clock-h; clock-m: root.thermo-clock-m; key-down: root.thermo-key-down; fahrenheit: root.thermo-fahrenheit;
+                    devices: root.thermo-inst[slot.n].devices; sel: root.thermo-inst[slot.n].sel; rooms: root.thermo-inst[slot.n].rooms;
+                    // (the menus are the page on screen's)
+                    picker: root.thermo-picker && root.page == i; sheet: root.thermo-sheet && root.page == i;
+                    settings: root.thermo-settings && root.page == i; look: slot.variant; pulse: root.thermo-pulse; clock-h: root.thermo-clock-h; clock-m: root.thermo-clock-m; key-down: root.thermo-key-down; fahrenheit: root.thermo-fahrenheit;
                     grid: root.home-fl-grid; fl-scene: root.home-fl-scene; fl-cars: root.home-fl-cars-on;
                     shown: root.page == i && !root.screensaver-on;
                     look-names: [Words.line("ui.looks.thermostat.0"), Words.line("ui.looks.thermostat.1"), Words.line("ui.looks.thermostat.2"), Words.line("ui.looks.thermostat.3")];
@@ -1222,67 +1298,78 @@ export component AppWindow inherits Window {
                     cars-name: Words.line("ui.looks.thermostat.8");
                 }
                 if slot.kind == "quick": QuickPage {
-                    look: slot.variant; tiles: root.quick-tiles; title: root.quick-title; mood: root.quick-mood; placard: root.quick-placard;
+                    look: slot.variant; tiles: root.quick-inst[slot.n].tiles; title: root.quick-inst[slot.n].title; mood: root.quick-inst[slot.n].mood;
+                    placard: root.quick-placard;
                     sheet <=> root.quick-sheet; settings <=> root.quick-settings; on-screen: root.page == i && !root.screensaver-on;
                     sheet-tile: root.quick-sheet-tile; sheet-index: root.quick-sheet-index; details: root.quick-details; settings-tape: root.quick-settings-tape;
                     mixer-panel: root.quick-mixer-panel; fader: root.quick-fader;
-                    deck-panel: root.quick-deck-panel; toggle-up: root.quick-toggle-up; toggle-down: root.quick-toggle-down; lever-frames: root.quick-lever-frames; lamp-glow: root.quick-lamp-glow; lamp-spec: root.quick-lamp-spec;
+                    deck-panel: root.quick-inst[slot.n].deck-panel; toggle-up: root.quick-toggle-up; toggle-down: root.quick-toggle-down; lever-frames: root.quick-lever-frames; lamp-glow: root.quick-lamp-glow; lamp-spec: root.quick-lamp-spec;
                     grid: root.quick-grid; sheet-colours: root.quick-sheet-colours;
-                    sheet-effects: root.quick-sheet-effects; groups: root.quick-groups;
+                    sheet-effects: root.quick-sheet-effects; groups: root.quick-inst[slot.n].groups;
                     lamp-amber: root.quick-lamp-amber; lamp-off: root.quick-lamp-off; screw: root.quick-screw;
                 }
                 if slot.kind == "camera": CameraPage {
-                    cams: root.cam-items; sel: root.cam-sel; view: root.cam-view; fit: root.cam-fit; bg: root.cam-bg; bg-corners: root.cam-bg-corners; actions: root.cam-actions; settings: root.cam-settings; grid-scroll: root.cam-grid-scroll;
-                    ring: root.cam-ring; ring-frame: root.cam-ring-frame; ring-bg: root.cam-ring-bg; ring-title: root.cam-ring-title; ring-sub: root.cam-ring-sub;
+                    cams: root.cam-inst[slot.n].items; sel: root.cam-inst[slot.n].sel; view: root.cam-inst[slot.n].view; fit: root.cam-inst[slot.n].fit;
+                    bg: root.cam-inst[slot.n].bg; bg-corners: root.cam-inst[slot.n].bg-corners; actions: root.cam-actions;
+                    settings: root.cam-settings && root.page == i; grid-scroll: root.cam-grid-scroll;
+                    ring: root.cam-ring && slot.n == root.cam-ring-n; ring-frame: root.cam-ring-frame; ring-bg: root.cam-ring-bg; ring-title: root.cam-ring-title; ring-sub: root.cam-ring-sub;
                     ring-state: root.cam-ring-state; can-open: root.cam-can-open; can-talk: root.cam-can-talk; hold: root.cam-hold; pulse: root.cam-pulse;
-                    replies: root.cam-replies; reply-list: root.cam-reply-list;
+                    replies: root.cam-replies && slot.n == root.cam-ring-n; reply-list: root.cam-reply-list;
                     on-screen: i == root.page && !root.screensaver-on;
                 }
                 if slot.kind == "calendar": CalendarPage {
                     live: home-slot.on-view;
                     on-screen: i == root.page && !root.screensaver-on;
-                    look: slot.variant; board-rows: root.cal-board-rows; board-clock: root.cal-board-clock; board-date: root.cal-board-date;
+                    look: slot.variant; board-rows: root.cal-inst[slot.n].board-rows; board-clock: root.cal-board-clock; board-date: root.cal-board-date;
                     board-ticker: root.cal-board-ticker; board-epoch: root.cal-board-epoch; board-empty: root.cal-board-empty; tear-month: root.cal-tear-month; tear-day: root.cal-tear-day;
-                    tear-weekday: root.cal-tear-weekday; tear-sunday: root.cal-tear-sunday; tear-info: root.cal-tear-info; tear-events: root.cal-tear-events;
-                    tear-more: root.cal-tear-more; tear-line: root.cal-tear-line; wall-month: root.cal-wall-month; wall-year: root.cal-wall-year;
-                    wall-photo: root.cal-wall-photo; wall-cells: root.cal-wall-cells;
-                    view: root.cal-view; chip: root.cal-chip; title: root.cal-title; sub: root.cal-sub; scroll: root.cal-scroll; agenda: root.cal-agenda;
-                    empty-title: root.cal-empty-title; empty-sub: root.cal-empty-sub; day-events: root.cal-day-events; day-allday: root.cal-day-allday;
-                    day-today: root.cal-day-today; day-free: root.cal-day-free; now-min: root.cal-now-min; week-names: root.cal-week-names; week-nums: root.cal-week-nums;
-                    week-today: root.cal-week-today; week-events: root.cal-week-events; week-allday: root.cal-week-allday; month-names: root.cal-month-names;
-                    month-cells: root.cal-month-cells; edit: root.cal-edit; edit-title: root.cal-edit-title; edit-cal: root.cal-edit-cal; edit-code: root.cal-edit-code;
+                    tear-weekday: root.cal-tear-weekday; tear-sunday: root.cal-tear-sunday; tear-info: root.cal-tear-info; tear-events: root.cal-inst[slot.n].tear-events;
+                    tear-more: root.cal-inst[slot.n].tear-more; tear-line: root.cal-tear-line; wall-month: root.cal-wall-month; wall-year: root.cal-wall-year;
+                    wall-photo: root.cal-wall-photo; wall-cells: root.cal-inst[slot.n].wall-cells;
+                    view: root.cal-inst[slot.n].view; chip: root.cal-inst[slot.n].chip; title: root.cal-inst[slot.n].title; sub: root.cal-inst[slot.n].sub;
+                    scroll: root.cal-scroll; agenda: root.cal-inst[slot.n].agenda;
+                    empty-title: root.cal-empty-title; empty-sub: root.cal-empty-sub; day-events: root.cal-inst[slot.n].day-events; day-allday: root.cal-inst[slot.n].day-allday;
+                    day-today: root.cal-inst[slot.n].day-today; day-free: root.cal-inst[slot.n].day-free; now-min: root.cal-now-min;
+                    week-names: root.cal-inst[slot.n].week-names; week-nums: root.cal-inst[slot.n].week-nums;
+                    week-today: root.cal-inst[slot.n].week-today; week-events: root.cal-inst[slot.n].week-events; week-allday: root.cal-inst[slot.n].week-allday;
+                    month-names: root.cal-month-names; month-cells: root.cal-inst[slot.n].month-cells;
+                    // (the menus are the page on screen's)
+                    edit: root.cal-edit && root.page == i; edit-title: root.cal-edit-title; edit-cal: root.cal-edit-cal; edit-code: root.cal-edit-code;
                     edit-tint: root.cal-edit-tint; edit-day: root.cal-edit-day; edit-allday <=> root.cal-edit-allday; edit-start-min <=> root.cal-edit-start-min;
                     edit-end-min <=> root.cal-edit-end-min; edit-open <=> root.cal-edit-open;
                     edit-typing: root.cal-edit-typing; edit-can-delete: root.cal-edit-can-delete; kb-layer: root.cal-kb-layer; kb-layout: root.kb-layout;
-                    undo: root.cal-undo; undo-text: root.cal-undo-text;
-                    picker: root.cal-picker; cals: root.cal-cals; clock-cells: root.cal-board-clock-cells; desk-line: root.cal-desk-line;
-                    settings: root.cal-settings; detail <=> root.cal-detail; detail-ev <=> root.cal-detail-ev; detail-when <=> root.cal-detail-when;
-                    day-sheet: root.cal-day-sheet; day-sheet-title: root.cal-day-sheet-title; day-sheet-caps: root.cal-day-sheet-caps;
+                    undo: root.cal-undo && root.page == i; undo-text: root.cal-undo-text;
+                    picker: root.cal-picker && root.page == i; cals: root.cal-inst[slot.n].cals; clock-cells: root.cal-board-clock-cells; desk-line: root.cal-desk-line;
+                    settings: root.cal-settings && root.page == i; detail <=> root.cal-detail; detail-ev <=> root.cal-detail-ev; detail-when <=> root.cal-detail-when;
+                    day-sheet: root.cal-day-sheet && root.page == i; day-sheet-title: root.cal-day-sheet-title; day-sheet-caps: root.cal-day-sheet-caps;
                     day-sheet-short: root.cal-day-sheet-short; day-sheet-week: root.cal-day-sheet-week; day-sheet-days: root.cal-day-sheet-days;
                     day-sheet-free: root.cal-day-sheet-free;
                 }
                 if slot.kind == "todo": TodoPage {
-                    lists: root.todo-lists; sel: root.todo-sel; open-items: root.todo-open; leaving: root.todo-leaving; done-items: root.todo-done; show-done: root.todo-show-done;
-                    scroll: root.todo-scroll; picker: root.todo-picker; settings: root.todo-settings; pend-look: root.todo-pend-look;
+                    lists: root.todo-inst[slot.n].lists; sel: root.todo-inst[slot.n].sel; open-items: root.todo-inst[slot.n].open-items;
+                    leaving: root.todo-inst[slot.n].leaving; done-items: root.todo-inst[slot.n].done-items; show-done: root.todo-inst[slot.n].show-done;
+                    // (the menus and the adding form are the page on screen's)
+                    scroll: root.todo-scroll; picker: root.todo-picker && root.page == i; settings: root.todo-settings && root.page == i;
+                    pend-look: root.page == i ? root.todo-pend-look : -1;
                     menu-stamp: root.todo-menu-stamp; menu-tapes: root.todo-menu-tapes; on-screen: i == root.shown-page && !root.screensaver-on;
                     empty-title: root.todo-empty-title; empty-sub: root.todo-empty-sub;
-                    adding: root.todo-adding; draft: root.todo-draft; can-due: root.todo-can-due; due-pick: root.todo-due-pick; due-picked: root.todo-due-picked;
+                    adding: root.todo-adding && root.page == i; draft: root.todo-draft; can-due: root.todo-can-due; due-pick: root.todo-due-pick; due-picked: root.todo-due-picked;
                     kb-layer: root.todo-kb-layer; kb-layout: root.kb-layout; look: slot.variant; note-draft: root.todo-note-draft; note-on: root.todo-note-on; can-note: root.todo-can-note; stamp: root.todo-stamp;
                     receipt-footer: root.todo-receipt-footer; receipt-empty: root.todo-receipt-empty; term-empty: root.todo-term-empty;
-                    label-head: root.todo-label-head; label-done-head: root.todo-label-done-head; label-empty-tape: root.todo-label-empty-tape;
-                    note-head: root.todo-note-head; note-done: root.todo-note-done; note-empty: root.todo-note-empty;
+                    label-head: root.todo-inst[slot.n].label-head; label-done-head: root.todo-inst[slot.n].label-done-head;
+                    label-empty-tape: root.todo-inst[slot.n].label-empty-tape;
+                    note-head: root.todo-inst[slot.n].note-head; note-done: root.todo-inst[slot.n].note-done; note-empty: root.todo-note-empty;
                 }
                 if slot.kind == "info": InfoPage {
                     live: home-slot.on-view;
                     look: slot.variant; notes: root.info-notes; statuses: root.info-statuses; scroll: root.info-scroll;
                     empty-title: root.info-empty-title; empty-sub: root.info-empty-sub;
-                    card: root.info-card; card-note: root.info-card-note; card-index: root.info-card-index; card-count: root.info-card-count;
+                    card: root.info-card && root.page == i; card-note: root.info-card-note; card-index: root.info-card-index; card-count: root.info-card-count;
                     critical: root.info-critical; crit-title: root.info-crit-title; crit-message: root.info-crit-message; crit-icon: root.info-crit-icon;
-                    crit-source: root.info-crit-source; crit-hold: root.info-crit-hold; crit-pulse: root.info-crit-pulse; settings: root.info-settings;
-                    current: i == root.page && !root.screensaver-on; minute: root.info-minute; finish: root.info-pager-finish;
+                    crit-source: root.info-crit-source; crit-hold: root.info-crit-hold; crit-pulse: root.info-crit-pulse; settings: root.info-settings && root.page == i;
+                    current: i == root.page && !root.screensaver-on; minute: root.info-minute; finish: root.info-inst[slot.n].finish;
                     pager-empty: root.info-pager-empty; news-ticker: root.info-news-ticker; news-epoch: root.info-news-epoch; news-empty: root.info-news-empty;
                     fridge-door: root.info-fridge-door; fridge-empty: root.info-fridge-empty;
-                    pager-body: root.info-pager-body; pager-led: root.info-pager-led; pager-first: root.info-pager-first; crit-button: root.info-crit-button;
+                    pager-body: root.info-inst[slot.n].pager-body; pager-led: root.info-pager-led; pager-first: root.info-pager-first; crit-button: root.info-crit-button;
                 }
                 if root.show-people && root.people.length > 0 && !root.home-editing: People {
                     x: 16px;

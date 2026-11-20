@@ -116,6 +116,8 @@ const TIMER_LOOK_SOUND = ["marimba", "bell", "chimes", "synth", "digital"];
 const SOUND_UPLOAD_MAX = 10 * 1024 * 1024;
 const SOUND_TYPES = /\.(mp3|wav|ogg|oga|flac)$/i;
 const ALARMS_MAX = 20;
+// The tiles a Quick controls page shows (the panel's grid, desk and deck take eight).
+const TILES_MAX = 8;
 const DAY_NAMES = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 // What can start an own critical alert.
 const OWN_CRIT_DOMAINS = ["binary_sensor", "sensor", "lock", "input_boolean", "switch"];
@@ -1101,6 +1103,9 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .tslot .t { display: flex; flex-direction: column; min-width: 0; overflow-wrap: anywhere; }
 .tslot .t b { font-weight: 600; font-size: 13.5px; }
 .tslot .t small { color: var(--muted); font-size: 12px; }
+.tslot { position: relative; }
+.tslot.dragging { z-index: 5; box-shadow: var(--shadow-lg); opacity: .96; }
+.tslot .handle { width: 22px; height: 40px; display: grid; place-items: center; color: var(--faint); cursor: grab; touch-action: none; flex: none; margin: 0 -6px 0 -4px; }
 .tape { font-family: "PanelOS Heading", sans-serif; font-size: 11px; letter-spacing: .08em; background: #111; color: #f2f2f2; border-radius: 3px; padding: 1px 5px; text-transform: uppercase; align-self: flex-start; overflow-wrap: anywhere; }
 .picker-list { display: flex; flex-direction: column; max-height: 360px; overflow-y: auto; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); }
 .picker-list > button { display: flex; align-items: center; gap: 12px; border: 0; border-top: 1px solid var(--line); background: none; padding: 10px 14px; text-align: left; min-width: 0; }
@@ -3529,13 +3534,19 @@ class PanelOSPage extends HTMLElement {
       if (page.kind === "music") bits.push(ents[0] ? this._ename(ents[0]) : "The panel's player");
       if (page.kind === "weather") bits.push(ents[0] ? this._ename(ents[0]) : "The panel's weather");
       if (page.kind === "thermostat") bits.push(ents.length ? this._ename(ents[0]) + (ents.length > 1 ? ` and ${ents.length - 1} more` : "") : "No thermostat yet");
-      if (page.kind === "quick") bits.push(plural(ents.length, "tile", "tiles"));
-      if (page.kind === "camera") bits.push(plural(ents.length, "camera", "cameras"));
-      if (page.kind === "calendar") bits.push(plural(names("calendar").length, "calendar", "calendars"));
+      if (page.kind === "quick") bits.push(ents.length ? this._enames(ents) : "No tiles yet");
+      if (page.kind === "camera") bits.push(ents.length ? this._enames(ents) : "No camera yet");
+      if (page.kind === "calendar") bits.push(names("calendar").length ? this._enames(names("calendar")) : "No calendar yet");
       if (page.kind === "todo") bits.push(ents.length ? ents.map((e) => this._ename(e)).join(", ") : "No list yet");
       if (page.kind === "info" && (page.variant || 0) === 2) bits.push((PAGER_FINISH.find((f) => f.id === page.options?.finish) || PAGER_FINISH[0]).name);
     }
     return bits.filter(Boolean).join(" · ");
+  }
+
+  // A few entities by name, the rest counted ("Desk lamp, Shutter and 3 more").
+  _enames(ids, most = 2) {
+    const shown = ids.slice(0, most).map((e) => this._ename(e)).join(", ");
+    return ids.length > most ? `${shown} and ${ids.length - most} more` : shown;
   }
 
   _viewPages(p) {
@@ -3661,27 +3672,60 @@ class PanelOSPage extends HTMLElement {
 
   // Drag a page row by its handle (mouse and touch); the start page stays first.
   _startPageDrag(e, p) {
+    this._startDrag(e, ".prow", { fixed: (el) => el.dataset.i === "0" }, (order) => {
+      const pages = this._pages(p);
+      this._savePages(p, order.map((k) => clone(pages[k])), { toast: `New order sent to ${this._pname(p)}` });
+    });
+  }
+
+  // Drag an item of a list (or of a grid, `grid`) by its handle, mouse and touch alike: the item follows the pointer and
+  // passes a neighbour once its middle is past the neighbour's middle (in a grid: once the pointer is over a
+  // neighbour's place); `fixed` items stay where they are. When it is let go, `done` gets the new order of the items'
+  // `data-i` (only when it changed).
+  _startDrag(e, sel, { fixed = () => false, grid = false } = {}, done) {
     e.preventDefault();
-    const rowEl = e.currentTarget.closest(".prow");
+    e.stopPropagation();
+    const rowEl = e.currentTarget.closest(sel);
     const list = rowEl.parentElement;
+    const items = () => [...list.children].filter((c) => c.matches(sel));
+    let startX = e.clientX;
     let startY = e.clientY;
     this._dragging = true;
     rowEl.classList.add("dragging");
+    // the item's place moved in the list: the picture stays under the pointer
+    const moved = (fn) => {
+      const [left, top] = [rowEl.offsetLeft, rowEl.offsetTop];
+      fn();
+      startX += rowEl.offsetLeft - left;
+      startY += rowEl.offsetTop - top;
+    };
     const move = (ev) => {
       ev.preventDefault();
-      const r = rowEl.getBoundingClientRect();
-      const mid = r.top + r.height / 2;
-      const prev = rowEl.previousElementSibling;
-      const next = rowEl.nextElementSibling;
-      if (prev && prev.dataset.i !== "0") {
-        const pr = prev.getBoundingClientRect();
-        if (mid < pr.top + pr.height / 2) { const before = rowEl.offsetTop; list.insertBefore(rowEl, prev); startY += rowEl.offsetTop - before; }
+      if (grid) {
+        const over = items().find((c) => {
+          if (c === rowEl || fixed(c)) return false;
+          const b = c.getBoundingClientRect();
+          return ev.clientX >= b.left && ev.clientX <= b.right && ev.clientY >= b.top && ev.clientY <= b.bottom;
+        });
+        if (over) {
+          const all = items();
+          moved(() => list.insertBefore(rowEl, all.indexOf(over) < all.indexOf(rowEl) ? over : over.nextSibling));
+        }
+      } else {
+        const r = rowEl.getBoundingClientRect();
+        const mid = r.top + r.height / 2;
+        const prev = rowEl.previousElementSibling;
+        const next = rowEl.nextElementSibling;
+        if (prev && prev.matches(sel) && !fixed(prev)) {
+          const pr = prev.getBoundingClientRect();
+          if (mid < pr.top + pr.height / 2) moved(() => list.insertBefore(rowEl, prev));
+        }
+        if (next && next.matches(sel) && !fixed(next)) {
+          const nr = next.getBoundingClientRect();
+          if (mid > nr.top + nr.height / 2) moved(() => list.insertBefore(next, rowEl));
+        }
       }
-      if (next) {
-        const nr = next.getBoundingClientRect();
-        if (mid > nr.top + nr.height / 2) { const before = rowEl.offsetTop; list.insertBefore(next, rowEl); startY += rowEl.offsetTop - before; }
-      }
-      rowEl.style.transform = `translateY(${ev.clientY - startY}px)`;
+      rowEl.style.transform = grid ? `translate(${ev.clientX - startX}px, ${ev.clientY - startY}px)` : `translateY(${ev.clientY - startY}px)`;
     };
     const up = () => {
       window.removeEventListener("pointermove", move);
@@ -3690,11 +3734,11 @@ class PanelOSPage extends HTMLElement {
       this._dragging = false;
       rowEl.classList.remove("dragging");
       rowEl.style.transform = "";
-      const order = [...list.children].map((c) => Number(c.dataset.i));
-      if (order.some((v, k) => v !== k)) {
-        const pages = this._pages(p);
-        this._savePages(p, order.map((k) => clone(pages[k])), { toast: `New order sent to ${this._pname(p)}` });
-      } else this._render();
+      // (the click that ends a drag opens nothing)
+      this._dragEnded = Date.now();
+      const order = items().map((c) => Number(c.dataset.i));
+      if (order.some((v, k) => v !== k)) done(order);
+      else this._render();
     };
     window.addEventListener("pointermove", move, { passive: false });
     window.addEventListener("pointerup", up);
@@ -3988,16 +4032,18 @@ class PanelOSPage extends HTMLElement {
     const gnames = Array.isArray(o.group_names) ? o.group_names : [];
     const cols = (page.variant || 0) === 0 ? 2 : 4;
     const slots = [];
-    const max = 16;
+    const max = TILES_MAX;
     for (let k = 0; k < Math.min(max, ents.length + 1); k++) {
       const id = ents[k];
       const gname = deck && groups === "custom" && k < 8 && (k === 0 || starts[k]) ? (gnames[k] || "").trim() : "";
-      slots.push(h("button", { class: `tslot${id ? " full" : ""}`, onclick: () => this._openSheet({ kind: "tile", panel: p.entry_id, page: i, slot: k }) },
-        id ? [icon(this._eicon(id)), h("span", { class: "t" }, h("b", null, this._ename(id)), desk && tapes[k] ? h("span", { class: "tape" }, tapes[k]) : null,
-          gname ? h("small", null, `Group: ${gname}`) : null)] : [icon("plus"), "Add"]));
+      const open = () => { if (Date.now() - (this._dragEnded || 0) > 300) this._openSheet({ kind: "tile", panel: p.entry_id, page: i, slot: k }); };
+      slots.push(h("button", { class: `tslot${id ? " full" : " add"}`, "data-i": k, onclick: open },
+        id ? [h("span", { class: "handle", "aria-label": `Drag to reorder ${this._ename(id)}`, onpointerdown: (e) => this._startTileDrag(e, p, i) }, icon("drag")),
+          icon(this._eicon(id)), h("span", { class: "t" }, h("b", null, this._ename(id)), desk && tapes[k] ? h("span", { class: "tape" }, tapes[k]) : null,
+            gname ? h("small", null, `Group: ${gname}`) : null)] : [icon("plus"), "Add"]));
     }
     return [this._card("Tiles", {
-      info: `Tap a tile to choose what it controls${desk ? " and the text on its label" : ""}. A long press on the panel opens the details (brightness, colour, position).`,
+      info: `Tap a tile to choose what it controls${desk ? " and the text on its label" : ""}; drag it by its handle to move it. A page takes ${TILES_MAX} tiles: more go on another Quick controls page. A long press on the panel opens the details (brightness, colour, position).`,
       acts: this._btn("Fill from the room", () => this._fillTiles(p, i), { cls: "small", icon: "home-outline", disabled: !this._pareaId(p) || ents.length >= max, title: this._pareaId(p) ? null : "The panel has no area in Home Assistant" }),
     }, h("div", { class: "tilegrid", style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } }, slots)),
     deck ? this._card("Groups", {
@@ -4005,12 +4051,36 @@ class PanelOSPage extends HTMLElement {
     }, this._row("Groups", this._seg([["auto", "Automatic"], ["off", "Off"], ["custom", "Custom"]], groups, (v) => this._setPageOption(p, i, "groups", v === "auto" ? undefined : v), { label: "Groups" }), { cls: "first" })) : null].filter(Boolean);
   }
 
+  // A tile dragged by its handle to another place: the tiles and what each keeps (its label, its group) in the new order.
+  _startTileDrag(e, p, i) {
+    this._startDrag(e, ".tslot", { grid: true, fixed: (el) => el.classList.contains("add") }, (all) => {
+      const page = this._pages(p)[i];
+      const ents = [...(page.entities || [])];
+      // (the "Add" slot stays last)
+      const order = all.filter((k) => k < ents.length);
+      const align = (list, empty) => {
+        const out = Array.isArray(list) ? [...list] : [];
+        while (out.length < ents.length) out.push(empty);
+        out.length = ents.length;
+        return out;
+      };
+      const options = { ...(page.options || {}) };
+      for (const [key, empty] of [["tapes", ""], ["group_starts", false], ["group_names", ""]]) {
+        const list = align(page.options?.[key], empty);
+        const next = order.map((k) => list[k]);
+        if (next.some(Boolean)) options[key] = next;
+        else delete options[key];
+      }
+      this._setPage(p, i, { entities: order.map((k) => ents[k]), options }, { toast: `New order sent to ${this._pname(p)}` });
+    });
+  }
+
   _fillTiles(p, i) {
     const area = this._pareaId(p);
     const page = this._pages(p)[i];
     const ents = [...(page.entities || [])];
     const cands = this._ents(["light", "cover", "climate", "switch", "fan", "scene"], { p }).filter((e) => e.area === area && !ents.includes(e.id));
-    const room = Math.max(0, 16 - ents.length);
+    const room = Math.max(0, TILES_MAX - ents.length);
     const add = cands.slice(0, room).map((e) => e.id);
     if (!add.length) { this._toast(`Nothing more to add from ${this._areaName(area)}`); return; }
     this._setPage(p, i, { entities: [...ents, ...add] }, { toast: `${plural(add.length, "tile", "tiles")} added from ${this._areaName(area)}` });

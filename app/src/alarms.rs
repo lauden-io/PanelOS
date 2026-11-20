@@ -421,29 +421,30 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         // colours, the alarm look (the page options the integration keeps)
         "alarms.functions" => {
             let keys = ["alarm", "timer", "stopwatch"];
-            let mut on = [ui.get_timers_alarm_on(), ui.get_timers_timer_on(), ui.get_timers_watch_on()];
+            let d = crate::pages::inst(&ui.get_timers_inst(), crate::acting_n("timers"));
+            let mut on = [d.alarm_on, d.timer_on, d.watch_on];
             let Some(k) = keys.iter().position(|k| *k == value) else { return };
             on[k] = !on[k];
             if !on.iter().any(|x| *x) {
                 return;
             }
-            ui.set_timers_alarm_on(on[0]);
-            ui.set_timers_timer_on(on[1]);
-            ui.set_timers_watch_on(on[2]);
-            let mode = ui.get_timers_mode().clamp(0, 2) as usize;
-            if !on[mode] {
-                ui.set_timers_mode(if on[1] { 1 } else if on[0] { 0 } else { 2 });
-            }
+            crate::with_timers(ui, |d| {
+                d.alarm_on = on[0];
+                d.timer_on = on[1];
+                d.watch_on = on[2];
+                d.mode = crate::timers_tab(d.mode, on);
+            });
             let list: Vec<&str> = keys.iter().zip(on).filter(|(_, o)| *o).map(|(k, _)| *k).collect();
             crate::page_set(ui, "timers", None, serde_json::json!({ "functions": list }));
         }
         "alarms.colourful" => {
-            ui.set_timers_colourful(value == "1");
+            crate::with_timers(ui, |d| d.colourful = value == "1");
             crate::page_set(ui, "timers", None, serde_json::json!({ "colourful": value == "1" }));
+            crate::with_state(|s| crate::update_timer_lists(ui, s));
         }
         "alarms.look" => {
             let look = value.parse::<i32>().unwrap_or(0).clamp(0, 4);
-            ui.set_timers_alarm_look(look);
+            crate::with_timers(ui, |d| d.alarm_look = look);
             crate::page_set(ui, "timers", None, serde_json::json!({ "alarm_look": look }));
         }
         _ => {}

@@ -200,29 +200,20 @@ pub struct UiState {
     muted_hint: String,
     /// The theme setting at the last check (Auto changing the theme by itself gets the slower change).
     theme_mode_seen: Option<String>,
-    /// Quick controls: the title picked for this run.
-    art_url: Option<String>,
-    art_tx: Option<Sender<Option<String>>>,
-    art: Option<slint::Image>,
-    /// The cover blurred into soft colour (the plain look, the cover behind the cassette).
-    art_bg: Option<slint::Image>,
-    /// The cover's own colour (the music page's accent, the record; a grey cover's own tone): None without a cover.
-    art_accent: Option<slint::Color>,
-    /// The record's colour (the cover's own, black, white or grey too): None without a cover.
-    art_record: Option<slint::Color>,
+    /// Each player's cover (the music pages' and the music widgets' players), and the thread that fetches them.
+    arts: HashMap<String, Art>,
+    art_tx: Option<Sender<(String, Option<String>)>>,
     /// When the dashboard shown by a show request goes by itself (a shown page view's time is its visit's).
     show_until: Option<Instant>,
     /// When a notification's strip goes by itself.
     strip_until: Option<Instant>,
     /// When the light level was last sent to Home Assistant.
     last_lux_report: Instant,
-    /// Play / pause pressed on the panel: (playing, when, the position then) until the player reports it (at most 3 s),
-    /// so the time neither runs on after a pause nor jumps after a play while the player catches up.
-    music_hold: Option<(bool, Instant, f32)>,
+    /// Play / pause pressed on the panel: (the player, playing, when, the position then) until the player reports it
+    /// (at most 3 s), so the time neither runs on after a pause nor jumps after a play while the player catches up.
+    music_hold: Option<(String, bool, Instant, f32)>,
     /// Next / previous pressed on the panel (see `apply_music_skip`).
     music_skip: Option<MusicSkip>,
-    /// The player the cover in `art_url` belongs to (a paused track keeps its cover only on its own player).
-    art_player: String,
     /// Split-flap clock: the digits shown before the last change, and when it changed.
     digits: [String; 4],
     prev_digits: [String; 4],
@@ -266,10 +257,24 @@ fn with_state<R>(f: impl FnOnce(&mut UiState) -> R) -> R {
     STATE.with(|s| f(s.borrow_mut().as_mut().expect("state")))
 }
 
-/// The panel's accent (the brand's Signal colour unless the integration sets one).
-/// The music views' accent: the cover's colour (a grey cover's own tone), the panel's without a cover.
-fn cover_accent(s: &UiState) -> slint::Color {
-    if s.art.is_some() { s.art_accent.unwrap_or_else(|| accent(s)) } else { accent(s) }
+/// One player's cover: the picture's address (None: no cover), the picture, its blurred copy (the plain look, the cover
+/// behind the cassette), its own colour (the music page's accent, the record; a grey cover's own tone) and the
+/// record's colour (the cover's own, black, white or grey too).
+#[derive(Clone, Default)]
+struct Art {
+    url: Option<String>,
+    img: Option<slint::Image>,
+    bg: Option<slint::Image>,
+    accent: Option<slint::Color>,
+    record: Option<slint::Color>,
+}
+
+/// The music views' accent for a player: its cover's colour (a grey cover's own tone), the panel's without a cover.
+fn cover_accent(s: &UiState, player: &str) -> slint::Color {
+    match s.arts.get(player) {
+        Some(a) if a.img.is_some() => a.accent.unwrap_or_else(|| accent(s)),
+        _ => accent(s),
+    }
 }
 
 /// The turntable's woods (the integration's list, in its order).
@@ -288,24 +293,49 @@ pub fn config_str(s: &UiState, key: &str) -> String {
     s.panel_config.as_ref().and_then(|c| c.get(key)).and_then(Value::as_str).unwrap_or("").to_string()
 }
 
-/// The entities a page of `kind` shows (the integration's page list).
-fn page_entities(s: &UiState, kind: &str) -> Vec<String> {
-    s.panel_config
-        .as_ref()
-        .and_then(|c| c.get("pages"))
-        .and_then(Value::as_array)
-        .and_then(|pages| pages.iter().find(|p| p.get("kind").and_then(Value::as_str) == Some(kind)))
-        .and_then(|p| p.get("entities"))
-        .and_then(Value::as_array)
-        .map(|list| list.iter().filter_map(Value::as_str).map(str::to_string).collect())
-        .unwrap_or_default()
+thread_local! {
+    /// The window, for the page lookups that need to know the page on screen.
+    static UI: RefCell<Option<slint::Weak<AppWindow>>> = const { RefCell::new(None) };
 }
 
-/// A switch of the first page of `kind` (the integration's page list).
+/// The page of `kind` the panel acts on (`pages::acting_slot`): the page on screen when it is of that kind, else the
+/// first of the kind. None when the pager has none.
+pub fn acting(kind: &str) -> Option<PageSlot> {
+    let ui = UI.with(|u| u.borrow().as_ref().and_then(|w| w.upgrade()))?;
+    let pages = ui.get_pages();
+    let slots: Vec<PageSlot> = pages.iter().collect();
+    pages::acting_slot(&slots, ui.get_page().max(0) as usize, kind).map(|i| slots[i].clone())
+}
+
+/// The row of a kind's per-page data the panel acts on (0 without a page of the kind).
+pub fn acting_n(kind: &str) -> usize {
+    acting(kind).map_or(0, |p| p.n.max(0) as usize)
+}
+
+/// The settings of the page of `kind` the panel acts on (see `acting`); without a pager yet, the first of the kind.
+fn page_cfg<'a>(s: &'a UiState, kind: &str) -> Option<&'a Value> {
+    let list = pages::kind_pages(s.panel_config.as_ref(), kind);
+    match acting(kind) {
+        Some(slot) if slot.cfg >= 0 => list.into_iter().find(|(i, _)| *i == slot.cfg as usize).map(|(_, p)| p),
+        Some(_) => None,
+        None => list.into_iter().next().map(|(_, p)| p),
+    }
+}
+
+/// The entities of the page of `kind` the panel acts on (the integration's page list).
+fn page_entities(s: &UiState, kind: &str) -> Vec<String> {
+    page_cfg(s, kind).map(pages::entities_of).unwrap_or_default()
+}
+
 /// The looks of the pages of a kind on the list (a kind may be there more than once).
 pub fn page_looks(ui: &AppWindow, kind: &str) -> Vec<i32> {
     let pages = ui.get_pages();
     (0..pages.row_count()).filter_map(|i| pages.row_data(i)).filter(|p| p.kind == kind).map(|p| p.variant).collect()
+}
+
+/// The look of the page of `kind` the panel acts on.
+pub fn page_look(kind: &str) -> i32 {
+    acting(kind).map_or(0, |p| p.variant)
 }
 
 /// Do not disturb: as the integration sets it (on, or on a schedule), unless switched in the quick
@@ -422,20 +452,19 @@ fn notes_changed(ui: &AppWindow, kind: &str, notes: &Value) {
     }
 }
 
+/// An option of the page of `kind` the panel acts on (see `acting`).
 fn page_option(s: &UiState, kind: &str, key: &str) -> Option<Value> {
-    s.panel_config
-        .as_ref()?
-        .get("pages")?
-        .as_array()?
-        .iter()
-        .find(|p| p.get("kind").and_then(Value::as_str) == Some(kind))?
-        .get("options")?
-        .get(key)
-        .cloned()
+    page_cfg(s, kind).and_then(|p| pages::option_of(p, key)).cloned()
+}
+
+/// An option of the first page of `kind`: for what one page sets for the whole panel (the synthwave scene).
+fn first_page_option(s: &UiState, kind: &str, key: &str) -> Option<Value> {
+    pages::kind_pages(s.panel_config.as_ref(), kind).first().and_then(|(_, p)| pages::option_of(p, key)).cloned()
 }
 
 fn weather_entity(s: &UiState) -> String {
-    if let Some(e) = page_entities(s, "weather").into_iter().next() {
+    // one weather for the panel: the first weather details page that names one
+    if let Some(e) = pages::kind_pages(s.panel_config.as_ref(), "weather").iter().find_map(|(_, p)| pages::entities_of(p).into_iter().next()) {
         return e;
     }
     let e = config_str(s, "weather_entity");
@@ -444,8 +473,11 @@ fn weather_entity(s: &UiState) -> String {
 
 /// A play / pause pressed on the panel holds until the player reports it (or 3 s): the shown state and, while
 /// paused, the position stay where the press left them.
-fn apply_music_hold(s: &mut UiState, music: &mut HomeMusic) {
-    let Some((want, at, pos)) = s.music_hold else { return };
+fn apply_music_hold(s: &mut UiState, player: &str, music: &mut HomeMusic) {
+    let Some((who, want, at, pos)) = s.music_hold.clone() else { return };
+    if who != player {
+        return;
+    }
     if music.playing == want || at.elapsed() >= Duration::from_secs(3) {
         s.music_hold = None;
         return;
@@ -460,6 +492,8 @@ fn apply_music_hold(s: &mut UiState, music: &mut HomeMusic) {
 /// tracks says paused or buffering for a moment), and once the new track has shown, the old one does not come back
 /// (a player may report the old track again for a moment while it changes).
 struct MusicSkip {
+    /// The player it was pressed for.
+    player: String,
     at: Instant,
     /// The track shown when the key was pressed (`track_key`).
     from: String,
@@ -474,8 +508,8 @@ fn track_key(m: &HomeMusic) -> String {
 
 /// Applies a running skip hold to the shown music; true when the player reported the old track again and the new
 /// one is shown instead (the cover and the other details then stay as they are too).
-fn apply_music_skip(s: &mut UiState, music: &mut HomeMusic) -> bool {
-    let Some(k) = s.music_skip.as_mut() else { return false };
+fn apply_music_skip(s: &mut UiState, player: &str, music: &mut HomeMusic) -> bool {
+    let Some(k) = s.music_skip.as_mut().filter(|k| k.player == player) else { return false };
     if k.at.elapsed() >= Duration::from_secs(3) {
         s.music_skip = None;
         return false;
@@ -517,20 +551,267 @@ fn skip_step(from: &str, now: &str, seen_new: bool) -> SkipStep {
     }
 }
 
+thread_local! {
+    /// The music page shown last (its row): its player is the panel's.
+    static LAST_MUSIC: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The page on screen noted: a music page's player becomes the panel's.
+fn note_shown_page(ui: &AppWindow) {
+    if let Some(p) = ui.get_pages().row_data(ui.get_page().max(0) as usize).filter(|p| p.kind == "music") {
+        LAST_MUSIC.with(|l| l.set(p.n.max(0) as usize));
+    }
+}
+
+/// The panel's player: the player of the music page shown last (the first one until one is shown; on the first an
+/// older pick on the panel goes first), else the integration's. Music widgets without a player of their own, the voice
+/// satellite's music commands and its reports use it.
 fn media_entity(s: &UiState) -> String {
-    // The player picked on the panel (remembered), else the music page's, else the integration's.
-    if !s.settings.music_player.is_empty() {
+    let list = pages::kind_pages(s.panel_config.as_ref(), "music");
+    let n = LAST_MUSIC.with(|l| l.get());
+    let n = if n < list.len() { n } else { 0 };
+    music_player_of(s, n, list.get(n).map(|(_, p)| *p))
+}
+
+/// The player of music page `n` (its page's settings): the page's own, else the integration's; on the first page an
+/// older pick on the panel goes first.
+fn music_player_of(s: &UiState, n: usize, page: Option<&Value>) -> String {
+    if n == 0 && !s.settings.music_player.is_empty() {
         return s.settings.music_player.clone();
     }
-    page_entities(s, "music").into_iter().next().unwrap_or_else(|| config_str(s, "media_player_entity"))
+    page.and_then(|p| pages::entities_of(p).into_iter().find(|e| e.starts_with("media_player.")))
+        .unwrap_or_else(|| config_str(s, "media_player_entity"))
+}
+
+/// The player of a custom page's music widget: the page's own, else the panel's.
+fn home_player_of(s: &UiState, page: Option<&Value>) -> String {
+    page.and_then(|p| pages::entities_of(p).into_iter().find(|e| e.starts_with("media_player."))).unwrap_or_else(|| media_entity(s))
+}
+
+/// Every player a page shows: the music pages' and the custom pages' music widgets' (the panel's among them).
+fn shown_players(s: &UiState) -> Vec<String> {
+    let cfg = s.panel_config.as_ref();
+    let mut out = Vec::new();
+    for (n, (_, p)) in pages::kind_pages(cfg, "music").into_iter().enumerate() {
+        out.push(music_player_of(s, n, Some(p)));
+    }
+    for (_, p) in pages::kind_pages(cfg, "home") {
+        out.push(home_player_of(s, Some(p)));
+    }
+    // (last: the list keeps its order whichever music page was shown last)
+    out.push(media_entity(s));
+    let mut seen = std::collections::HashSet::new();
+    out.retain(|p| !p.is_empty() && seen.insert(p.clone()));
+    out
+}
+
+/// The player a tap on the music controls is for: the music page's or the custom page's on screen, else the panel's.
+fn tap_player(ui: &AppWindow, s: &UiState) -> String {
+    let slot = ui.get_pages().row_data(ui.get_page().max(0) as usize);
+    let cfg = s.panel_config.as_ref();
+    match slot {
+        Some(p) if p.kind == "music" => {
+            let n = p.n.max(0) as usize;
+            music_player_of(s, n, pages::kind_pages(cfg, "music").get(n).map(|(_, p)| *p))
+        }
+        Some(p) if p.kind == "home" => home_player_of(s, pages::kind_pages(cfg, "home").get(p.n.max(0) as usize).map(|(_, p)| *p)),
+        _ => media_entity(s),
+    }
+}
+
+/// What a player shows on the music pages and widgets: its track, position, cover and colours, with a speaker that went
+/// quiet and the panel's own presses held (play / pause, next / previous). True with it when a skip hold keeps the new
+/// track over the old one the player reported again.
+fn player_music(s: &mut UiState, player: &str) -> (HomeMusic, bool) {
+    let cover = cover_accent(s, player);
+    let mut music = pages::home_music(&s.states, player, s.arts.get(player).and_then(|a| a.img.as_ref()), cover);
+    if music.playing && !really_playing(s, player) {
+        music.playing = false;
+    }
+    apply_music_hold(s, player, &mut music);
+    let back = apply_music_skip(s, player, &mut music);
+    (music, back)
+}
+
+/// The cover a player's track asks for now, when it is another one than it has (to fetch); `back`: a skip hold keeps the
+/// new track, and its cover with it.
+fn wanted_art(s: &mut UiState, player: &str, back: bool) -> Option<(String, Option<String>)> {
+    let shows = s.states.get(player).is_some_and(pages::shows_track);
+    let url = s.states.get(player).and_then(|p| {
+        pages::shows_track(p).then(|| p.attrs.get("entity_picture").and_then(Value::as_str).filter(|u| !u.is_empty()).map(str::to_string)).flatten()
+    });
+    let art = s.arts.entry(player.to_string()).or_default();
+    // a paused track keeps its cover even if the player drops the picture meanwhile; a skip hold that keeps the new
+    // track keeps its cover too
+    let url = if back || (url.is_none() && shows) { art.url.clone().or(url) } else { url };
+    if url == art.url {
+        return None;
+    }
+    art.url = url.clone();
+    Some((player.to_string(), url))
+}
+
+/// Every music page's and music widget's data from their players: all of it (`full`), or the parts that move every
+/// second (the positions, and a widget whose play state changed). Returns the covers to fetch.
+fn update_music(ui: &AppWindow, s: &mut UiState, full: bool) -> Vec<(String, Option<String>)> {
+    let mut wanted = Vec::new();
+    // (a kind without a page keeps one row: a temporary music page shows the panel's player)
+    let music_pages = pages::inst_pages(s.panel_config.as_ref(), "music");
+    let home_pages: Vec<Value> = pages::kind_pages(s.panel_config.as_ref(), "home").into_iter().map(|(_, p)| p.clone()).collect();
+    let panel_accent = accent(s);
+    for (n, (_, page)) in music_pages.iter().enumerate() {
+        let player = music_player_of(s, n, (!page.is_null()).then_some(page));
+        let (music, back) = player_music(s, &player);
+        crate::pages::with_inst(ui.get_music_pos(), |m| ui.set_music_pos(m), n, |p| {
+            if music.playing || *p != music.pos {
+                *p = music.pos;
+            }
+        });
+        if !full {
+            // the play state turns at once
+            crate::pages::with_inst(ui.get_music_inst(), |m| ui.set_music_inst(m), n, |d| d.playing = music.playing);
+            continue;
+        }
+        if n == 0 {
+            // which player shows which track (a mixed-up page can be traced)
+            thread_local!(static SHOWN: RefCell<String> = const { RefCell::new(String::new()) });
+            let shown = format!("{player}: {} \u{b7} {}", music.title, music.artist);
+            if SHOWN.with(|v| v.replace(shown.clone())) != shown {
+                eprintln!("nspanel-app: music page shows {shown}");
+            }
+        }
+        let art = s.arts.get(&player).cloned().unwrap_or_default();
+        let option = |k: &str| pages::option_of(page, k).cloned();
+        let look = pages::variant_of(page);
+        let wood = option("wood").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "walnut".into());
+        let cover = cover_accent(s, &player);
+        let p = s.states.get(&player).cloned();
+        crate::pages::with_inst(ui.get_music_inst(), |m| ui.set_music_inst(m), n, |d| {
+            d.title = music.title.clone();
+            d.artist = music.artist.clone();
+            d.playing = music.playing;
+            d.dur = music.dur;
+            d.player = music.player.clone();
+            d.has_art = music.has_art;
+            if let Some(img) = &art.img {
+                d.art = img.clone();
+            }
+            if let Some(bg) = &art.bg {
+                d.art_bg = bg.clone();
+            }
+            // the music page takes the cover's colour (the record, the accents), else the panel's
+            d.accent = if music.has_art { cover } else { panel_accent };
+            // the record: the cover's own colour as it is
+            let record = if music.has_art { art.record } else { None };
+            d.has_record = record.is_some();
+            if let Some(c) = record {
+                d.record = c;
+            }
+            // the rest of the page from the same player (nothing of another player stays: a player not known yet
+            // shows none of it)
+            if !back {
+                let attr = |k: &str| p.as_ref().and_then(|p| p.attrs.get(k));
+                d.album = attr("media_album_name").and_then(Value::as_str).unwrap_or("").into();
+                d.volume = attr("volume_level").and_then(Value::as_f64).unwrap_or(0.0) as f32;
+                d.shuffle = attr("shuffle").and_then(Value::as_bool).unwrap_or(false);
+                d.repeat = match attr("repeat").and_then(Value::as_str) {
+                    Some("all") => 1,
+                    Some("one") => 2,
+                    _ => 0,
+                };
+            }
+            // the page's own options: the cover behind the cassette (off as designed), the blurred cover, what the
+            // record holds, cut off or scroll and its speed, the wood
+            d.cs_cover = option("cover_bg").and_then(|v| v.as_bool()).unwrap_or(false);
+            d.cover_blur = option("cover_blur").and_then(|v| v.as_bool()).unwrap_or(true);
+            d.holds = option("holds").and_then(|v| v.as_i64()).unwrap_or(0) as i32;
+            d.scroll = option("scroll").and_then(|v| v.as_bool()).unwrap_or(false);
+            d.scroll_speed = option("scroll_speed").and_then(|v| v.as_i64()).unwrap_or(3) as f32;
+            d.wood = WOODS.iter().position(|w| *w == wood).unwrap_or(0) as i32;
+            // the turntable's wooden deck, the cassette's shell and hubs (full or half): the look's own, kept
+            if look == 2 {
+                d.tt_deck = look_picture(&format!("music/tt/deck-{wood}.png"), "music/tt/deck.png");
+            }
+            if look == 3 || look == 4 {
+                let size = if look == 4 { "half" } else { "full" };
+                d.cs_back = look_picture(&format!("music/cs/{size}-back.png"), "");
+                d.cs_front = look_picture(&format!("music/cs/{size}-front.png"), "");
+                d.cs_hub = look_picture(&format!("music/cs/{size}-hub.png"), "");
+            }
+        });
+        if let Some(w) = wanted_art(s, &player, back) {
+            wanted.push(w);
+        }
+    }
+    crate::pages::keep_insts(&ui.get_music_inst(), music_pages.len());
+    crate::pages::keep_insts(&ui.get_music_pos(), music_pages.len());
+    // the custom pages' music widgets (a weather details page has none), each with its page's player
+    for n in 0..home_pages.len().max(1) {
+        let player = home_player_of(s, home_pages.get(n));
+        let (music, back) = player_music(s, &player);
+        crate::pages::with_inst(ui.get_home_music_pos(), |m| ui.set_home_music_pos(m), n, |p| {
+            if music.playing || *p != music.pos {
+                *p = music.pos;
+            }
+        });
+        crate::pages::with_inst(ui.get_home_inst(), |m| ui.set_home_inst(m), n, |d| {
+            // the rest of the widget's data only when it changed (the running time has its own property)
+            let mut same = d.music.clone();
+            same.pos = music.pos;
+            if same != music || full {
+                d.music = music;
+            }
+        });
+        if full {
+            if let Some(w) = wanted_art(s, &player, back) {
+                wanted.push(w);
+            }
+        }
+    }
+    crate::pages::keep_insts(&ui.get_home_inst(), home_pages.len().max(1));
+    crate::pages::keep_insts(&ui.get_home_music_pos(), home_pages.len().max(1));
+    wanted
+}
+
+thread_local! {
+    /// The looks' pictures loaded from the UI bundle (the turntable's woods, the cassettes' shells), kept.
+    static LOOK_PICTURES: RefCell<HashMap<String, slint::Image>> = RefCell::new(HashMap::new());
+}
+
+/// A picture of a look (kept once loaded); `fallback` when it is missing.
+fn look_picture(rel: &str, fallback: &str) -> slint::Image {
+    LOOK_PICTURES.with(|m| {
+        let mut m = m.borrow_mut();
+        if let Some(img) = m.get(rel) {
+            return img.clone();
+        }
+        let mut img = quick::picture(rel);
+        if img.size().width == 0 && !fallback.is_empty() {
+            img = quick::picture(fallback);
+        }
+        m.insert(rel.to_string(), img.clone());
+        img
+    })
+}
+
+/// Sends the covers to fetch to the artwork thread.
+fn fetch_art(s: &UiState, wanted: Vec<(String, Option<String>)>) {
+    if let Some(tx) = s.art_tx.as_ref() {
+        for w in wanted {
+            let _ = tx.send(w);
+        }
+    }
 }
 
 /// Entities the panel follows besides the dashboard's.
 fn extra_entities(s: &UiState) -> Vec<String> {
-    let mut out = vec!["sun.sun".to_string(), "zone.home".to_string(), weather_entity(s), media_entity(s)];
-    // the speaker behind a Music Assistant player (to see when it really plays)
-    if let Some(sp) = speaker_of(s, &media_entity(s)) {
-        out.push(sp);
+    let mut out = vec!["sun.sun".to_string(), "zone.home".to_string(), weather_entity(s)];
+    // every player a page shows, and the speaker behind a Music Assistant player (to see when it really plays)
+    for player in shown_players(s) {
+        if let Some(sp) = speaker_of(s, &player) {
+            out.push(sp);
+        }
+        out.push(player);
     }
     out.extend(s.states.keys().filter(|k| k.starts_with("person.")).cloned());
     // the People widgets' people (everyone Home Assistant has, from the integration, for a widget that shows everyone)
@@ -662,7 +943,8 @@ fn update_clock(ui: &AppWindow) {
         // Timer chips and the timers page only while there are timers (they count down).
         if !s.timers.is_empty() || ui.get_timers().row_count() > 0 {
             // Rows change in place each second (no element is built again).
-            if let Some(m) = pages::update_rows(&ui.get_timers(), pages::timer_chips(&s.timers, accent(s), ui.get_timers_colourful())) {
+            let (colourful, own) = timers_colours(page_cfg(s, "timers"));
+            if let Some(m) = pages::update_rows(&ui.get_timers(), pages::timer_chips(&s.timers, accent(s), colourful, &own)) {
                 ui.set_timers(m);
             }
             // the timer island comes back by itself when a new timer starts or a timer enters its last minute (29.3)
@@ -675,9 +957,7 @@ fn update_clock(ui: &AppWindow) {
             }
             s.island_seen = keys;
             s.island_urgent = urgent;
-            if let Some(m) = pages::update_rows(&ui.get_timers_list(), pages::timer_items(&s.timers, accent(s), ui.get_timers_colourful())) {
-                ui.set_timers_list(m);
-            }
+            update_timer_lists(ui, s);
             // the plain and synthwave grids: the four that end soonest (34.7)
             let grid = pages::timer_grid(&s.timers);
             if slint::Model::iter(&ui.get_timers_grid()).collect::<Vec<i32>>() != grid {
@@ -689,28 +969,16 @@ fn update_clock(ui: &AppWindow) {
             s.timers.iter().filter(|(_, t)| t.own && t.active && t.remaining() == 0).map(|(id, _)| id.clone()).collect();
         for id in done {
             if let Some(t) = s.timers.remove(&id) {
-                let tint = pages::timer_tint(t.seq as u64, accent(s), ui.get_timers_colourful());
+                let (colourful, own) = timers_colours(page_cfg(s, "timers"));
+                let tint = pages::timer_tint(t.seq as u64, accent(s), colourful, &own);
                 ring_timer(ui, s, t.name, tint);
                 RANG.with(|r| r.set(true));
             }
         }
-        // The music position moves on while a player plays: its own properties;
-        // the rest of the widget's data only when it changed.
-        let mut music = pages::home_music(&s.states, &media_entity(s), s.art.as_ref(), cover_accent(s));
-        apply_music_hold(s, &mut music);
-        if music.playing && !really_playing(s, &media_entity(s)) {
-            music.playing = false;
-        }
-        apply_music_skip(s, &mut music);
-        if music.playing || ui.get_home_music_pos() != music.pos {
-            ui.set_music_pos(music.pos);
-            ui.set_home_music_pos(music.pos);
-        }
-        let mut same = ui.get_home_music();
-        same.pos = music.pos;
-        if same != music {
-            ui.set_home_music(music);
-        }
+        // The music positions move on while a player plays: their own properties; the rest of a widget's data only
+        // when it changed.
+        note_shown_page(ui);
+        update_music(ui, s, false);
         // The synthwave scenes in use: their view, colour and the next car.
         synth::tick(ui, s);
         // city windows lit one by one (drawn city / big city, the first such custom or weather details page)
@@ -831,9 +1099,128 @@ pub fn refresh_hint(ui: &AppWindow) {
     }
 }
 
+/// A timers page's colours: colourful timers or the panel's accent, and its own colours for the 1st, 2nd, … timer
+/// (the integration's; none: the panel's own colourful ones).
+fn timers_colours(page: Option<&Value>) -> (bool, Vec<slint::Color>) {
+    let colourful = page.and_then(|p| pages::option_of(p, "colourful")).and_then(Value::as_bool).unwrap_or(true);
+    let own = page
+        .and_then(|p| pages::option_of(p, "colours"))
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter_map(Value::as_str).filter_map(pages::parse_color).collect())
+        .unwrap_or_default();
+    (colourful, own)
+}
+
+/// A timers page's functions as its settings have them (alarm, timer, stopwatch; all of them without a choice).
+fn timers_functions(page: Option<&Value>) -> [bool; 3] {
+    let list = page.and_then(|p| pages::option_of(p, "functions")).and_then(Value::as_array).cloned().unwrap_or_default();
+    let on = |k: &str| list.iter().any(|v| v.as_str() == Some(k));
+    let f = [on("alarm"), on("timer"), on("stopwatch")];
+    if f.iter().any(|x| *x) {
+        f
+    } else {
+        [true, true, true]
+    }
+}
+
+/// The tab a timers page shows with these functions: `mode` while its function is on, else the timers, the alarms, the
+/// stopwatch, the first that is.
+fn timers_tab(mode: i32, on: [bool; 3]) -> i32 {
+    if on[mode.clamp(0, 2) as usize] {
+        mode.clamp(0, 2)
+    } else if on[1] {
+        1
+    } else if on[0] {
+        0
+    } else {
+        2
+    }
+}
+
+/// Every timers page's own settings: its functions (and the tab it shows among them), its colours, the stopwatch's
+/// and the alarms' looks, its synthwave scene choice. A kind without a page keeps one row of defaults (a temporary
+/// timers page shows it).
+fn refresh_timers(ui: &AppWindow, s: &mut UiState) {
+    let list = pages::inst_pages(s.panel_config.as_ref(), "timers");
+    for (n, (_, page)) in list.iter().enumerate() {
+        let page = (!page.is_null()).then_some(page);
+        let on = timers_functions(page);
+        let (colourful, _) = timers_colours(page);
+        let get = |k: &str| page.and_then(|p| pages::option_of(p, k)).and_then(Value::as_i64);
+        let sw_look = get("sw_look").unwrap_or(0).clamp(0, 4) as i32;
+        let alarm_look = get("alarm_look").unwrap_or(0).clamp(0, 4) as i32;
+        let sw_choice = get("scene").map_or(-2, |k| k.clamp(-1, 3) as i32);
+        pages::with_inst(ui.get_timers_inst(), |m| ui.set_timers_inst(m), n, |d| {
+            if !d.ready {
+                d.ready = true;
+                d.mode = 1;
+            }
+            d.alarm_on = on[0];
+            d.timer_on = on[1];
+            d.watch_on = on[2];
+            d.mode = timers_tab(d.mode, on);
+            d.colourful = colourful;
+            d.sw_look = sw_look;
+            d.alarm_look = alarm_look;
+            d.sw_choice = sw_choice;
+        });
+    }
+    pages::keep_insts(&ui.get_timers_inst(), list.len());
+    update_timer_lists(ui, s);
+}
+
+/// Every timers page's list of the running timers, each in its page's colours; the shade's list in the colours of the
+/// timers page the panel acts on.
+fn update_timer_lists(ui: &AppWindow, s: &UiState) {
+    let list = pages::inst_pages(s.panel_config.as_ref(), "timers");
+    for (n, (_, page)) in list.iter().enumerate() {
+        let (colourful, own) = timers_colours((!page.is_null()).then_some(page));
+        let items = pages::timer_items(&s.timers, accent(s), colourful, &own);
+        pages::with_inst(ui.get_timers_inst(), |m| ui.set_timers_inst(m), n, |d| {
+            if let Some(m) = pages::update_rows(&d.list, items) {
+                d.list = m;
+            }
+        });
+    }
+    let (colourful, own) = timers_colours(page_cfg(s, "timers"));
+    if let Some(m) = pages::update_rows(&ui.get_timers_list(), pages::timer_items(&s.timers, accent(s), colourful, &own)) {
+        ui.set_timers_list(m);
+    }
+}
+
+/// The timers page the panel acts on: its settings changed by `f` (shown at once; the menu that changed them sends
+/// them to the integration).
+fn with_timers(ui: &AppWindow, f: impl FnOnce(&mut TimersInst)) {
+    pages::with_inst(ui.get_timers_inst(), |m| ui.set_timers_inst(m), acting_n("timers"), f);
+}
+
+/// Every clock page's own options (the integration's page options): its parts, letters, width, wandering speed and
+/// colour.
+fn refresh_clocks(ui: &AppWindow, s: &UiState) {
+    let list = pages::inst_pages(s.panel_config.as_ref(), "clock");
+    for (n, (_, page)) in list.iter().enumerate() {
+        let co = |k: &str| pages::option_of(page, k);
+        let flag = |k: &str| co(k).and_then(Value::as_bool).unwrap_or(true);
+        let colour = co("colour").and_then(Value::as_str).and_then(pages::parse_color);
+        let inst = ClockInst {
+            own_accent: colour.is_some(),
+            accent: colour.unwrap_or_default(),
+            weight: co("weight").and_then(Value::as_i64).unwrap_or(600) as i32,
+            width: co("width").and_then(Value::as_i64).unwrap_or(100) as f32 / 100.0,
+            date: flag("date"),
+            weather: flag("weather"),
+            next: flag("next"),
+            seconds: flag("seconds"),
+            speed: co("speed").and_then(Value::as_i64).unwrap_or(20) as f32,
+        };
+        pages::with_inst(ui.get_clock_inst(), |m| ui.set_clock_inst(m), n, |d| *d = inst);
+    }
+    pages::keep_insts(&ui.get_clock_inst(), list.len());
+}
+
 fn refresh_pages(ui: &AppWindow) {
-    let (art, music_entity) = with_state(|s| {
-        let theme = page_option(s, "home", "theme")
+    let art = with_state(|s| {
+        let theme = first_page_option(s, "home", "theme")
             .and_then(|v| v.as_i64())
             .or_else(|| s.panel_config.as_ref().and_then(|c| c.get("home_theme")).and_then(Value::as_i64))
             .unwrap_or(0);
@@ -850,10 +1237,10 @@ fn refresh_pages(ui: &AppWindow) {
         let mut weather = weather;
         // the weather page's switches: the real sun and moon (photo and drawn backgrounds), cars and
         // neon letters (synthwave)
-        if let Some(b) = page_option(s, "home", "real_sun").and_then(|v| v.as_bool()) {
+        if let Some(b) = first_page_option(s, "home", "real_sun").and_then(|v| v.as_bool()) {
             weather.real_sun = b;
         }
-        let cars = page_option(s, "home", "cars").and_then(|v| v.as_bool()).unwrap_or(true);
+        let cars = first_page_option(s, "home", "cars").and_then(|v| v.as_bool()).unwrap_or(true);
         if ui.get_home_fl_cars_on() != cars {
             ui.set_home_fl_cars_on(cars);
         }
@@ -907,11 +1294,16 @@ fn refresh_pages(ui: &AppWindow) {
         if !same_rows(&ui.get_weather_items(), &wx) {
             ui.set_weather_items(ModelRc::new(VecModel::from(wx)));
         }
-        // the next event of the custom page's calendars (its entities)
-        let calendars: Vec<String> = page_entities(s, "home").into_iter().filter(|e| e.starts_with("calendar.")).collect();
-        let event = cal::next_event(&s.states, &calendars, pages::now());
-        if ui.get_home_event() != event {
-            ui.set_home_event(event);
+        // each custom page's next event of its calendars (its entities); the first one's also on the clock faces
+        let homes: Vec<Value> = pages::kind_pages(s.panel_config.as_ref(), "home").into_iter().map(|(_, p)| p.clone()).collect();
+        for n in 0..homes.len().max(1) {
+            let calendars: Vec<String> =
+                homes.get(n).map(pages::entities_of).unwrap_or_default().into_iter().filter(|e| e.starts_with("calendar.")).collect();
+            let event = cal::next_event(&s.states, &calendars, pages::now());
+            if n == 0 && ui.get_home_event() != event {
+                ui.set_home_event(event.clone());
+            }
+            crate::pages::with_inst(ui.get_home_inst(), |m| ui.set_home_inst(m), n, |d| d.event = event);
         }
         let t = pages::now();
         if clock::valid() {
@@ -937,184 +1329,31 @@ fn refresh_pages(ui: &AppWindow) {
         if ui.get_wake_hint().as_str() != hint {
             ui.set_wake_hint(hint.into());
         }
-        // Music page
-        let player = media_entity(s);
-        let cover_accent = cover_accent(s);
-        let mut music = pages::home_music(&s.states, &player, s.art.as_ref(), cover_accent);
-        if music.playing && !really_playing(s, &player) {
-            music.playing = false;
-        }
-        apply_music_hold(s, &mut music);
-        let back = apply_music_skip(s, &mut music);
-        // which player shows which track (a mixed-up page can be traced)
-        thread_local!(static SHOWN: RefCell<String> = const { RefCell::new(String::new()) });
-        let shown = format!("{player}: {} · {}", music.title, music.artist);
-        if SHOWN.with(|v| v.replace(shown.clone())) != shown {
-            eprintln!("nspanel-app: music page shows {shown}");
-        }
-        ui.set_music_title(music.title.clone());
-        ui.set_music_artist(music.artist.clone());
-        ui.set_music_playing(music.playing);
-        ui.set_music_pos(music.pos);
-        ui.set_music_dur(music.dur);
-        ui.set_music_player(music.player.clone());
-        ui.set_music_has_art(music.has_art);
-        if let Some(art) = &s.art {
-            ui.set_music_art(art.clone());
-        }
-        if let Some(bg) = &s.art_bg {
-            ui.set_music_art_bg(bg.clone());
-        }
-        // the music page takes the cover's colour (the record, the accents), else the panel's
-        ui.set_music_accent(if music.has_art { cover_accent } else { a });
-        // the record: the cover's own colour as it is
-        let record = if music.has_art { s.art_record } else { None };
-        ui.set_music_has_record(record.is_some());
-        if let Some(c) = record {
-            ui.set_music_record(c);
-        }
-        // the rest of the page from the same player (nothing of another player stays: a player not known yet shows
-        // none of it)
-        if !back {
-            let p = s.states.get(&player);
-            let attr = |k: &str| p.and_then(|p| p.attrs.get(k));
-            ui.set_music_album(attr("media_album_name").and_then(Value::as_str).unwrap_or("").into());
-            ui.set_music_volume(attr("volume_level").and_then(Value::as_f64).unwrap_or(0.0) as f32);
-            ui.set_music_shuffle(attr("shuffle").and_then(Value::as_bool).unwrap_or(false));
-            ui.set_music_repeat(match attr("repeat").and_then(Value::as_str) {
-                Some("all") => 1,
-                Some("one") => 2,
-                _ => 0,
-            });
-        }
-        ui.set_home_music(music);
-        let shows = s.states.get(&player).is_some_and(pages::shows_track);
-        let url = s.states.get(&player).and_then(|p| {
-            pages::shows_track(p)
-                .then(|| p.attrs.get("entity_picture").and_then(Value::as_str).filter(|u| !u.is_empty()).map(str::to_string))
-                .flatten()
-        });
-        // a paused track keeps its cover even if the player drops the picture meanwhile (on the same player only);
-        // a skip hold that keeps the new track keeps its cover too
-        let url = if back || (url.is_none() && shows && s.art_player == player) { s.art_url.clone() } else { url };
-        let art = if url != s.art_url {
-            s.art_url = url.clone();
-            s.art_player = player.clone();
-            s.art_tx.clone().map(|tx| (tx, url))
-        } else {
-            None
-        };
+        // the music pages and the music widgets
+        let art = update_music(ui, s, true);
         // the sensor widgets' values
         home_edit::refresh(ui, s);
         s.weather_refreshed = Instant::now();
-        (art, player)
+        art
     });
-    let _ = music_entity;
-    // The looks of the pages that take theirs from the page list.
-    let pages = ui.get_pages();
-    let variant = |kind: &str| (0..pages.row_count()).filter_map(|i| pages.row_data(i)).find(|p| p.kind == kind).map(|p| p.variant);
-    if let Some(v) = variant("timers") {
-        if ui.get_timers_theme() != v {
-            ui.set_timers_theme(v);
-        }
-    }
-    // the stopwatch's and the alarms' own looks (spec 24): page options
-    let (sw_look, alarm_look) = with_state(|s| {
-        let get = |k: &str| page_option(s, "timers", k).and_then(|v| v.as_i64()).unwrap_or(0).clamp(0, 4) as i32;
-        (get("sw_look"), get("alarm_look"))
-    });
-    if ui.get_timers_sw_look() != sw_look {
-        ui.set_timers_sw_look(sw_look);
-    }
-    if ui.get_timers_alarm_look() != alarm_look {
-        ui.set_timers_alarm_look(alarm_look);
-    }
-    if let Some(v) = variant("music") {
-        if ui.get_music_style() != v {
-            ui.set_music_style(v);
-        }
-    }
-    // the cassettes: the cover behind the cassette (the integration's option, off as designed)
-    ui.set_music_cs_cover(with_state(|s| page_option(s, "music", "cover_bg").and_then(|v| v.as_bool())).unwrap_or(false));
-    ui.set_music_cover_blur(with_state(|s| page_option(s, "music", "cover_blur").and_then(|v| v.as_bool())).unwrap_or(true));
-    // the turntable's wooden deck and grooves, the cassette's shell and hubs (full or half), once
-    // and again when the wood or the cassette changes
-    let looks = page_looks(ui, "music");
-    let wood = with_state(|s| page_option(s, "music", "wood").and_then(|v| v.as_str().map(str::to_string))).unwrap_or_else(|| "walnut".into());
-    // the music sheet: what the record holds, cut off or scroll, the speed, the wood (and its swatches, once)
-    ui.set_music_holds(with_state(|s| page_option(s, "music", "holds").and_then(|v| v.as_i64())).unwrap_or(0) as i32);
-    ui.set_music_scroll(with_state(|s| page_option(s, "music", "scroll").and_then(|v| v.as_bool())).unwrap_or(false));
-    ui.set_music_scroll_speed(with_state(|s| page_option(s, "music", "scroll_speed").and_then(|v| v.as_i64())).unwrap_or(3) as f32);
-    ui.set_music_wood(WOODS.iter().position(|w| *w == wood).unwrap_or(0) as i32);
     if slint::Model::row_count(&ui.get_music_woods()) == 0 {
         let sw: Vec<slint::Image> = WOODS.iter().map(|w| quick::picture(&format!("music/tt/sw-{w}.png"))).collect();
         ui.set_music_woods(ModelRc::new(VecModel::from(sw)));
     }
-    thread_local!(static MUSIC_ART: RefCell<String> = const { RefCell::new(String::new()) });
-    let half = looks.contains(&4) && !looks.contains(&3);
-    let key = format!("{wood}|{half}|{}|{}", looks.contains(&2), looks.iter().any(|l| *l == 3 || *l == 4));
-    if MUSIC_ART.with(|m| m.replace(key.clone())) != key {
-        if looks.contains(&2) {
-            let deck = quick::picture(&format!("music/tt/deck-{wood}.png"));
-            ui.set_music_tt_deck(if deck.size().width > 0 { deck } else { quick::picture("music/tt/deck.png") });
-            ui.set_music_tt_grooves(quick::picture("music/tt/grooves.png"));
-        }
-        if looks.iter().any(|l| *l == 3 || *l == 4) {
-            let size = if half { "half" } else { "full" };
-            ui.set_music_cs_back(quick::picture(&format!("music/cs/{size}-back.png")));
-            ui.set_music_cs_front(quick::picture(&format!("music/cs/{size}-front.png")));
-            ui.set_music_cs_hub(quick::picture(&format!("music/cs/{size}-hub.png")));
-        }
+    if page_looks(ui, "music").contains(&2) && ui.get_music_tt_grooves().size().width == 0 {
+        ui.set_music_tt_grooves(quick::picture("music/tt/grooves.png"));
     }
     with_state(|s| {
-        // The timers page's functions (alarm, timer, stopwatch) and its colourful timers.
-        if let Some(list) = page_option(s, "timers", "functions").and_then(|v| v.as_array().cloned()) {
-            let on = |k: &str| list.iter().any(|v| v.as_str() == Some(k));
-            let (a, t, w) = (on("alarm"), on("timer"), on("stopwatch"));
-            if a || t || w {
-                ui.set_timers_alarm_on(a);
-                ui.set_timers_timer_on(t);
-                ui.set_timers_watch_on(w);
-                let mode = ui.get_timers_mode();
-                if ![a, t, w][mode.clamp(0, 2) as usize] {
-                    ui.set_timers_mode(if t { 1 } else if a { 0 } else { 2 });
-                }
-            }
-        }
-        if let Some(c) = page_option(s, "timers", "colourful").and_then(|v| v.as_bool()) {
-            ui.set_timers_colourful(c);
-        }
-        ui.set_timers_sw_choice(page_option(s, "timers", "scene").and_then(|v| v.as_i64()).map_or(-2, |n| n.clamp(-1, 3) as i32));
-        // the clock page: its parts, letters, width, wandering speed and colour (the integration's page options)
-        {
-            let co = |k: &str| page_option(s, "clock", k);
-            let flag = |k: &str| co(k).and_then(|v| v.as_bool()).unwrap_or(true);
-            ui.set_clock_seconds(flag("seconds"));
-            ui.set_clock_date(flag("date"));
-            ui.set_clock_weather(flag("weather"));
-            ui.set_clock_next(flag("next"));
-            ui.set_clock_weight(co("weight").and_then(|v| v.as_i64()).unwrap_or(600) as i32);
-            ui.set_clock_width(co("width").and_then(|v| v.as_i64()).unwrap_or(100) as f32 / 100.0);
-            ui.set_clock_speed(co("speed").and_then(|v| v.as_i64()).unwrap_or(20) as f32);
-            let colour = co("colour").and_then(|v| v.as_str().and_then(pages::parse_color));
-            ui.set_clock_page_accent(colour.unwrap_or_else(|| ui.get_clock_accent()));
-        }
-        // each timer's own colour (1st, 2nd, …), when the integration sets them
-        let own: Vec<slint::Color> = page_option(s, "timers", "colours")
-            .and_then(|v| v.as_array().cloned())
-            .map(|a| a.iter().filter_map(Value::as_str).filter_map(pages::parse_color).collect())
-            .unwrap_or_default();
-        pages::TIMER_COLOURS.with(|c| *c.borrow_mut() = own);
+        refresh_timers(ui, s);
+        refresh_clocks(ui, s);
         quick::refresh(ui, s);
         thermo::refresh(ui, s);
         cam::refresh(ui, s);
         cal::refresh(ui, s);
         todo::refresh(ui, s);
         info::refresh(ui, s);
+        fetch_art(s, art);
     });
-    if let Some((tx, url)) = art {
-        let _ = tx.send(url);
-    }
 }
 
 /// Keys of `top` replace those of `base` (a missing base becomes `top`).
@@ -1226,10 +1465,12 @@ fn apply_panel_config(ui: &AppWindow) {
     }
 }
 
-/// Goes to the first page of `kind`; returns false if the panel has none.
+/// Goes to a page of `kind` (`pages::acting_slot`: the page on screen when it is of that kind, else the first of the
+/// kind); returns false if the panel has none.
 fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
     let pages = ui.get_pages();
-    match (0..pages.row_count()).find(|&i| pages.row_data(i).is_some_and(|p| p.kind == kind)) {
+    let slots: Vec<PageSlot> = pages.iter().collect();
+    match pages::acting_slot(&slots, ui.get_page().max(0) as usize, kind) {
         Some(i) => {
             if ui.get_page() != i as i32 {
                 close_page_sheets(ui);
@@ -1241,6 +1482,18 @@ fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
         }
         None => false,
     }
+}
+
+/// Goes to the page at `cfg` in the integration's list (a doorbell's own cameras page); false when the pager lacks it.
+fn go_to_cfg(ui: &AppWindow, cfg: usize) -> bool {
+    let pages = ui.get_pages();
+    let Some(i) = (0..pages.row_count()).find(|&i| pages.row_data(i).is_some_and(|p| p.cfg == cfg as i32)) else { return false };
+    if ui.get_page() != i as i32 {
+        close_page_sheets(ui);
+    }
+    ui.set_page(i as i32);
+    leave_temporary_page(ui, i as i32);
+    true
 }
 
 /// Leaving a page closes its sheets, editors and keyboard views (they never wait on a page nobody sees, and never
@@ -1332,7 +1585,7 @@ fn end_show_visit() {
 fn open_temporary_page(ui: &AppWindow, kind: &str) -> Option<(usize, bool)> {
     let pages = ui.get_pages();
     let vec = pages.as_any().downcast_ref::<VecModel<PageSlot>>()?;
-    let slot = PageSlot { kind: kind.into(), variant: 0, theme: -1, layout: -1, light: 0 };
+    let slot = pages::plain_slot(kind, 0);
     if let Some(t) = with_state(|s| s.temp_page) {
         if t >= vec.row_count() {
             // still on its way in
@@ -1462,7 +1715,8 @@ fn handle_timer_state(ui: &AppWindow, kind: i32, id: String, name: String, left:
                     return false;
                 }
                 let gone = s.timers.remove(&id);
-                let tint = pages::timer_tint(gone.as_ref().map_or(0, |t| t.seq as u64), accent(s), ui.get_timers_colourful());
+                let (colourful, own) = timers_colours(page_cfg(s, "timers"));
+                let tint = pages::timer_tint(gone.as_ref().map_or(0, |t| t.seq as u64), accent(s), colourful, &own);
                 let name = gone.map(|t| t.name).unwrap_or(name);
                 ring_timer(ui, s, name, tint);
                 true
@@ -1475,7 +1729,8 @@ fn handle_timer_state(ui: &AppWindow, kind: i32, id: String, name: String, left:
 /// A timer reached zero: the ringing screen and the beeps.
 /// The timers page's sound: chosen in the integration, else its look's own.
 fn timer_tone(ui: &AppWindow, s: &UiState) -> String {
-    let look = page_looks(ui, "timers").first().copied().unwrap_or(0);
+    let _ = ui;
+    let look = page_look("timers");
     let value = page_option(s, "timers", "sound").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "auto".into());
     format!("{value}|{}", sounds::timer_default(look))
 }
@@ -1505,7 +1760,8 @@ fn really_playing(s: &UiState, player: &str) -> bool {
     // (speaker, quiet since, last asked): the quiet time counts only while the player keeps saying playing; a gap
     // in the asking (the player was paused) starts it again, so a speaker that follows a new start a moment late
     // never makes a fresh start look paused
-    thread_local!(static QUIET_SINCE: std::cell::RefCell<Option<(String, Instant, Instant)>> = const { std::cell::RefCell::new(None) });
+    // (each speaker its own: several pages may show several players)
+    thread_local!(static QUIET_SINCE: std::cell::RefCell<HashMap<String, (Instant, Instant)>> = std::cell::RefCell::new(HashMap::new()));
     let Some(sp) = speaker_of(s, player) else { return true };
     // the panel's own speaker: Music Assistant's music comes over Sendspin, not through that media player
     if sp == media_player_entity(s) && sendspin::music_active() {
@@ -1515,17 +1771,18 @@ fn really_playing(s: &UiState, player: &str) -> bool {
     QUIET_SINCE.with(|q| {
         let mut q = q.borrow_mut();
         if !quiet {
-            *q = None;
+            q.remove(&sp);
             return true;
         }
         let now = Instant::now();
-        match q.as_mut() {
-            Some((who, since, last)) if *who == sp && last.elapsed() < Duration::from_secs(3) => {
+        match q.get_mut(&sp) {
+            // a player shown on several pages is asked several times a second: that counts as one look
+            Some((since, last)) if last.elapsed() < Duration::from_secs(3) => {
                 *last = now;
                 since.elapsed() < Duration::from_secs(30)
             }
             _ => {
-                *q = Some((sp, now, now));
+                q.insert(sp, (now, now));
                 true
             }
         }
@@ -1680,7 +1937,7 @@ fn start_timer(ui: &AppWindow, secs: u32, name: String) {
     if HA_LINKED.load(Ordering::SeqCst) && with_state(|s| s.panel_config.is_some()) {
         send(Command::Timer { action: "start".into(), timer_id: String::new(), seconds: secs, name });
         ui.set_timers_quick(false);
-        ui.set_timers_mode(1);
+        with_timers(ui, |d| d.mode = 1);
         return;
     }
     start_local_timer(ui, secs, name);
@@ -1705,7 +1962,7 @@ fn start_local_timer(ui: &AppWindow, secs: u32, name: String) {
         );
     });
     ui.set_timers_quick(false);
-    ui.set_timers_mode(1);
+    with_timers(ui, |d| d.mode = 1);
 }
 
 /// The timers page's functions (alarm, timer, stopwatch) with one of them switched over; None when it would leave none
@@ -1722,16 +1979,9 @@ fn toggle_function(on: [bool; 3], which: &str) -> Option<[bool; 3]> {
     next.iter().any(|v| *v).then_some(next)
 }
 
-/// One of the timers page's options set on the panel: kept in the panel's copy of its settings at once (the page shows
-/// it before Home Assistant sends the settings back) and sent to the integration.
+/// One of the timers page's options set on the panel (the page on screen): kept in the panel's copy of its settings at
+/// once (the page shows it before Home Assistant sends the settings back) and sent to the integration.
 fn timers_option(ui: &AppWindow, key: &str, value: Value) {
-    with_state(|s| {
-        if let Some(page) = s.panel_config.as_mut().and_then(|c| c.get_mut("pages")).and_then(Value::as_array_mut)
-            .and_then(|pages| pages.iter_mut().find(|p| p.get("kind").and_then(Value::as_str) == Some("timers")))
-        {
-            set_option(page, key, value.clone());
-        }
-    });
     page_set(ui, "timers", None, json!({ key: value }));
 }
 
@@ -1749,7 +1999,7 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
     // The timer at the page's index `n`.
     let id_at = |s: &UiState| pages::ordered_timers(&s.timers).get(n as usize).map(|(id, _)| (*id).clone());
     match what {
-        "timers.mode" => ui.set_timers_mode(n as i32),
+        "timers.mode" => with_timers(ui, |d| d.mode = (n as i32).clamp(0, 2)),
         "timers.pick" => ui.set_timers_focus(n as i32),
         "timers.quick" => ui.set_timers_quick(true),
         // one timer's own sheet (its controls), from a tap on it where several run
@@ -1783,30 +2033,30 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
         // the page's settings in the look's menu (the quick shade's page row), and what they set: shown at once, kept by
         // the integration
         "timers.settings" => ui.set_timers_settings(value == "open"),
-        "timers.look" => {
-            ui.set_timers_theme(n.clamp(0, 4) as i32);
-            page_set(ui, "timers", Some(n.clamp(0, 4) as i32), Value::Null);
-        }
+        "timers.look" => page_set(ui, "timers", Some(n.clamp(0, 4) as i32), Value::Null),
         "timers.colourful" => {
-            ui.set_timers_colourful(value == "1");
+            with_timers(ui, |d| d.colourful = value == "1");
             timers_option(ui, "colourful", json!(value == "1"));
+            with_state(|s| update_timer_lists(ui, s));
         }
         "timers.scene" => {
-            ui.set_timers_sw_choice(n.clamp(-1, 3) as i32);
+            with_timers(ui, |d| d.sw_choice = n.clamp(-1, 3) as i32);
             timers_option(ui, "scene", json!(n.clamp(-1, 3)));
         }
         "timers.function" => {
-            let on = [ui.get_timers_alarm_on(), ui.get_timers_timer_on(), ui.get_timers_watch_on()];
+            let d = pages::inst(&ui.get_timers_inst(), acting_n("timers"));
+            let on = [d.alarm_on, d.timer_on, d.watch_on];
             let Some(next) = toggle_function(on, value) else { return };
-            ui.set_timers_alarm_on(next[0]);
-            ui.set_timers_timer_on(next[1]);
-            ui.set_timers_watch_on(next[2]);
-            let mode = ui.get_timers_mode().clamp(0, 2) as usize;
-            if !next[mode] {
+            if !next[d.mode.clamp(0, 2) as usize] {
                 // the tab on screen goes: so does its settings menu
                 ui.set_timers_settings(false);
-                ui.set_timers_mode(if next[1] { 1 } else if next[0] { 0 } else { 2 });
             }
+            with_timers(ui, |d| {
+                d.alarm_on = next[0];
+                d.timer_on = next[1];
+                d.watch_on = next[2];
+                d.mode = timers_tab(d.mode, next);
+            });
             let names: Vec<&str> = [(next[1], "timer"), (next[0], "alarm"), (next[2], "stopwatch")].iter().filter(|(on, _)| *on).map(|(_, k)| *k).collect();
             timers_option(ui, "functions", json!(names));
         }
@@ -1879,7 +2129,7 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
         // the stopwatch tab's look, from its settings menu (a page option the integration keeps)
         "watch.look" => {
             let look = (n as i32).clamp(0, 4);
-            ui.set_timers_sw_look(look);
+            with_timers(ui, |d| d.sw_look = look);
             page_set(ui, "timers", None, json!({ "sw_look": look }));
         }
         "watch.reset" => {
@@ -2602,18 +2852,54 @@ fn send(cmd: Command) {
     }
 }
 
-/// A page's look (`variant`) or options set on the panel: shown at once, kept by the integration (which sends the
-/// panel its new settings back).
+/// A page's look (`variant`) or options set on the panel, on the page of `kind` the panel acts on (the one on screen,
+/// where the menu that set it is): shown at once, kept by the integration (which sends the panel its new settings back).
+/// Not to be called inside `with_state`.
 pub fn page_set(ui: &AppWindow, kind: &str, variant: Option<i32>, options: Value) {
+    let Some(cfg) = acting(kind).and_then(|p| (p.cfg >= 0).then_some(p.cfg as usize)) else { return };
+    page_set_at(ui, cfg, variant, options);
+}
+
+/// The same for the page at `cfg` in the integration's list: the pager's slot takes the look at once, the panel's copy
+/// of the settings the look and the options (so every view made from them shows the change before the integration's
+/// answer), and the integration keeps them.
+pub fn page_set_at(ui: &AppWindow, cfg: usize, variant: Option<i32>, options: Value) {
     let pages = ui.get_pages();
-    let Some(index) = (0..pages.row_count()).find(|&i| pages.row_data(i).is_some_and(|p| p.kind == kind)) else { return };
     if let Some(v) = variant {
-        if let Some(mut p) = pages.row_data(index) {
-            p.variant = v;
-            pages.set_row_data(index, p);
+        if let Some(index) = (0..pages.row_count()).find(|&i| pages.row_data(i).is_some_and(|p| p.cfg == cfg as i32)) {
+            if let Some(mut p) = pages.row_data(index) {
+                p.variant = v;
+                pages.set_row_data(index, p);
+            }
         }
     }
-    send(Command::PageSet { index, variant, options });
+    with_state(|s| {
+        if let Some(page) = s.panel_config.as_mut().and_then(|c| c.get_mut("pages")).and_then(Value::as_array_mut).and_then(|a| a.get_mut(cfg)) {
+            apply_page_set(page, variant, &options);
+        }
+    });
+    send(Command::PageSet { index: cfg, variant, options });
+}
+
+/// A page's settings with a `page_set` applied: the look, and the options (null removes one).
+fn apply_page_set(page: &mut Value, variant: Option<i32>, options: &Value) {
+    if let Some(v) = variant {
+        page["variant"] = json!(v);
+    }
+    if let Some(o) = options.as_object() {
+        for (key, value) in o {
+            if key == "entities" {
+                // the page's entities (the music page's player picked on the panel)
+                page["entities"] = value.clone();
+            } else if value.is_null() {
+                if let Some(opts) = page.get_mut("options").and_then(Value::as_object_mut) {
+                    opts.remove(key);
+                }
+            } else {
+                set_option(page, key, value.clone());
+            }
+        }
+    }
 }
 
 thread_local! {
@@ -3805,7 +4091,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 open_temporary_page(ui, "timers");
             }
             let i = value.parse::<i32>().unwrap_or(-1);
-            if matches!(ui.get_timers_theme(), 0 | 3) && slint::Model::row_count(&ui.get_timers_list()) >= 2 {
+            if matches!(page_look("timers"), 0 | 3) && slint::Model::row_count(&ui.get_timers_list()) >= 2 {
                 ui.set_timers_sheet(i);
             } else if i >= 0 {
                 ui.set_timers_focus(i);
@@ -3851,20 +4137,30 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             // the new look's pictures (the pager, the fridge door and notes) at once, not when the integration answers
             with_state(|s| info::refresh(ui, s));
         }
-        "music.holds" => page_set(ui, "music", None, json!({ "holds": value.parse::<i64>().unwrap_or(0) })),
-        "music.scroll" => page_set(ui, "music", None, json!({ "scroll": value == "1" })),
+        "music.holds" => {
+            page_set(ui, "music", None, json!({ "holds": value.parse::<i64>().unwrap_or(0) }));
+            refresh_pages(ui);
+        }
+        "music.scroll" => {
+            page_set(ui, "music", None, json!({ "scroll": value == "1" }));
+            refresh_pages(ui);
+        }
         "music.blur" => {
-            ui.set_music_cover_blur(value == "1");
             page_set(ui, "music", None, json!({ "cover_blur": value == "1" }));
+            refresh_pages(ui);
         }
         "music.cover-bg" => {
-            ui.set_music_cs_cover(value == "1");
             page_set(ui, "music", None, json!({ "cover_bg": value == "1" }));
+            refresh_pages(ui);
         }
-        "music.speed" => page_set(ui, "music", None, json!({ "scroll_speed": value.parse::<i64>().unwrap_or(3).clamp(1, 5) })),
+        "music.speed" => {
+            page_set(ui, "music", None, json!({ "scroll_speed": value.parse::<i64>().unwrap_or(3).clamp(1, 5) }));
+            refresh_pages(ui);
+        }
         "music.wood" => {
             if let Some(id) = WOODS.get(value.parse::<usize>().unwrap_or(0)) {
                 page_set(ui, "music", None, json!({ "wood": id }));
+                refresh_pages(ui);
             }
         }
         "thermo.settings" => {
@@ -3876,7 +4172,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         // the neon look's scene and cars are the synthwave background's (shared with the home page)
         "thermo.scene" => page_set(ui, "home", None, json!({ "scene": value.parse::<i64>().unwrap_or(0) })),
         "thermo.cars" => {
-            let on = with_state(|s| page_option(s, "home", "cars").and_then(|v| v.as_bool()).unwrap_or(true));
+            let on = with_state(|s| first_page_option(s, "home", "cars").and_then(|v| v.as_bool()).unwrap_or(true));
             page_set(ui, "home", None, json!({ "cars": !on }));
         }
         "cam.settings" => ui.set_cam_settings(true),
@@ -3894,7 +4190,10 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         "shade.close" => ui.set_set_view(0),
         "music.picker" | "music.picker-close" | "music.show" | "music.transfer" | "music.group" => mus::act(ui, what, value),
         "music.play" | "music.next" | "music.prev" | "music.shuffle" | "music.repeat" | "music.volume" | "music.seek" | "music.pause" | "music.resume" => {
-            let entity = with_state(|s| media_entity(s));
+            // the player of the page the tap came from (a music page, a custom page's music widget)
+            let entity = with_state(|s| tap_player(ui, s));
+            // what that player shows now
+            let (shown, _) = with_state(|s| player_music(s, &entity));
             if entity.is_empty() {
                 return;
             }
@@ -3908,21 +4207,15 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                     // the glyph turns at once; the player's next state confirms it, or after 3 s the
                     // views show its real state again. A pause holds the position of this moment (the widget's
                     // struct keeps the one of its last full refresh: the running time has its own property).
-                    let mut m = ui.get_home_music();
-                    m.playing = !m.playing;
-                    let pos = with_state(|s| pages::home_music(&s.states, &entity, None, m.accent).pos);
-                    m.pos = pos;
-                    let held = (m.playing, Instant::now(), pos);
+                    let playing = !shown.playing;
+                    let pos = with_state(|s| pages::home_music(&s.states, &entity, None, shown.accent).pos);
+                    let held = (entity.clone(), playing, Instant::now(), pos);
                     with_state(|s| {
                         s.music_hold = Some(held);
                         s.music_skip = None;
+                        // every page and widget of that player shows it at once
+                        update_music(ui, s, false);
                     });
-                    ui.set_music_playing(m.playing);
-                    if !m.playing {
-                        ui.set_music_pos(pos);
-                        ui.set_home_music_pos(pos);
-                    }
-                    ui.set_home_music(m);
                     let weak = ui.as_weak();
                     slint::Timer::single_shot(Duration::from_secs(3), move || {
                         if let Some(ui) = weak.upgrade() {
@@ -3935,15 +4228,18 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 "music.resume" => call("media_player", "media_play", &entity, json!({})),
                 "music.next" | "music.prev" => {
                     call("media_player", if what == "music.next" { "media_next_track" } else { "media_previous_track" }, &entity, json!({}));
-                    let playing = ui.get_music_playing();
+                    let playing = shown.playing;
                     with_state(|s| {
                         let from = track_key(&pages::home_music(&s.states, &entity, None, slint::Color::default()));
-                        s.music_skip = Some(MusicSkip { at: Instant::now(), from, playing, to: None });
+                        s.music_skip = Some(MusicSkip { player: entity.clone(), at: Instant::now(), from, playing, to: None });
                     });
                 }
-                "music.shuffle" => call("media_player", "shuffle_set", &entity, json!({"shuffle": !ui.get_music_shuffle()})),
+                "music.shuffle" => {
+                    let on = pages::inst(&ui.get_music_inst(), acting_n("music")).shuffle;
+                    call("media_player", "shuffle_set", &entity, json!({"shuffle": !on}))
+                }
                 "music.repeat" => {
-                    let next = match ui.get_music_repeat() {
+                    let next = match pages::inst(&ui.get_music_inst(), acting_n("music")).repeat {
                         0 => "all",
                         1 => "one",
                         _ => "off",
@@ -4058,6 +4354,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|e| format!("set_platform: {e:?}"))?;
 
     let ui = AppWindow::new()?;
+    UI.with(|u| *u.borrow_mut() = Some(ui.as_weak()));
     // the packed word lists the UI files ask for (before anything is drawn)
     ui.global::<Words>().on_list(|place| {
         ModelRc::new(VecModel::from(texts::list(&place).iter().map(|l| slint::SharedString::from(l.as_str())).collect::<Vec<_>>()))
@@ -4270,18 +4567,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             wake_hint_at: None,
             muted_hint: String::new(),
             theme_mode_seen: None,
-            art_url: None,
-            art_bg: None,
-            art_accent: None,
-            art_record: None,
+            arts: HashMap::new(),
             art_tx: None,
-            art: None,
             show_until: None,
             strip_until: None,
             last_lux_report: Instant::now(),
             music_hold: None,
             music_skip: None,
-            art_player: String::new(),
             digits: Default::default(),
             prev_digits: Default::default(),
             flip_at: None,
@@ -4384,6 +4676,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Pages that fetch while on screen (cameras) start or stop.
         if let Some(ui) = weak.upgrade() {
             close_page_sheets(&ui);
+            note_shown_page(&ui);
             synth::page_changed();
             leave_temporary_page(&ui, now);
             with_state(|s| cam::refresh(&ui, s));
@@ -4454,7 +4747,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     .filter_map(Value::as_str)
                     .map(|k| {
                         let (kind, look) = k.split_once(':').unwrap_or((k, "0"));
-                        PageSlot { kind: kind.into(), variant: look.parse().unwrap_or(0), theme: -1, layout: -1, light: 0 }
+                        pages::plain_slot(kind, look.parse().unwrap_or(0))
+                    })
+                    .collect();
+                // each page of a kind its own row of the kind's data (the rows past the integration's pages show
+                // that kind's defaults)
+                let mut seen: HashMap<String, i32> = HashMap::new();
+                let slots: Vec<PageSlot> = slots
+                    .into_iter()
+                    .map(|mut p| {
+                        let n = seen.entry(p.kind.to_string()).or_insert(0);
+                        p.n = *n;
+                        *n += 1;
+                        p
                     })
                     .collect();
                 ui.set_page(0);
@@ -4615,7 +4920,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     sounds::init(config.ha_url.clone(), auth.clone());
     // the panel as a media player in Home Assistant (alarms with music, Music Assistant)
     with_state(|s| media::init(s.device.clone(), s.device_notify.clone(), s.player.clone(), config.ha_url.clone()));
-    let art_tx = artwork::spawn(config.ha_url.clone(), auth.clone(), move |img| {
+    let art_tx = artwork::spawn(config.ha_url.clone(), auth.clone(), move |player, img| {
         // RGBA in this thread: the renderer takes it without converting. The blurred copy: the cover shrunk
         // to a few pixels and softened (the GPU scales it up smoothly).
         let bg = img.as_ref().map(|b| cam::rgba(&cam::soft(&cam::shrink(b, 18))));
@@ -4632,10 +4937,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
                 with_state(|s| {
-                    s.art = img.map(slint::Image::from_rgba8);
-                    s.art_bg = bg.map(slint::Image::from_rgba8);
-                    s.art_accent = tint.map(|(r, g, b)| slint::Color::from_rgb_u8(r, g, b));
-                    s.art_record = record.map(|(r, g, b)| slint::Color::from_rgb_u8(r, g, b));
+                    let art = s.arts.entry(player).or_default();
+                    art.img = img.map(slint::Image::from_rgba8);
+                    art.bg = bg.map(slint::Image::from_rgba8);
+                    art.accent = tint.map(|(r, g, b)| slint::Color::from_rgb_u8(r, g, b));
+                    art.record = record.map(|(r, g, b)| slint::Color::from_rgb_u8(r, g, b));
                 });
                 refresh_pages(&ui);
             }
@@ -4643,7 +4949,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     });
     with_state(|s| {
         s.art_tx = Some(art_tx);
-        s.art_url = None;
+        s.arts.clear();
     });
     refresh_pages(&ui);
 
@@ -4918,5 +5224,46 @@ mod tests {
         assert!(touch_test_hit((24.0, -32.0)));
         assert!(!touch_test_hit((30.0, 30.0)));
         assert!(!touch_test_hit((200.0, 0.0)));
+    }
+
+    #[test]
+    fn a_page_set_on_the_panel_changes_that_page_only() {
+        let mut config = json!({ "pages": [
+            { "kind": "quick", "variant": 0, "entities": ["light.a"], "options": { "groups": "off" } },
+            { "kind": "quick", "variant": 1, "entities": ["light.b"] },
+        ] });
+        // the second quick controls page's look and an option (the menu on that page)
+        let page = &mut config["pages"][1];
+        apply_page_set(page, Some(2), &json!({ "groups": "custom", "tapes": ["DESK"] }));
+        assert_eq!(config["pages"][1]["variant"], 2);
+        assert_eq!(config["pages"][1]["options"]["groups"], "custom");
+        assert_eq!(config["pages"][1]["options"]["tapes"], json!(["DESK"]));
+        // the first one keeps its own
+        assert_eq!(config["pages"][0]["variant"], 0);
+        assert_eq!(config["pages"][0]["options"]["groups"], "off");
+        // null takes an option away; a music page's player picked on the panel is its entity
+        let page = &mut config["pages"][0];
+        apply_page_set(page, None, &json!({ "groups": null, "entities": ["light.c"] }));
+        assert!(config["pages"][0]["options"].get("groups").is_none());
+        assert_eq!(config["pages"][0]["entities"], json!(["light.c"]));
+    }
+
+    #[test]
+    fn each_timers_page_has_its_functions_and_its_tab_among_them() {
+        assert_eq!(timers_functions(None), [true, true, true]);
+        let only_alarms = json!({ "options": { "functions": ["alarm"] } });
+        assert_eq!(timers_functions(Some(&only_alarms)), [true, false, false]);
+        // nothing chosen counts as all of them
+        let none = json!({ "options": { "functions": [] } });
+        assert_eq!(timers_functions(Some(&none)), [true, true, true]);
+        // the tab stays while its function is on, else the timers, the alarms, the stopwatch
+        assert_eq!(timers_tab(2, [true, true, true]), 2);
+        assert_eq!(timers_tab(2, [true, true, false]), 1);
+        assert_eq!(timers_tab(1, [true, false, true]), 0);
+        assert_eq!(timers_tab(0, [false, false, true]), 2);
+        // colourful by default, the page's own colours
+        assert_eq!(timers_colours(None), (true, vec![]));
+        let own = json!({ "options": { "colourful": false, "colours": ["#ff0000", "bad"] } });
+        assert_eq!(timers_colours(Some(&own)), (false, vec![slint::Color::from_rgb_u8(255, 0, 0)]));
     }
 }

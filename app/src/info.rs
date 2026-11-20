@@ -34,8 +34,8 @@ pub struct Note {
 }
 
 thread_local! {
-    /// The pager picture's finish now shown.
-    static PAGER_FINISH: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// The pager's bodies by finish (loaded once each).
+    static PAGER_BODIES: std::cell::RefCell<HashMap<i32, slint::Image>> = std::cell::RefCell::new(HashMap::new());
 }
 
 /// The pager's finishes, in the order of its menu and the integration's swatches.
@@ -483,17 +483,14 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
     if ui.get_pop_on() {
         show_window(ui);
     }
-    let pages = ui.get_pages();
-    let Some(slot) = (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i)).find(|p| p.kind == "info")
-    else {
+    let looks = crate::page_looks(ui, "info");
+    if looks.is_empty() {
         return;
-    };
-    // the fridge needs the notes drawn by the app (GPU build); otherwise the plain look
-    let look = if !draw::AVAILABLE && slot.variant == 1 { 0 } else { slot.variant };
-    ui.set_info_look(look);
+    }
     let list = ordered();
-    // the fridge's notes when a page on the list has that look
-    let look = if draw::AVAILABLE && crate::page_looks(ui, "info").contains(&1) { 1 } else { look };
+    // the fridge's notes when a page on the list has that look (it needs the notes drawn by the app, GPU build; the
+    // plain look otherwise)
+    let look = if draw::AVAILABLE && looks.contains(&1) { 1 } else { 0 };
     let rows: Vec<InfoNote> = list.iter().map(|(_, n)| note_row(n, look, false)).collect();
     // the open note (gone when Home Assistant dismissed it)
     let open = OPEN.with(|o| o.borrow().clone()).and_then(|id| list.iter().position(|(k, _)| *k == id));
@@ -525,18 +522,26 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
     }
     // the pager's and the news look's lines (their clock follows the panel's, `info-minute`); the pager's body and the
     // fridge door
-    if slot.variant == 2 {
-        // the pager's finish: loaded again whenever it changes
-        let finish = crate::page_option(_s, "info", "finish").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "graphite".into());
-        let finish = FINISHES[finish_index(&finish) as usize].to_string();
-        ui.set_info_pager_finish(finish_index(&finish));
-        if PAGER_FINISH.with(|f| *f.borrow() != finish) || ui.get_info_pager_body().size().width == 0 {
-            ui.set_info_pager_body(crate::quick::picture(&format!("info/pager-{finish}.png")));
-            ui.set_info_pager_led(crate::quick::picture("info/pager-led.png"));
-            PAGER_FINISH.with(|f| *f.borrow_mut() = finish);
-        }
+    // each pager page's own finish (its body loaded once per finish)
+    let pages: Vec<Value> = crate::pages::kind_pages(_s.panel_config.as_ref(), "info").into_iter().map(|(_, p)| p.clone()).collect();
+    for (n, page) in pages.iter().enumerate() {
+        let finish = crate::pages::option_of(page, "finish").and_then(|v| v.as_str()).unwrap_or("graphite").to_string();
+        let k = finish_index(&finish);
+        let body = (crate::pages::variant_of(page) == 2).then(|| {
+            if ui.get_info_pager_led().size().width == 0 {
+                ui.set_info_pager_led(crate::quick::picture("info/pager-led.png"));
+            }
+            PAGER_BODIES.with(|b| b.borrow_mut().entry(k).or_insert_with(|| crate::quick::picture(&format!("info/pager-{}.png", FINISHES[k as usize]))).clone())
+        });
+        crate::pages::with_inst(ui.get_info_inst(), |m| ui.set_info_inst(m), n, |d| {
+            d.finish = k;
+            if let Some(b) = body {
+                d.pager_body = b;
+            }
+        });
     }
-    if slot.variant == 1 {
+    crate::pages::keep_insts(&ui.get_info_inst(), pages.len());
+    if looks.contains(&1) {
         let door = if slint::ComponentHandle::global::<crate::Theme>(ui).get_dark() { "info/door-dark.png" } else { "info/door-light.png" };
         ui.set_info_fridge_door(crate::quick::picture(door));
     }
@@ -603,20 +608,7 @@ fn set_finish(ui: &AppWindow, finish: &str) {
     if !FINISHES.contains(&finish) {
         return;
     }
-    with_state(|s| {
-        let page = s
-            .panel_config
-            .as_mut()
-            .and_then(|c| c.get_mut("pages"))
-            .and_then(Value::as_array_mut)
-            .and_then(|pages| pages.iter_mut().find(|p| p.get("kind").and_then(Value::as_str) == Some("info")));
-        if let Some(page) = page.and_then(Value::as_object_mut) {
-            let options = page.entry("options").or_insert_with(|| json!({}));
-            if let Some(o) = options.as_object_mut() {
-                o.insert("finish".into(), json!(finish));
-            }
-        }
-    });
+    // (the panel's copy of the page's settings takes it at once)
     crate::page_set(ui, "info", None, json!({ "finish": finish }));
 }
 

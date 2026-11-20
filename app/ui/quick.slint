@@ -1076,7 +1076,8 @@ export component QuickPage inherits Rectangle {
     }
     menus := QuickMenus {
         look: root.look;
-        open: root.sheet || root.settings;
+        // (the menu state is shared by the kind's pages: only the page on screen shows it)
+        open: (root.sheet || root.settings) && root.on-screen;
         kind: root.menu-kind;
         grid: root.grid;
         tile: root.sheet-tile;

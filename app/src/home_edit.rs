@@ -873,24 +873,12 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
 /// A setting of the first weather page (the synthwave scene and its cars): the panel shows it at once and Home
 /// Assistant keeps it.
 fn first_home_option(ui: &AppWindow, key: &str, v: Value) {
-    crate::with_state(|s| {
-        let page = s
-            .panel_config
-            .as_mut()
-            .and_then(|c| c.get_mut("pages"))
-            .and_then(Value::as_array_mut)
-            .and_then(|a| a.iter_mut().find(|p| p.get("kind").and_then(Value::as_str) == Some("home")));
-        if let Some(p) = page {
-            if !p.get("options").is_some_and(Value::is_object) {
-                p["options"] = json!({});
-            }
-            p["options"][key] = v.clone();
-        }
-    });
-    crate::refresh_pages(ui);
+    // (the panel's copy of the settings takes it at once)
+    let Some(cfg) = crate::with_state(|s| crate::pages::kind_pages(s.panel_config.as_ref(), "home").first().map(|(i, _)| *i)) else { return };
     let mut o = serde_json::Map::new();
     o.insert(key.to_string(), v);
-    crate::page_set(ui, "home", None, Value::Object(o));
+    crate::page_set_at(ui, cfg, None, Value::Object(o));
+    crate::refresh_pages(ui);
 }
 
 /// One setting of a widget from its menu; false when it is already so.
