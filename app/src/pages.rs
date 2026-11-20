@@ -787,6 +787,69 @@ pub fn update_rows<T: Clone + PartialEq + 'static>(current: &ModelRc<T>, rows: V
     Some(ModelRc::new(VecModel::from(rows)))
 }
 
+/// The timers grids' cells (spec 34.7: the plain and synthwave looks show at most four timers): the four that end
+/// soonest, running ones by the time left before paused ones, kept in their order of arrival so that a cell does not
+/// move while its set stays. `list` is (running, seconds left) in the page's order; the result indexes into it.
+pub fn grid_cells(list: &[(bool, u32)]) -> Vec<i32> {
+    let mut by_end: Vec<usize> = (0..list.len()).collect();
+    by_end.sort_by_key(|&i| (!list[i].0, list[i].1, i));
+    let mut four: Vec<i32> = by_end.into_iter().take(4).map(|i| i as i32).collect();
+    four.sort_unstable();
+    four
+}
+
+/// `grid_cells` of the panel's timers.
+pub fn timer_grid(timers: &HashMap<String, Timer>) -> Vec<i32> {
+    let list: Vec<(bool, u32)> = ordered_timers(timers).iter().map(|(_, t)| (t.active, t.remaining())).collect();
+    grid_cells(&list)
+}
+
+/// A timer's label as the panel takes it: up to 60 characters for a timer (Home Assistant takes as many), 32 for an
+/// alarm's.
+pub fn label_limit(timer: bool) -> usize {
+    if timer {
+        60
+    } else {
+        32
+    }
+}
+
+#[cfg(test)]
+mod grid_tests {
+    use super::{grid_cells, label_limit};
+
+    #[test]
+    fn up_to_four_all_in_order() {
+        assert_eq!(grid_cells(&[]), Vec::<i32>::new());
+        assert_eq!(grid_cells(&[(true, 50), (true, 10), (false, 5)]), vec![0, 1, 2]);
+        assert_eq!(grid_cells(&[(true, 50), (true, 10), (false, 5), (true, 99)]), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn five_drop_the_one_that_ends_last() {
+        // the fourth runs longest: the other four stay, in their order of arrival
+        assert_eq!(grid_cells(&[(true, 50), (true, 10), (true, 30), (true, 900), (true, 20)]), vec![0, 1, 2, 4]);
+    }
+
+    #[test]
+    fn paused_ones_end_after_running_ones() {
+        // a paused timer with little left ends later than any running one
+        assert_eq!(grid_cells(&[(false, 5), (true, 500), (true, 600), (true, 700), (true, 800)]), vec![1, 2, 3, 4]);
+        assert_eq!(grid_cells(&[(false, 50), (false, 5), (true, 500), (true, 600), (true, 700)]), vec![1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn equal_times_keep_arrival() {
+        assert_eq!(grid_cells(&[(true, 10), (true, 10), (true, 10), (true, 10), (true, 10)]), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn label_limits() {
+        assert_eq!(label_limit(true), 60);
+        assert_eq!(label_limit(false), 32);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

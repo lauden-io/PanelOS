@@ -9,10 +9,12 @@
 // Images are drawn at their exact size (the renderer scales without filtering). Coloured shapes are a
 // white mask (colorize = the colour) with a grey + alpha shading layer on top.
 import { Theme, Act, Clock, Words } from "theme.slint";
-import { Icon, Glyph, PlayGlyph, GlowText, DragSheet, Dropdown, PageMenu } from "widgets.slint";
+import { Icon, Glyph, PlayGlyph, GlowText, Dropdown, MenuHost, PageMenu } from "widgets.slint";
 import { AlarmClock, AlarmEditor, AlarmSettings, AlarmRing } from "alarm_menus.slint";
 import { WatchSettings } from "watch_menus.slint";
 import { FlapCard } from "panels.slint";
+import { NewTimerMenu, TimerSettingsMenu, LookFrame, TimerLooks, RollTime, ArcKey } from "timer_menus.slint";
+import { ArcadeScreen, ArcadeBlock } from "arcade.slint";
 import { Keyboard } from "overlays.slint";
 import { Seg7, TwinBellClock } from "clocks.slint";
 
@@ -71,7 +73,9 @@ component Ring inherits Rectangle {
     property <float> intro: 0;
     init => { root.intro = 1; root.aq = root.stepped(root.a); }
     animate intro { duration: 400ms; easing: ease-out; }
-    property <float> shown: min(root.intro, root.fr-s);
+    // the page entrance (25.T14): the ring fills from empty to its fraction (the page sets the share, 0..1)
+    in property <float> grow: 1;
+    property <float> shown: min(root.intro, root.fr-s) * root.grow;
     property <angle> a: min(0.9999, max(0, root.shown)) * 360deg;
     // the arc as drawn: in steps of half a pixel along it, taken only when a step is passed (the glide moves it a
     // fraction of a pixel per frame; building the arc's path anew every frame cost several ms per ring)
@@ -92,21 +96,6 @@ component Ring inherits Rectangle {
             + (root.c + root.r * Math.sin(root.aq)) + " " + (root.c - root.r * Math.cos(root.aq));
     }
 }
-
-// A timer's time: more time (+1 min) bumps it to 1.06 and back in 200 ms (M17), with the ring's refill.
-component TimeText inherits Text {
-    in property <float> rem;
-    in property <length> size;
-    property <float> last;
-    property <duration> b0;
-    property <bool> bumping;
-    init => { root.last = root.rem; }
-    changed rem => { if root.rem > root.last + 5 { root.b0 = animation-tick(); root.bumping = true; } root.last = root.rem; }
-    Timer { interval: 220ms; running: root.bumping; triggered => { root.bumping = false; } }
-    property <float> bp: root.bumping ? clamp((animation-tick() - root.b0) / 200ms, 0, 1) : 1;
-    font-size: root.size * (1 + 0.06 * Math.sin(180deg * root.bp));
-}
-
 
 // One nixie tube (spec 24.4): the glass with its haze and highlights, all ten cathodes faint, the lit digit glowing
 // orange (four strokes, no blur), never quite steady; the 45° anode mesh in front; the socket.
@@ -177,15 +166,16 @@ component NeonRing inherits Rectangle {
     in property <length> stroke: 8px;
     in property <color> glow;
     in property <bool> paused;
+    in property <float> grow: 1;          // the page entrance (25.T14): the share of the fraction shown
     property <float> k: root.paused ? 0.5 : 1;
     Ring { x: -6px; y: -6px; width: root.width + 12px; height: root.height + 12px; stroke: root.stroke + 12px; fr: 0; track: root.glow.with-alpha(0.05); }
     Ring { width: root.width; height: root.height; stroke: root.stroke; fr: 0; track: root.glow.with-alpha(0.16); }
-    Ring { x: -12px; y: -12px; width: root.width + 24px; height: root.height + 24px; stroke: root.stroke + 24px; track: transparent; fr: root.fr; arc: root.glow.with-alpha(0.06 * root.k); }
-    Ring { x: -6px; y: -6px; width: root.width + 12px; height: root.height + 12px; stroke: root.stroke + 12px; track: transparent; fr: root.fr; arc: root.glow.with-alpha(0.13 * root.k); }
-    Ring { x: -2px; y: -2px; width: root.width + 4px; height: root.height + 4px; stroke: root.stroke + 4px; track: transparent; fr: root.fr; arc: root.glow.with-alpha(0.32 * root.k); }
-    Ring { width: root.width; height: root.height; stroke: root.stroke; track: transparent; fr: root.fr; arc: root.paused ? root.glow.with-alpha(0.6) : root.glow; }
+    Ring { x: -12px; y: -12px; width: root.width + 24px; height: root.height + 24px; stroke: root.stroke + 24px; track: transparent; fr: root.fr; grow: root.grow; arc: root.glow.with-alpha(0.06 * root.k); }
+    Ring { x: -6px; y: -6px; width: root.width + 12px; height: root.height + 12px; stroke: root.stroke + 12px; track: transparent; fr: root.fr; grow: root.grow; arc: root.glow.with-alpha(0.13 * root.k); }
+    Ring { x: -2px; y: -2px; width: root.width + 4px; height: root.height + 4px; stroke: root.stroke + 4px; track: transparent; fr: root.fr; grow: root.grow; arc: root.glow.with-alpha(0.32 * root.k); }
+    Ring { width: root.width; height: root.height; stroke: root.stroke; track: transparent; fr: root.fr; grow: root.grow; arc: root.paused ? root.glow.with-alpha(0.6) : root.glow; }
     Ring { x: root.stroke * 0.35; y: root.stroke * 0.35; width: root.width - root.stroke * 0.7; height: root.height - root.stroke * 0.7; stroke: root.stroke * 0.3;
-        track: transparent; fr: root.fr; arc: #ffffff.with-alpha(0.8 * root.k); }
+        track: transparent; fr: root.fr; grow: root.grow; arc: #ffffff.with-alpha(0.8 * root.k); }
 }
 
 // Neon lettering: a soft coloured glow, a thin dark rim that follows the glyphs, a white core.
@@ -334,18 +324,6 @@ component TimerControls inherits HorizontalLayout {
         icon: root.running ? "\u{F03E4}" : "\u{F040A}"; act: "timers.toggle"; act-value: root.index; }
     VerticalLayout { alignment: center; RoundButton { act: "timers.cancel"; act-value: root.index; size: 44px; icon-size: 22px; fill: root.neon ? #00000059 : transparent; outline: !root.neon; ink: root.neon ? #ffffff : TFg.c;
         ring-w: 1.5px; ring-c: root.neon ? root.tint.with-alpha(0.6) : TFg.c.with-alpha(0.30); icon: "\u{F0156}"; } }
-}
-
-// a settings chip
-component Chip inherits Rectangle {
-    in property <string> text;
-    in property <bool> on;
-    in property <bool> check;          // multi-choice: a tick when on
-    in property <color> fill: Theme.accent;
-    width: ct.preferred-width + 26px + (root.check && root.on ? 20px : 0px); height: 32px; border-radius: 16px;
-    background: root.on ? (root.check ? TFg.c.with-alpha(0.18) : TFg.c) : transparent; border-width: root.on ? 0px : 1px; border-color: TFg.c.with-alpha(0.25);
-    if root.check && root.on: Icon { x: 12px; width: 16px; height: parent.height; text: "\u{F012C}"; font-size: 15px; color: TFg.c; }
-    ct := Text { x: root.check && root.on ? 33px : 13px; width: self.preferred-width; height: parent.height; text: root.text; font-size: 14px; font-weight: 500; color: root.on && !root.check ? (Theme.dark ? #101114 : #F5F3EE) : TFg.c; vertical-alignment: center; }
 }
 
 // The alarms as chips (twin-bell, sunrise, 24-hour dial): a dot in the alarm's colour (filled while on), its time and
@@ -581,6 +559,70 @@ export component SynthScene inherits Rectangle {
     if root.scene == 2: Image { x: 304px; y: 112px; width: 210px; height: 300px; source: root.palm-r2; opacity: root.palm-rk; }
 }
 
+// One timer's menu (spec 34): where the plain and synthwave grids show several timers, a tap on one opens it over its
+// cell: the name in its colour, a 124 px ring with the time and "of 10:00" / "Paused", the agreed timer controls. It counts
+// down live; × cancels the timer and the menu goes. Plain: the brand card (300 px) growing from the cell's centre;
+// synthwave: the arcade screen (320 px) with the name as its chrome title and the controls as arcade keys.
+component TimerMenu inherits Rectangle {
+    in property <bool> arcade;
+    in property <TimerItem> t;
+    in property <color> tint;              // its colour as the page shows it (synthwave: its place's neon)
+    in property <color> tube;
+    in property <int> index;
+    in property <float> t-in: 1000;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <length> grow-x;
+    in property <length> grow-y;
+    in property <length> name-h;           // the name's height (TimersPage measures it for the menu's size)
+    pure function two(n: int) -> string { return (n < 10 ? "0" : "") + n; }
+    pure function clock(t: float) -> string {
+        return t >= 3600 ? Math.floor(t / 3600) + ":" + root.two(Math.mod(Math.floor(Math.ceil(t) / 60), 60)) + ":" + root.two(Math.mod(Math.ceil(t), 60))
+            : Math.floor(Math.ceil(t) / 60) + ":" + root.two(Math.mod(Math.ceil(t), 60));
+    }
+    property <string> name: root.t.label != "" ? root.t.label : "Timer";
+    property <float> fr: root.t.total > 0 ? root.t.remaining / root.t.total : 0;
+    // plain: the brand card with the name, the ring with the time, +1 min · pause / go on · cancel
+    if !root.arcade: LookFrame {
+        width: root.width; height: root.height;
+        look: 0; sk: TimerLooks.skin(0); title: "";
+        t-in: root.t-in; t-out: root.t-out; leaving: root.leaving;
+        grow-x: root.grow-x; grow-y: root.grow-y;
+        Rectangle {
+            property <length> ry: 6px + 8px + root.name-h + 8px;
+            Text { x: 16px; y: 6px + 8px; width: root.width - 32px; height: root.name-h; text: root.name; font-size: 16px; font-weight: 600; wrap: word-wrap;
+                color: root.tint.mix(TFg.c, 0.6); horizontal-alignment: center; vertical-alignment: center; }
+            Ring { x: (root.width - 124px) / 2; y: parent.ry; width: 124px; height: 124px; stroke: 8px; fr: root.fr; arc: root.tint;
+                opacity: root.t.running ? 1 : 0.55; left: root.t.running ? Math.ceil(root.t.remaining) : -1; }
+            RollTime { x: 0; y: parent.ry + 62px - 26px; width: root.width; height: 38px; t: root.t.remaining; size: root.t.remaining >= 3600 ? 24px : 30px;
+                weight: 600; color: TFg.c; }
+            Text { x: 0; y: parent.ry + 62px + 13px; width: root.width; height: 16px; text: root.t.running ? "of " + root.clock(root.t.total) : "Paused";
+                font-size: 12px; color: TFg.c.with-alpha(0.55); horizontal-alignment: center; vertical-alignment: center; }
+            TimerControls { x: 0; y: parent.ry + 124px + 10px; width: root.width; height: 56px; play: 56px; running: root.t.running; tint: root.tint; index: root.index; }
+        }
+    }
+    // synthwave: the arcade screen with the name as its title, the neon ring, the time in the pixel font, the controls as
+    // arcade keys (+1 MIN at 28 %, pause / go on in the timer's neon, cancel outlined)
+    if root.arcade: ArcadeScreen {
+        width: root.width; height: root.height;
+        tube: root.tube; title: root.name.to-uppercase(); t-in: root.t-in; t-out: root.t-out; leaving: root.leaving;
+        TouchArea { }
+        Rectangle {
+            NeonRing { x: (parent.width - 124px) / 2; y: 0; width: 124px; height: 124px; stroke: 8px; glow: root.tint; paused: !root.t.running; fr: root.fr; }
+            Text { x: 0; y: 62px - 16px; width: parent.width; height: 22px; text: root.clock(root.t.remaining); font-family: "Press Start 2P";
+                font-size: root.t.remaining >= 3600 ? 13px : 17px; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+            Text { x: 0; y: 62px + 10px; width: parent.width; height: 14px; text: root.t.running ? "OF " + root.clock(root.t.total) : "PAUSED";
+                font-family: "Press Start 2P"; font-size: 7px; color: #ffffffb3; horizontal-alignment: center; vertical-alignment: center; }
+            HorizontalLayout {
+                x: 0; y: 124px + 12px; width: parent.width; height: 44px; alignment: center; spacing: 6px;
+                ArcadeBlock { text: "+1 MIN"; fill: 0.28; tube: root.tube; font-size: 9px; clicked => { Act.act("timers.add", root.index); } }
+                ArcadeBlock { width: 48px; icon: root.t.running ? "\u{F03E4}" : "\u{F040A}"; fill: 1; tube: root.tint; clicked => { Act.act("timers.toggle", root.index); } }
+                ArcKey { icon: "\u{F0156}"; tube: root.tube; clicked => { Act.act("timers.cancel", root.index); } }
+            }
+        }
+    }
+}
+
 export component TimersPage inherits Rectangle {
     in property <bool> alarm-on: true;    // functions switched on in the settings
     in property <bool> timer-on: true;
@@ -705,15 +747,63 @@ export component TimersPage inherits Rectangle {
     property <color> deep: root.sw-deep[root.sw-scene];
     background: Theme.background;
 
+    // ---------------------------------------------------------------- the timers tab: its state (spec 34, 25.T14)
+    in property <[int]> cells;             // the grids' timers: the four that end soonest (indexes into timers)
+    pure function eo(u: float) -> float { return 1 - Math.pow(1 - clamp(u, 0, 1), 3); }
+    // the timer a grid cell shows
+    pure function at(c: int) -> int { return c < root.cells.length ? root.cells[c] : c; }
+    // the page entrance (25.T14): a timer that starts `delay` ms in fills / counts up over 420 ms (ease-out); the
+    // synthwave tally in 8 steps of 40 ms and one frame off; every timer shows its zero while the tab is out of view
+    pure function ent-k(delay: float) -> float { return tm.armed ? 0 : root.eo((tm.ent - delay) / 420); }
+    pure function sw-k(delay: float) -> float { return tm.armed ? 0 : clamp(Math.floor((tm.ent - delay) / 40) + 1, 0, 8) / 8; }
+    pure function sw-off(delay: float) -> bool { return !tm.armed && tm.ent - delay >= 320 && tm.ent - delay < 360; }
+    tm := Rectangle {
+        width: 0px; height: 0px;
+        // the entrance runs every time the timers tab comes into view (once), ringing aside
+        property <bool> shown: root.on-screen && root.mode == 1 && !root.ringing;
+        property <bool> armed: true;
+        property <bool> entering;
+        property <duration> e0;
+        function start() { self.armed = false; self.e0 = animation-tick(); self.entering = true; }
+        Timer { interval: 1000ms; running: tm.entering; triggered => { tm.entering = false; } }
+        changed shown => { if self.shown { self.start(); } else { self.entering = false; self.armed = true; } }
+        // ms into the entrance; large once it is over (the clock is read only while it runs)
+        property <float> ent: tm.armed ? 0 : tm.entering ? (animation-tick() - tm.e0) / 1ms : 100000;
+        property <bool> calm: !tm.armed && !tm.entering;
+        // the quick shade's page row (spec 32.0): "Timers settings · <look>"; it asks for the settings in the look's menu
+        property <bool> pm-on: root.on-screen && root.mode == 1;
+        property <int> pm-look: root.theme;
+        function publish() {
+            if self.pm-on {
+                PageMenu.title = "Timers settings";
+                PageMenu.look = TimerLooks.names[Math.max(0, Math.min(4, root.theme))];
+                PageMenu.icon = TimerLooks.icons[Math.max(0, Math.min(4, root.theme))];
+                PageMenu.has-settings = true;
+            }
+        }
+        init => { if self.shown { self.start(); } self.publish(); }
+        changed pm-on => { self.publish(); }
+        changed pm-look => { self.publish(); }
+        property <int> req: PageMenu.open-request;
+        changed req => { if self.pm-on && !root.ringing { Act.act("timers.settings", "open"); } }
+        // a new look in the settings: the menu goes in the old look (the arcade blinks the block first), the look changes,
+        // the menu comes again in the new one
+        property <int> swap-to: -1;
+        property <bool> swapping;
+        Timer { interval: TimerLooks.out-ms(root.theme) + 20ms; running: tm.swapping;
+            triggered => { Act.act("timers.look", tm.swap-to); tm.swapping = false; } }
+    }
+
     // ---------------------------------------------------------------- timers, plain
     if !root.ringing && root.mode == 1 && root.theme == 0 && root.n == 1: one := Rectangle {
         property <TimerItem> t: root.timers[0];
         Ring { x: (root.width - 240px) / 2; y: root.top + 4px; width: 240px; height: 240px; stroke: 12px;
-            fr: one.t.total > 0 ? one.t.remaining / one.t.total : 0; arc: one.t.tint; opacity: one.t.running ? 1 : 0.55;  left: root.cur.running ? Math.ceil(root.cur.remaining) : -1; }
+            fr: one.t.total > 0 ? one.t.remaining / one.t.total : 0; arc: one.t.tint; opacity: one.t.running ? 1 : 0.55;  left: root.cur.running ? Math.ceil(root.cur.remaining) : -1;
+            grow: root.ent-k(0); }
         Text { x: (root.width - 180px) / 2; y: root.top + 66px; width: 180px; height: 24px; text: root.name(one.t.label); font-size: 18px; font-weight: 600;
             color: one.t.tint.mix(TFg.c, 0.55); horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-        TimeText { x: 0; y: root.top + 92px; width: root.width; height: 62px; text: root.clock(one.t.remaining); rem: one.t.remaining; size: one.t.remaining >= 3600 ? 46px : 58px; font-weight: 600;
-            color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
+        RollTime { x: 0; y: root.top + 92px; width: root.width; height: 62px; t: one.t.remaining * root.ent-k(0); quiet: !tm.calm; size: one.t.remaining >= 3600 ? 46px : 58px;
+            weight: 600; color: TFg.c; }
         Text { x: 0; y: root.top + 156px; width: root.width; height: 20px; text: one.t.running ? "of " + root.clock(one.t.total) : "Paused";
             font-size: 14px; color: TFg.c.with-alpha(0.50); horizontal-alignment: center; vertical-alignment: center; }
         TimerControls { x: 0; y: root.top + 262px; width: root.width; height: 64px; running: one.t.running; tint: one.t.tint; index: 0; }
@@ -721,12 +811,12 @@ export component TimersPage inherits Rectangle {
     if !root.ringing && root.mode == 1 && root.theme == 0 && root.n == 2: Rectangle {
         for t[i] in root.timers: Rectangle {
             x: 24px + i * 224px; y: root.top + 6px; width: 208px; height: 300px;
-            Ring { x: 4px; y: 0; width: 200px; height: 200px; stroke: 10px; fr: t.total > 0 ? t.remaining / t.total : 0; arc: t.tint; opacity: t.running ? 1 : 0.55; left: t.running ? Math.ceil(t.remaining) : -1; }
+            Ring { x: 4px; y: 0; width: 200px; height: 200px; stroke: 10px; fr: t.total > 0 ? t.remaining / t.total : 0; arc: t.tint; opacity: t.running ? 1 : 0.55; left: t.running ? Math.ceil(t.remaining) : -1;
+                grow: root.ent-k(60 * i); }
             TouchArea { x: 4px; y: 0; width: 200px; height: 200px; clicked => { Act.act("timers.sheet", i); } }
             Text { x: 29px; y: 56px; width: 150px; height: 22px; text: root.name(t.label); font-size: 16px; font-weight: 600; color: t.tint.mix(TFg.c, 0.55);
                 horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-            TimeText { x: 0; y: 78px; width: 208px; height: 46px; text: root.clock(t.remaining); rem: t.remaining; size: t.remaining >= 3600 ? 32px : 40px; font-weight: 600; color: TFg.c;
-                horizontal-alignment: center; vertical-alignment: center; }
+            RollTime { x: 0; y: 78px; width: 208px; height: 46px; t: t.remaining * root.ent-k(60 * i); quiet: !tm.calm; size: t.remaining >= 3600 ? 32px : 40px; weight: 600; color: TFg.c; }
             Text { x: 0; y: 124px; width: 208px; height: 18px; text: t.running ? "of " + root.clock(t.total) : "Paused"; font-size: 13px; color: TFg.c.with-alpha(0.50); horizontal-alignment: center; vertical-alignment: center; }
             HorizontalLayout {
                 x: 0; y: 222px; width: 208px; height: 56px; alignment: center; spacing: 16px;
@@ -739,13 +829,16 @@ export component TimersPage inherits Rectangle {
         for c in 4: cell := Rectangle {
             x: 20px + Math.mod(c, 2) * 224px; y: root.top + Math.floor(c / 2) * 176px; width: 216px; height: 168px;
             border-radius: 20px; background: TFg.c.with-alpha(0.05);
+            // three: the fourth cell is the "+"; four or more: the four that end soonest (34.7)
             property <bool> has: c < root.n;
-            property <TimerItem> t: self.has ? root.timers[c] : { label: "", remaining: 0, total: 0, running: false, tint: #ffffff };
-            TouchArea { clicked => { Act.act(cell.has ? "timers.sheet" : "timers.quick", c); } }
+            property <int> ti: Math.min(root.at(c), root.n - 1);
+            property <TimerItem> t: self.has ? root.timers[self.ti] : { label: "", remaining: 0, total: 0, running: false, tint: #ffffff };
+            TouchArea { clicked => { if cell.has { Act.act("timers.sheet", cell.ti); } else { Act.act("timers.new", ""); } } }
             if cell.has: Ring { x: (cell.width - 116px) / 2; y: 12px; width: 116px; height: 116px; stroke: 8px;
-                fr: cell.t.total > 0 ? cell.t.remaining / cell.t.total : 0; arc: cell.t.tint; opacity: cell.t.running ? 1 : 0.55; left: cell.t.running ? Math.ceil(cell.t.remaining) : -1; }
-            if cell.has: TimeText { x: 0; y: 12px + 36px; width: cell.width; height: 44px; text: root.clock(cell.t.remaining); rem: cell.t.remaining; size: cell.t.remaining >= 3600 ? 22px : 28px; font-weight: 600;
-                color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
+                fr: cell.t.total > 0 ? cell.t.remaining / cell.t.total : 0; arc: cell.t.tint; opacity: cell.t.running ? 1 : 0.55; left: cell.t.running ? Math.ceil(cell.t.remaining) : -1;
+                grow: root.ent-k(60 * c); }
+            if cell.has: RollTime { x: 0; y: 12px + 36px; width: cell.width; height: 44px; t: cell.t.remaining * root.ent-k(60 * c); quiet: !tm.calm;
+                size: cell.t.remaining >= 3600 ? 22px : 28px; weight: 600; color: TFg.c; }
             if cell.has && !cell.t.running: Text { x: 0; y: 12px + 76px; width: cell.width; height: 14px; text: "Paused"; font-size: 11px; color: TFg.c.with-alpha(0.50); horizontal-alignment: center; vertical-alignment: center; }
             if cell.has: Text { x: 12px; y: 136px; width: cell.width - 24px; height: 22px; text: root.name(cell.t.label); font-size: 15px; font-weight: 600; color: cell.t.tint.mix(TFg.c, 0.55);
                 horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
@@ -758,16 +851,27 @@ export component TimersPage inherits Rectangle {
 
     // ---------------------------------------------------------------- kitchen, hourglass, flip: one timer big, chips for the others
     property <bool> themed: !root.ringing && root.mode == 1 && (root.theme == 1 || root.theme == 2 || root.theme == 4) && root.n >= 1;
-    property <length> vis: root.top + (root.n > 1 ? 38px : 0px);         // where the theme picture starts
-    if root.themed && root.n > 1: HorizontalLayout {
-        x: 0; y: root.top; width: root.width; height: 30px; alignment: center; spacing: 8px;
+    // the chips list every timer (34.7), equally wide, wrapping onto more rows when they do not fit; without tabs the round +
+    // keeps the row's right end
+    chip-m := Text { visible: false; text: "0:00:00"; font-size: 13px; font-weight: 600; }
+    property <length> chip-w: chip-m.preferred-width + 34px;
+    property <length> chip-area: root.funcs > 1 ? root.width - 32px : root.width - 32px - 56px;
+    property <int> chip-k: Math.max(1, Math.floor((root.chip-area + 8px) / (root.chip-w + 8px)));
+    property <int> chip-rows: root.n > 1 ? Math.ceil(root.n / root.chip-k) : 0;
+    property <length> vis: root.top + root.chip-rows * 38px;         // where the theme picture starts
+    if root.themed && root.n > 1: Rectangle {
+        x: 16px; y: root.top; width: root.chip-area; height: root.chip-rows * 38px;
         for t[i] in root.timers: Rectangle {
-            width: tl.preferred-width + 30px; height: 30px; border-radius: 15px;
+            property <int> crow: Math.floor(i / root.chip-k);
+            property <int> in-row: Math.min(root.chip-k, root.n - self.crow * root.chip-k);
+            x: (parent.width - self.in-row * (root.chip-w + 8px) + 8px) / 2 + Math.mod(i, root.chip-k) * (root.chip-w + 8px);
+            y: self.crow * 38px;
+            width: root.chip-w; height: 30px; border-radius: 15px;
             background: i == root.pick ? t.tint : t.tint.with-alpha(0.18);
             TouchArea { clicked => { Act.act("timers.pick", i); } }
-            Rectangle { x: 10px; y: 11px; width: 8px; height: 8px; border-radius: 4px; background: i == root.pick ? #ffffff : t.tint; }
-            tl := Text { x: 24px; width: self.preferred-width; height: parent.height; text: root.clock(t.remaining); font-size: 13px; font-weight: 600;
-                color: i == root.pick ? #ffffff : t.tint.mix(TFg.c, 0.6); vertical-alignment: center; }
+            Rectangle { x: 12px; y: 11px; width: 8px; height: 8px; border-radius: 4px; background: i == root.pick ? #ffffff : t.tint; }
+            Text { x: 24px; width: parent.width - 30px; height: parent.height; text: root.clock(t.remaining); font-size: 13px; font-weight: 600;
+                color: i == root.pick ? #ffffff : t.tint.mix(TFg.c, 0.6); vertical-alignment: center; horizontal-alignment: center; }
         }
     }
     if root.themed: TimerControls { x: 0; y: 384px; width: root.width; height: 56px; play: 56px; running: root.cur.running; tint: root.cur.tint; index: min(root.pick, root.n - 1); }
@@ -798,11 +902,22 @@ export component TimersPage inherits Rectangle {
         init => { kit.mins-last = kit.mins-now; }
         Timer { interval: 330ms; running: kit.winding; triggered => { kit.winding = false; } }
         property <float> wt: kit.winding ? (animation-tick() - kit.wind-t0) / 1ms : 1000;
-        property <float> mins: !kit.winding ? kit.mins-now
+        property <float> mins-run: !kit.winding ? kit.mins-now
             : kit.wt < 120 ? kit.wind-from + (kit.wind-to + 1 - kit.wind-from) * Math.min(3, Math.floor(kit.wt / 40) + 1) / 3
             : kit.wind-to + (kit.mins-now - kit.wind-to) + Math.pow(1 - clamp((kit.wt - 120) / 200, 0, 1), 2) * Math.cos(clamp((kit.wt - 120) / 200, 0, 1) * 180deg * 0.5);
         property <length> jolt: kit.winding && kit.wt < 120 && Math.mod(kit.wt, 40) < 14 ? 1px : 0px;
-        y: kit.jolt;
+        // the page entrance (25.T14): the scale winds from 0 to one minute mark past the time (400 ms, ease-out) with T2's
+        // 1 px jolt at the 5-minute marks it passes (at most 8), then springs back (200 ms); the knob counts up
+        property <float> e: tm.ent;
+        property <float> goal: kit.mins-now + 1;
+        property <float> ent-mins: tm.armed ? 0 : kit.e < 400 ? kit.goal * root.eo(kit.e / 400)
+            : kit.mins-now + Math.pow(1 - clamp((kit.e - 400) / 200, 0, 1), 2) * Math.cos(clamp((kit.e - 400) / 200, 0, 1) * 90deg);
+        property <float> mins: tm.calm ? kit.mins-run : kit.ent-mins;
+        property <int> mark: Math.floor(kit.ent-mins / 5);
+        property <int> stride: Math.max(1, Math.ceil(kit.goal / 5 / 8));
+        property <float> mark-t: 400 * (1 - Math.pow(Math.max(0, 1 - kit.mark * 5 / Math.max(1, kit.goal)), 1 / 3));
+        property <length> ent-jolt: !tm.armed && !tm.calm && kit.e < 400 && kit.mark >= 1 && Math.mod(kit.mark, kit.stride) == 0 && kit.e - kit.mark-t < 14 ? 1px : 0px;
+        y: kit.jolt + kit.ent-jolt;
         Image { x: (kit.cx - 132) * 1px; y: (kit.cy - 132) * 1px; width: 264px; height: 264px; source: @image-url("timers/kit/shadow.png"); }
         Image { x: (kit.cx - 132) * 1px; y: (kit.cy - 132) * 1px; width: 264px; height: 264px; source: @image-url("timers/kit/body-mask.png"); colorize: root.cur.tint; }
         Image { x: (kit.cx - 132) * 1px; y: (kit.cy - 132) * 1px; width: 264px; height: 264px; source: @image-url("timers/kit/body-shade.png"); }
@@ -826,8 +941,8 @@ export component TimersPage inherits Rectangle {
         Image { x: (kit.cx - 62) * 1px; y: (kit.cy - 32) * 1px; width: 124px; height: 64px; source: @image-url("timers/kit/knob-shadow.png"); }
         Image { x: (kit.cx - 62) * 1px; y: (kit.cy - 32) * 1px; width: 124px; height: 64px; source: @image-url("timers/kit/knob-mask.png"); colorize: root.cur.tint.mix(#000000, 0.22); }
         Image { x: (kit.cx - 62) * 1px; y: (kit.cy - 32) * 1px; width: 124px; height: 64px; source: @image-url("timers/kit/knob-shade.png"); }
-        TimeText { x: (kit.cx - 52) * 1px; y: (kit.cy - 22) * 1px; width: 104px; height: 44px; text: root.clock(root.cur.remaining); rem: root.cur.remaining; size: root.cur.remaining >= 3600 ? 18px : 22px; font-weight: 700;
-            color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+        RollTime { x: (kit.cx - 52) * 1px; y: (kit.cy - 22) * 1px; width: 104px; height: 44px; quiet: !tm.calm;
+            t: tm.calm ? root.cur.remaining : Math.min(root.cur.remaining, kit.ent-mins * 60); size: root.cur.remaining >= 3600 ? 18px : 22px; weight: 700; color: #ffffff; }
     }
 
     // 2 hourglass: glass, wooden frame and sand drawn as layers; the app picks the sand frame
@@ -835,7 +950,12 @@ export component TimersPage inherits Rectangle {
     if root.themed && root.theme == 2: hg := Rectangle {
         property <length> x0: 54px;
         property <length> y0: root.vis + max(0px, (380px - root.vis - 244px) / 2);
-        property <bool> flowing: root.cur.running && root.fr > 0.002 && root.fr < 0.998;
+        // the page entrance (25.T14): the glass turns over (T3, 500 ms), then the level steps from full to the current one
+        // (400 ms) with the stream running; out of view the sand lies in the lower bulb
+        property <float> e: tm.ent;
+        property <bool> flip-ent: !tm.armed && !tm.calm && hg.e < 600;
+        property <bool> pouring: !tm.armed && !tm.calm && hg.e >= 500 && hg.e < 900;
+        property <bool> flowing: hg.pouring || (tm.calm && root.cur.running && root.fr > 0.002 && root.fr < 0.998);
         // the sand: 48 levels true to the time left (47 = full top), the next level fading in by the fraction,
         // the time left gliding between the app's whole seconds; the stream falls while it runs
         property <[image]> masks: [@image-url("timers/hg/sand-mask-00.png"), @image-url("timers/hg/sand-mask-01.png"), @image-url("timers/hg/sand-mask-02.png"), @image-url("timers/hg/sand-mask-03.png"), @image-url("timers/hg/sand-mask-04.png"), @image-url("timers/hg/sand-mask-05.png"), @image-url("timers/hg/sand-mask-06.png"), @image-url("timers/hg/sand-mask-07.png"), @image-url("timers/hg/sand-mask-08.png"), @image-url("timers/hg/sand-mask-09.png"), @image-url("timers/hg/sand-mask-10.png"), @image-url("timers/hg/sand-mask-11.png"), @image-url("timers/hg/sand-mask-12.png"), @image-url("timers/hg/sand-mask-13.png"), @image-url("timers/hg/sand-mask-14.png"), @image-url("timers/hg/sand-mask-15.png"), @image-url("timers/hg/sand-mask-16.png"), @image-url("timers/hg/sand-mask-17.png"), @image-url("timers/hg/sand-mask-18.png"), @image-url("timers/hg/sand-mask-19.png"), @image-url("timers/hg/sand-mask-20.png"), @image-url("timers/hg/sand-mask-21.png"), @image-url("timers/hg/sand-mask-22.png"), @image-url("timers/hg/sand-mask-23.png"), @image-url("timers/hg/sand-mask-24.png"), @image-url("timers/hg/sand-mask-25.png"), @image-url("timers/hg/sand-mask-26.png"), @image-url("timers/hg/sand-mask-27.png"), @image-url("timers/hg/sand-mask-28.png"), @image-url("timers/hg/sand-mask-29.png"), @image-url("timers/hg/sand-mask-30.png"), @image-url("timers/hg/sand-mask-31.png"), @image-url("timers/hg/sand-mask-32.png"), @image-url("timers/hg/sand-mask-33.png"), @image-url("timers/hg/sand-mask-34.png"), @image-url("timers/hg/sand-mask-35.png"), @image-url("timers/hg/sand-mask-36.png"), @image-url("timers/hg/sand-mask-37.png"), @image-url("timers/hg/sand-mask-38.png"), @image-url("timers/hg/sand-mask-39.png"), @image-url("timers/hg/sand-mask-40.png"), @image-url("timers/hg/sand-mask-41.png"), @image-url("timers/hg/sand-mask-42.png"), @image-url("timers/hg/sand-mask-43.png"), @image-url("timers/hg/sand-mask-44.png"), @image-url("timers/hg/sand-mask-45.png"), @image-url("timers/hg/sand-mask-46.png"), @image-url("timers/hg/sand-mask-47.png")];
@@ -845,7 +965,8 @@ export component TimersPage inherits Rectangle {
         property <[image]> stream-shades: [@image-url("timers/hg/stream-shade-0.png"), @image-url("timers/hg/stream-shade-1.png"), @image-url("timers/hg/stream-shade-2.png"), @image-url("timers/hg/stream-shade-3.png")];
         property <float> frs: root.fr;
         animate frs { duration: 1000ms; easing: linear; }
-        property <float> lf: Math.max(0, Math.min(47, hg.frs * 47));
+        property <float> lf-run: Math.max(0, Math.min(47, hg.frs * 47));
+        property <float> lf: tm.armed ? 0 : tm.calm ? hg.lf-run : hg.e < 500 ? 47 : 47 + (hg.lf-run - 47) * clamp((hg.e - 500) / 400, 0, 1);
         // The level and the tint are plain properties, set only when they really change. The renderer draws a
         // coloured picture once and keeps it while its source and colour stay; bound to the gliding amount (or to
         // the timer row, new every second) they counted as changed each frame and the sand was coloured again
@@ -881,17 +1002,17 @@ export component TimersPage inherits Rectangle {
         property <duration> flip-t0;
         changed key => { if root.cur.total - root.cur.remaining < 2 { hg.flip-t0 = animation-tick(); hg.flipping = true; } }
         Timer { interval: 620ms; running: hg.flipping; triggered => { hg.flipping = false; } }
-        property <float> ft: hg.flipping ? (animation-tick() - hg.flip-t0) / 1ms : 1000;
+        property <float> ft: hg.flipping ? (animation-tick() - hg.flip-t0) / 1ms : hg.flip-ent ? hg.e : 1000;
         property <float> fu: clamp(hg.ft / 500, 0, 1);
         property <float> fe: hg.fu < 0.5 ? 2 * hg.fu * hg.fu : 1 - Math.pow(2 - 2 * hg.fu, 2) / 2;
         property <int> fk: Math.max(1, Math.min(9, Math.ceil(hg.fe * 9)));
-        property <float> normal-k: !hg.flipping ? 1 : hg.ft < 500 ? 0 : clamp((hg.ft - 500) / 100, 0, 1);
+        property <float> normal-k: !hg.flipping && !hg.flip-ent ? 1 : hg.ft < 500 ? 0 : clamp((hg.ft - 500) / 100, 0, 1);
         property <[image]> flip-back: [@image-url("timers/hg/flip-back-1.png"), @image-url("timers/hg/flip-back-2.png"), @image-url("timers/hg/flip-back-3.png"), @image-url("timers/hg/flip-back-4.png"), @image-url("timers/hg/flip-back-5.png"), @image-url("timers/hg/flip-back-6.png"), @image-url("timers/hg/flip-back-7.png"), @image-url("timers/hg/flip-back-8.png"), @image-url("timers/hg/flip-back-9.png")];
         property <[image]> flip-mask: [@image-url("timers/hg/flip-sand-mask-1.png"), @image-url("timers/hg/flip-sand-mask-2.png"), @image-url("timers/hg/flip-sand-mask-3.png"), @image-url("timers/hg/flip-sand-mask-4.png"), @image-url("timers/hg/flip-sand-mask-5.png"), @image-url("timers/hg/flip-sand-mask-6.png"), @image-url("timers/hg/flip-sand-mask-7.png"), @image-url("timers/hg/flip-sand-mask-8.png"), @image-url("timers/hg/flip-sand-mask-9.png")];
         property <[image]> flip-shade: [@image-url("timers/hg/flip-sand-shade-1.png"), @image-url("timers/hg/flip-sand-shade-2.png"), @image-url("timers/hg/flip-sand-shade-3.png"), @image-url("timers/hg/flip-sand-shade-4.png"), @image-url("timers/hg/flip-sand-shade-5.png"), @image-url("timers/hg/flip-sand-shade-6.png"), @image-url("timers/hg/flip-sand-shade-7.png"), @image-url("timers/hg/flip-sand-shade-8.png"), @image-url("timers/hg/flip-sand-shade-9.png")];
         property <[image]> flip-front: [@image-url("timers/hg/flip-front-1.png"), @image-url("timers/hg/flip-front-2.png"), @image-url("timers/hg/flip-front-3.png"), @image-url("timers/hg/flip-front-4.png"), @image-url("timers/hg/flip-front-5.png"), @image-url("timers/hg/flip-front-6.png"), @image-url("timers/hg/flip-front-7.png"), @image-url("timers/hg/flip-front-8.png"), @image-url("timers/hg/flip-front-9.png")];
         Image { x: hg.x0; y: hg.y0; width: 172px; height: 244px; source: @image-url("timers/hg/floor-shadow.png"); }
-        if hg.flipping && hg.normal-k < 1: Rectangle {
+        if (hg.flipping || hg.flip-ent) && hg.normal-k < 1: Rectangle {
             x: hg.x0 - 64px; y: hg.y0 - 32px; width: 300px; height: 300px;
             opacity: 1 - hg.normal-k;
             Image { width: 300px; height: 300px; source: hg.flip-back[hg.fk - 1]; }
@@ -936,10 +1057,11 @@ export component TimersPage inherits Rectangle {
         Image { x: hg.x0; y: hg.y0; width: 172px; height: 244px; source: @image-url("timers/hg/frame.png"); }
         }
         // name, time, total on the right
-        Text { x: 252px; y: hg.y0 + 118px - 64px; width: 210px; height: 24px; text: root.name(root.cur.label); font-size: 18px; font-weight: 600;
-            color: root.cur.tint.mix(TFg.c, 0.55); overflow: elide; vertical-alignment: center; }
-        TimeText { x: 250px; y: hg.y0 + 118px - 40px; width: 214px; height: 62px; text: root.clock(root.cur.remaining); rem: root.cur.remaining; size: root.cur.remaining >= 3600 ? 42px : 56px; font-weight: 600;
-            color: TFg.c; vertical-alignment: center; }
+        // the name over the time: a long one wraps (up to three lines)
+        Text { x: 252px; y: hg.y0 + 118px - 40px - 75px; width: 210px; height: 75px; text: root.name(root.cur.label); font-size: 17px; font-weight: 600;
+            color: root.cur.tint.mix(TFg.c, 0.55); wrap: word-wrap; vertical-alignment: bottom; }
+        RollTime { x: 250px; y: hg.y0 + 118px - 40px; width: 214px; height: 62px; align: left; quiet: !tm.calm;
+            t: tm.calm ? root.cur.remaining : root.cur.remaining * root.eo(hg.e / 900); size: root.cur.remaining >= 3600 ? 42px : 56px; weight: 600; color: TFg.c; }
         Text { x: 252px; y: hg.y0 + 118px + 24px; width: 210px; height: 20px; text: root.cur.running ? "of " + root.clock(root.cur.total) : "Paused"; font-size: 14px; color: TFg.c.with-alpha(0.50); vertical-alignment: center; }
     }
 
@@ -951,20 +1073,28 @@ export component TimersPage inherits Rectangle {
         property <length> ch: 132px;
         property <length> cw: 82px;
         property <length> fy: (root.vis + 378px - self.ch) / 2 + 6px;
+        // the page entrance (25.T14): every card 0, then each flaps down through the digits to its own (60 ms a flap, the
+        // cards starting 30 ms apart from the left); out of view the cards show 0
+        pure function fd(i: int, g: int) -> string {
+            return tm.armed ? "0" : tm.calm ? "" + g : "" + Math.max(0, Math.min(g, Math.floor((tm.ent - 30 * i) / 60)));
+        }
         Rectangle { x: 16px; y: root.vis; width: root.width - 32px; height: 378px - root.vis; border-radius: 22px; background: root.cur.tint.mix(#000000, 0.8);
             Rectangle { x: 18px; y: 3px; width: parent.width - 36px; height: 2px; border-radius: 1px; background: #ffffff40; } }
-        Text { x: 32px; y: root.vis + 12px; width: root.width - 64px; height: 26px; text: root.name(root.cur.label); font-size: 18px; font-weight: 700; color: #ffffff;
-            horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
+        Text { x: 32px; y: root.vis + 4px; width: root.width - 64px; height: Math.max(26px, flp.fy - root.vis - 6px); text: root.name(root.cur.label); font-size: 18px; font-weight: 700;
+            color: #ffffff; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; overflow: elide; }
         HorizontalLayout {
             x: 0; y: flp.fy; width: root.width; height: flp.ch; alignment: center; spacing: 8px;
             // the cards flip at every change, shortened to 2 x 160 ms (they change every second)
-            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: Math.floor(flp.mm / 10); dur: 320ms; delay: 210ms; search: true; }
-            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: Math.mod(flp.mm, 10); dur: 320ms; delay: 140ms; search: true; }
+            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: flp.fd(0, Math.floor(flp.mm / 10)); dur: tm.calm ? 320ms : 60ms;
+                delay: tm.calm ? 210ms : 0ms; search: tm.calm; }
+            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: flp.fd(1, Math.mod(flp.mm, 10)); dur: tm.calm ? 320ms : 60ms;
+                delay: tm.calm ? 140ms : 0ms; search: tm.calm; }
             VerticalLayout { alignment: center; spacing: 26px;
                 Rectangle { width: 12px; height: 12px; border-radius: 6px; background: #ffffff; }
                 Rectangle { width: 12px; height: 12px; border-radius: 6px; background: #ffffff; } }
-            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: Math.floor(flp.ss / 10); dur: 320ms; delay: 70ms; }
-            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: Math.mod(flp.ss, 10); dur: 320ms; }
+            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: flp.fd(2, Math.floor(flp.ss / 10)); dur: tm.calm ? 320ms : 60ms;
+                delay: tm.calm ? 70ms : 0ms; }
+            FlapCard { width: flp.cw; height: flp.ch; card: #17171b; weight: 700; new-digit: flp.fd(3, Math.mod(flp.ss, 10)); dur: tm.calm ? 320ms : 60ms; }
         }
         Text { x: 0; y: flp.fy + flp.ch + 10px; width: root.width; height: 20px; text: (flp.hrs ? "h : min  ·  " : "") + (root.cur.running ? "of " + root.clock(root.cur.total) : "Paused");
             font-size: 14px; color: #ffffffcc; horizontal-alignment: center; vertical-alignment: center; }
@@ -982,10 +1112,10 @@ export component TimersPage inherits Rectangle {
             property <TimerItem> t: root.timers[0];
             property <color> g: self.t.running && self.t.remaining < 60 ? #ff5a5f : root.sw-rings[root.sw-scene * 4];
             NeonRing { x: (root.width - 212px) / 2; y: root.top + 8px; width: 212px; height: 212px; stroke: 8px; glow: parent.g; paused: !parent.t.running;
-                fr: parent.t.total > 0 ? parent.t.remaining / parent.t.total : 0; }
+                fr: parent.t.total > 0 ? parent.t.remaining / parent.t.total : 0; grow: root.sw-k(0); visible: !root.sw-off(0); }
             NeonText { x: (root.width - 160px) / 2; y: root.top + 58px; width: 160px; height: 24px; text: root.name(parent.t.label); size: 17px; weight: 600;
                 glow: parent.g; rim: root.deep; core: parent.g.mix(#ffffff, 0.45); }
-            NeonClock { x: 0; y: root.top + 84px; width: root.width; height: 62px; t: parent.t.remaining; size-short: 54px; size-long: 42px; weight: 400;
+            NeonClock { x: 0; y: root.top + 84px; width: root.width; height: 62px; t: parent.t.remaining * root.sw-k(0); size-short: 54px; size-long: 42px; weight: 400;
                 glow: parent.g; rim: root.deep; }
             NeonText { x: 0; y: root.top + 146px; width: root.width; height: 20px; text: parent.t.running ? "of " + root.clock(parent.t.total) : "PAUSED"; size: 13px; weight: 600;
                 glow: parent.g; rim: root.deep; core: parent.g.mix(#ffffff, 0.6); }
@@ -997,10 +1127,11 @@ export component TimersPage inherits Rectangle {
             for t[i] in root.timers: tc := Rectangle {
                 property <color> g: t.running && t.remaining < 60 ? #ff5a5f : root.sw-rings[root.sw-scene * 4 + i];
                 x: 22px + i * 230px; y: root.top + 12px; width: 206px; height: 300px;
-                NeonRing { x: 8px; y: 0; width: 190px; height: 190px; stroke: 7px; glow: parent.g; paused: !t.running; fr: t.total > 0 ? t.remaining / t.total : 0; }
+                NeonRing { x: 8px; y: 0; width: 190px; height: 190px; stroke: 7px; glow: parent.g; paused: !t.running; fr: t.total > 0 ? t.remaining / t.total : 0;
+                    grow: root.sw-k(60 * i); visible: !root.sw-off(60 * i); }
                 TouchArea { x: 8px; y: 0; width: 190px; height: 190px; clicked => { Act.act("timers.sheet", i); } }
                 NeonText { x: 28px; y: 50px; width: 150px; height: 22px; text: root.name(t.label); size: 15px; weight: 600; glow: parent.g; rim: root.deep; core: parent.g.mix(#ffffff, 0.45); }
-                NeonClock { x: 0; y: 72px; width: 206px; height: 50px; t: t.remaining; size-short: 40px; size-long: 32px; weight: 400; glow: parent.g; rim: root.deep; }
+                NeonClock { x: 0; y: 72px; width: 206px; height: 50px; t: t.remaining * root.sw-k(60 * i); size-short: 40px; size-long: 32px; weight: 400; glow: parent.g; rim: root.deep; }
                 NeonText { x: 0; y: 122px; width: 206px; height: 18px; text: t.running ? "of " + root.clock(t.total) : "PAUSED"; size: 12px; weight: 600; glow: parent.g; rim: root.deep; core: parent.g.mix(#ffffff, 0.6); }
                 HorizontalLayout {
                     x: 0; y: 206px; width: 206px; height: 52px; alignment: center; spacing: 10px;
@@ -1016,12 +1147,13 @@ export component TimersPage inherits Rectangle {
             for c in 4: scell := Rectangle {
                 x: 20px + Math.mod(c, 2) * 224px; y: root.top + Math.floor(c / 2) * 176px; width: 216px; height: 168px;
                 property <bool> has: c < root.n;
-                property <TimerItem> t: self.has ? root.timers[c] : { label: "", remaining: 0, total: 0, running: false, tint: #ffffff };
+                property <int> ti: Math.min(root.at(c), root.n - 1);
+                property <TimerItem> t: self.has ? root.timers[self.ti] : { label: "", remaining: 0, total: 0, running: false, tint: #ffffff };
                 property <color> g: self.t.running && self.t.remaining < 60 && self.has ? #ff5a5f : root.sw-rings[root.sw-scene * 4 + Math.mod(c, 4)];
-                TouchArea { clicked => { Act.act(scell.has ? "timers.sheet" : "timers.quick", c); } }
+                TouchArea { clicked => { if scell.has { Act.act("timers.sheet", scell.ti); } else { Act.act("timers.new", ""); } } }
                 if scell.has: NeonRing { x: (scell.width - 118px) / 2; y: 10px; width: 118px; height: 118px; stroke: 6px; glow: scell.g; paused: !scell.t.running;
-                    fr: scell.t.total > 0 ? scell.t.remaining / scell.t.total : 0; }
-                if scell.has: NeonClock { x: 0; y: 10px + 38px; width: scell.width; height: 42px; t: scell.t.remaining; size-short: 28px; size-long: 22px; weight: 400;
+                    fr: scell.t.total > 0 ? scell.t.remaining / scell.t.total : 0; grow: root.sw-k(60 * c); visible: !root.sw-off(60 * c); }
+                if scell.has: NeonClock { x: 0; y: 10px + 38px; width: scell.width; height: 42px; t: scell.t.remaining * root.sw-k(60 * c); size-short: 28px; size-long: 22px; weight: 400;
                     glow: scell.g; rim: root.deep; }
                 if scell.has && !scell.t.running: NeonText { x: 0; y: 10px + 76px; width: scell.width; height: 14px; text: "PAUSED"; size: 10px; weight: 600; glow: scell.g; rim: root.deep; core: scell.g.mix(#ffffff, 0.6); }
                 if scell.has: NeonText { x: 12px; y: 136px; width: scell.width - 24px; height: 22px; text: root.name(scell.t.label); size: 15px; weight: 600;
@@ -1639,9 +1771,10 @@ export component TimersPage inherits Rectangle {
         }
     }
 
-    // ---------------------------------------------------------------- one or two timers running: another one (the quick starts)
-    // (three and four have a "+" cell in their grid)
-    if !root.ringing && root.mode == 1 && root.n >= 1 && root.n < 3 && !root.quick: Rectangle {
+    // ---------------------------------------------------------------- another timer (the quick starts): the round + (34.7)
+    // plain and synthwave while one or two run (three have a "+" cell in their grid, four or more fill it); kitchen, hourglass
+    // and flip whenever timers run
+    if !root.ringing && root.mode == 1 && root.n >= 1 && (root.n < 3 || root.theme == 1 || root.theme == 2 || root.theme == 4) && !root.quick: Rectangle {
         x: root.width - 16px - 40px; y: root.funcs > 1 ? 50px : 48px; width: 40px; height: 40px; border-radius: 20px;
         background: root.synth ? (add-ta.pressed ? #000000b3 : #00000080) : (add-ta.pressed ? TFg.c.with-alpha(0.22) : TFg.c.with-alpha(0.12));
         border-width: root.synth ? 1px : 0px; border-color: root.grid.with-alpha(0.55);
@@ -1704,26 +1837,89 @@ export component TimersPage inherits Rectangle {
             Text { width: parent.width; height: parent.height; text: root.ring-alarm ? "Snooze 9 min" : "+1 min"; font-size: 16px; font-weight: 600; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; } }
     }
 
-    // ---------------------------------------------------------------- one timer's sheet: its ring and time, +1 min, pause / go on,
-    // cancel (a tap on it where several run); the scrim closes it
-    property <bool> sheet-on: !root.ringing && root.mode == 1 && root.sheet >= 0 && root.sheet < root.n;
-    property <TimerItem> st: root.sheet >= 0 && root.sheet < root.n ? root.timers[root.sheet]
-        : { label: "", remaining: 0, total: 0, running: false, tint: #ffffff };
-    // the timer's colour as the page shows it (the synthwave scene's neon for its place, else its own)
-    property <color> st-tint: root.theme == 3 ? root.sw-rings[root.sw-scene * 4 + Math.mod(Math.max(0, root.sheet), 4)] : root.st.tint;
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.sheet-on; need: 330px; close => { Act.act("timers.sheet-close", ""); }
-        sheet-color: TFg.c.red > 128 ? #17181b : #ffffff; ink: TFg.c;
-        Text { x: 24px; y: 22px; width: parent.width - 48px; height: 28px; text: root.name(root.st.label); font-size: 18px; font-weight: 600;
-            color: root.st-tint.mix(TFg.c, 0.55); horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
-        Ring { x: (parent.width - 170px) / 2; y: 58px; width: 170px; height: 170px; stroke: 10px; track: TFg.c.with-alpha(0.12);
-            fr: root.st.total > 0 ? root.st.remaining / root.st.total : 0; arc: root.st-tint; opacity: root.st.running ? 1 : 0.55; }
-        TimeText { x: 0; y: 58px + 52px; width: parent.width; height: 48px; text: root.clock(root.st.remaining); rem: root.st.remaining; size: root.st.remaining >= 3600 ? 34px : 42px;
-            font-weight: 600; color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
-        Text { x: 0; y: 58px + 100px; width: parent.width; height: 18px; text: root.st.running ? "of " + root.clock(root.st.total) : "Paused";
-            font-size: 13px; color: TFg.c.with-alpha(0.55); horizontal-alignment: center; vertical-alignment: center; }
-        TimerControls { x: 0; y: 244px; width: parent.width; height: 64px; running: root.st.running; tint: root.st-tint; index: root.sheet; }
+    // ---------------------------------------------------------------- the timers tab's menus (spec 34): one timer's menu, the
+    // new timer and the page's settings, each an object of the timer look (MenuHost places it, dims the page and closes it on
+    // a tap beside it); they close when the page leaves the screen or a timer rings
+    property <color> tm-tube: TimerLooks.tubes[Math.max(0, Math.min(3, root.sw-scene))];
+    // one timer's menu: where the plain and synthwave looks show several timers, over the cell it came from
+    property <bool> tm-cells: (root.theme == 0 || root.theme == 3) && root.n >= 2;
+    property <bool> sheet-on: !root.ringing && root.mode == 1 && root.on-screen && root.tm-cells && root.sheet >= 0 && root.sheet < root.n;
+    // the timer it shows, its cell and its place (kept while the menu leaves)
+    property <TimerItem> st-live: root.sheet >= 0 && root.sheet < root.n ? root.timers[root.sheet] : root.st-kept;
+    property <TimerItem> st-kept;
+    changed st-live => { root.st-kept = root.st-live; }
+    property <int> st-cell: root.n == 2 ? root.sheet : root.at(0) == root.sheet ? 0 : root.at(1) == root.sheet ? 1 : root.at(2) == root.sheet ? 2
+        : root.n > 3 && root.at(3) == root.sheet ? 3 : -1;
+    property <length> st-cx-live: root.st-cell < 0 ? 240px : root.n == 2 ? (root.theme == 3 ? 22px + root.st-cell * 230px + 103px : 28px + root.st-cell * 224px + 100px)
+        : 20px + Math.mod(root.st-cell, 2) * 224px + 108px;
+    property <length> st-cy-live: root.st-cell < 0 ? 258px : root.n == 2 ? root.top + (root.theme == 3 ? 12px + 95px : 6px + 100px)
+        : root.top + Math.floor(root.st-cell / 2) * 176px + 84px;
+    property <length> st-cx: root.sheet >= 0 ? root.st-cx-live : root.st-cx-kept;
+    property <length> st-cy: root.sheet >= 0 ? root.st-cy-live : root.st-cy-kept;
+    property <length> st-cx-kept;
+    property <length> st-cy-kept;
+    changed st-cx => { root.st-cx-kept = root.st-cx; }
+    changed st-cy => { root.st-cy-kept = root.st-cy; }
+    st-name := Text { visible: false; width: 268px; text: root.name(root.st-live.label); font-size: 16px; font-weight: 600; wrap: word-wrap; }
+    st-title := Text { visible: false; width: 288px; text: root.name(root.st-live.label).to-uppercase(); font-family: "Press Start 2P"; font-size: 15px;
+        letter-spacing: 1px; wrap: word-wrap; }
+    property <length> st-w: root.theme == 3 ? 320px : 300px;
+    property <length> st-need: root.theme == 3 ? st-title.preferred-height + 230px : st-name.preferred-height + 228px;
+    property <length> st-h: Math.min(420px, root.st-need);
+    property <length> st-x: clamp(root.st-cx - root.st-w / 2, 16px, 464px - root.st-w);
+    property <length> st-y: clamp(root.st-cy - root.st-h / 2, 48px, 468px - root.st-h);
+    // its colour as the page shows it (the synthwave scene's neon for its cell, red in its last minute)
+    property <color> st-tint: root.theme != 3 ? root.st-live.tint
+        : root.st-live.running && root.st-live.remaining < 60 ? #ff5a5f : root.sw-rings[root.sw-scene * 4 + Math.max(0, root.st-cell)];
+    sheet-host := MenuHost {
+        open: root.sheet-on; kind: 0; need: root.st-need;
+        in-ms: root.theme == 3 ? 360ms : 140ms; out-ms: root.theme == 3 ? 200ms : 100ms;
+        close => { Act.act("timers.sheet-close", ""); }
+        TimerMenu {
+            x: root.st-x; y: root.st-y; width: root.st-w; height: root.st-h;
+            arcade: root.theme == 3; t: root.st-live; tint: root.st-tint; tube: root.tm-tube; index: Math.max(0, root.sheet);
+            t-in: sheet-host.t-in; t-out: sheet-host.t-out; leaving: !sheet-host.open;
+            grow-x: root.st-cx - root.st-x; grow-y: root.st-cy - root.st-y; name-h: st-name.preferred-height;
+        }
+    }
+    // the new timer (the grid's "+" cell, the custom quick start)
+    property <bool> new-on: !root.ringing && root.mode == 1 && root.on-screen && root.edit && root.edit-timer;
+    new-host := MenuHost {
+        open: root.new-on; kind: 1; need: newm.need;
+        in-ms: TimerLooks.in-ms(root.theme); out-ms: TimerLooks.out-ms(root.theme);
+        close => { Act.act("alarm.close", ""); }
+        newm := NewTimerMenu {
+            x: new-host.menu-x; y: new-host.menu-y; width: new-host.menu-w; height: new-host.menu-h;
+            look: root.theme; tube: root.tm-tube; opened: new-host.open;
+            hours <=> root.edit-h; minutes <=> root.edit-m; label: root.edit-label;
+            t-in: new-host.t-in; t-out: new-host.t-out; leaving: !new-host.open;
+            start => { Act.act("timers.create", ""); }
+            edit-label => { Act.act("alarm.label", ""); }
+        }
+    }
+    // the page's settings on the timers tab (the quick shade's page row)
+    property <bool> set-on: !root.ringing && root.mode == 1 && root.on-screen && root.settings && !tm.swapping;
+    set-host := MenuHost {
+        open: root.set-on; kind: 1; need: setm.need;
+        in-ms: TimerLooks.in-ms(root.theme); out-ms: TimerLooks.out-ms(root.theme);
+        close => { Act.act("timers.settings", "close"); }
+        setm := TimerSettingsMenu {
+            x: set-host.menu-x; y: set-host.menu-y; width: set-host.menu-w; height: set-host.menu-h;
+            look: root.theme; tube: root.tm-tube;
+            t-in: set-host.t-in; t-out: set-host.t-out; leaving: !set-host.open;
+            alarm-on: root.alarm-on; timer-on: root.timer-on; watch-on: root.watch-on; colourful: root.colourful;
+            scene-choice: root.sw-choice >= -1 ? root.sw-choice : root.sw-scene;
+            function-toggled(k) => { Act.act("timers.function", k); }
+            colourful-picked(c) => { Act.act("timers.colourful", c ? "1" : "0"); }
+            look-picked(i) => {
+                if i != root.theme && !tm.swapping {
+                    tm.swap-to = i;
+                    tm.swapping = true;
+                }
+            }
+            scene-picked(i) => { Act.act("timers.scene", i); }
+            done => { Act.act("timers.settings", "close"); }
+        }
     }
 
     // ---------------------------------------------------------------- alarm editor (spec 35): the alarm look's own menu under the
@@ -1736,117 +1932,48 @@ export component TimersPage inherits Rectangle {
         sound-options: root.edit-ha-sound != "" ? [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5], root.edit-ha-sound]
             : [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5]];
     }
-    // the new timer's editor: a sheet sized to its content, under the status bar
-    if root.edit && root.edit-timer && !root.edit-keyboard: Rectangle { background: #00000080; TouchArea { clicked => { Act.act("alarm.close", ""); } } }
-    if root.edit && root.edit-timer && !root.edit-keyboard: ed := Rectangle {
-        TouchArea { }
-        property <bool> ha: root.edit-ha-sound != "" && !root.edit-timer;
-        property <length> dy: 56px;                       // drums
-        property <length> ty: self.dy + 120px + 14px;     // days
-        property <length> sy: self.ty + 40px + 18px;      // sounds (two lines, a third for the one set in Home Assistant)
-        property <length> ly: root.edit-timer ? self.dy + 120px + 18px : self.sy + 48px + 18px;      // label
-        x: 0; y: root.height - self.height; width: root.width; height: self.ly + 44px + 14px;
-        border-top-left-radius: 24px; border-top-right-radius: 24px; background: Theme.sheet;
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: TFg.c.with-alpha(0.25); }
-        Text { x: 20px; y: 16px; height: 32px; text: root.edit-timer ? "New timer" : root.edit-new ? "New alarm" : "Edit alarm"; font-size: 20px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
-        if !root.edit-new && !root.edit-timer: Rectangle { x: parent.width - 16px - 88px - 46px - 46px; y: 14px; width: 36px; height: 36px; border-radius: 18px; border-width: 1px; border-color: #ff5a5f80;
-            Icon { width: parent.width; height: parent.height; text: "\u{F01B4}"; font-size: 20px; color: #ff7a7e; }
-            TouchArea { clicked => { Act.act("alarm.delete", ""); } } }
-        Rectangle { x: parent.width - 16px - 88px - 46px; y: 14px; width: 36px; height: 36px; border-radius: 18px; background: TFg.c.with-alpha(0.12);
-            Icon { width: parent.width; height: parent.height; text: "\u{F0156}"; font-size: 21px; color: TFg.c.with-alpha(0.90); }
-            TouchArea { clicked => { Act.act("alarm.close", ""); } } }
-        // brand: a button's text is Ink or Paper, its ground the text colour
-        Rectangle { x: parent.width - 16px - 88px; y: 15px; width: 88px; height: 34px; border-radius: 17px; background: TFg.c;
-            Text { width: parent.width; height: parent.height; text: root.edit-timer ? "Start" : "Save"; font-size: 15px; font-weight: 600; color: Theme.dark ? #101114 : #F5F3EE; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { clicked => { Act.act(root.edit-timer ? "timers.create" : "alarm.save", ""); } } }
-        // time: two drums, the middle row is the value
-        Rectangle { x: 72px; y: ed.dy + 40px; width: parent.width - 144px; height: 40px; border-radius: 14px; background: TFg.c.with-alpha(0.07); }
-        for col[ci] in [{ v: root.edit-h, n: 24, x: 118 }, { v: root.edit-m, n: 60, x: 256 }]: drum := Rectangle {
-            property <int> base;
-            // drag: a row (40 px) per step; a tap on the upper or lower row: one step
-            TouchArea {
-                x: col.x * 1px; y: ed.dy; width: 106px; height: 120px;
-                pointer-event(ev) => { if ev.kind == PointerEventKind.down { drum.base = col.v; } }
-                moved => {
-                    let k = Math.round((self.pressed-y - self.mouse-y) / 40px);
-                    let v = Math.mod(drum.base + k + col.n * 4, col.n);
-                    if ci == 0 { root.edit-h = v; } else { root.edit-m = v; }
-                }
-                clicked => {
-                    let k = self.mouse-y < 40px ? -1 : self.mouse-y > 80px ? 1 : 0;
-                    let v = Math.mod(col.v + k + col.n, col.n);
-                    if ci == 0 { root.edit-h = v; } else { root.edit-m = v; }
-                }
-            }
-            for r in [-1, 0, 1]: Text {
-                property <int> val: Math.mod(col.v + r + col.n * 2, col.n);
-                x: col.x * 1px; y: ed.dy + 40px + r * 40px; width: 106px; height: 40px;
-                text: ci == 0 ? "" + self.val : root.two(self.val);
-                font-size: r == 0 ? 38px : 24px; font-weight: r == 0 ? 600 : 500;
-                color: r == 0 ? TFg.c : TFg.c.with-alpha(0.35); horizontal-alignment: center; vertical-alignment: center;
-            }
-        }
-        if !root.edit-timer: Text { x: 0; y: ed.dy + 40px; width: parent.width; height: 40px; text: ":"; font-size: 36px; font-weight: 600; color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
-        if root.edit-timer: Text { x: 198px; y: ed.dy + 40px; width: 30px; height: 40px; text: "h"; font-size: 16px; color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
-        if root.edit-timer: Text { x: 336px; y: ed.dy + 40px; width: 44px; height: 40px; text: "min"; font-size: 16px; color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
-        // days
-        if !root.edit-timer: HorizontalLayout {
-            x: 16px; y: ed.ty; width: parent.width - 32px; height: 40px; alignment: space-between;
-            for d[i] in ["M", "T", "W", "T", "F", "S", "S"]: Rectangle {
-                width: 54px; height: 40px; border-radius: 20px;
-                TouchArea { clicked => { Act.act("alarm.day", i); } }
-                background: root.edit-days[i] ? root.edit-tint : transparent; border-width: root.edit-days[i] ? 0px : 1px; border-color: TFg.c.with-alpha(0.25);
-                Text { width: parent.width; height: parent.height; text: d; font-size: 15px; font-weight: 600; color: root.edit-days[i] ? #ffffff : TFg.c.with-alpha(0.70); horizontal-alignment: center; vertical-alignment: center; }
-            }
-        }
-        // sound: a dropdown of the built-in ones (picking one plays it) and the one set in Home Assistant; the info button
-        if !root.edit-timer: Dropdown {
-            x: 16px; y: ed.sy; width: parent.width - 32px - (root.ha-sounds ? 44px : 0px); up: true;
-            options: ed.ha ? [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5], root.edit-ha-sound]
-                : [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5]];
-            selected: root.edit-sound;
-            picked(i) => { Act.act("alarm.sound", i); }
-        }
-        if !root.edit-timer && root.ha-sounds: Rectangle { x: parent.width - 16px - 36px; y: ed.sy + 6px; width: 36px; height: 36px; border-radius: 18px;
-            background: root.edit-info ? TFg.c.with-alpha(0.18) : TFg.c.with-alpha(0.08);
-            Icon { width: parent.width; height: parent.height; text: "\u{F02FD}"; font-size: 18px; color: TFg.c.with-alpha(0.80); }
-            TouchArea { clicked => { Act.act("alarm.info", ""); } } }
-        // label: a tap opens the keyboard
-        Rectangle {
-            x: 16px; y: ed.ly; width: parent.width - 32px; height: 44px; border-radius: 14px; background: TFg.c.with-alpha(0.07);
-            Icon { x: 14px; width: 22px; height: parent.height; text: "\u{F04F9}"; font-size: 19px; color: TFg.c.with-alpha(0.60); }
-            TouchArea { clicked => { Act.act("alarm.label", ""); } }
-            Text { x: 46px; width: parent.width - 60px; height: parent.height; text: root.edit-label != "" ? root.edit-label : "Label"; font-size: 16px;
-                color: root.edit-label != "" ? TFg.c : TFg.c.with-alpha(0.40); vertical-alignment: center; overflow: elide; }
-        }
-        // the info note: where the other sounds come from
-        if root.edit-info: Rectangle {
-            x: 16px; y: ed.sy - 96px; width: parent.width - 32px; height: 88px; border-radius: 16px; background: Theme.dark ? #2c2c32 : #e9e6df;
-            border-width: 1px; border-color: TFg.c.with-alpha(0.12);
-            Text { x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 24px; wrap: word-wrap; font-size: 14px; color: TFg.c.with-alpha(0.85); vertical-alignment: center;
-                text: "Music from Music Assistant or a sound of your own: pick it for this alarm in Home Assistant and it shows up here."; }
-        }
-    }
-    // label keyboard (the same block as on the setup screens)
-    if root.edit && root.edit-keyboard: Rectangle {
+    // label keyboard (the same block as on the setup screens); a label holds up to 60 characters (a timer's; an alarm's 32):
+    // the count shows under the field, and a key pressed at the limit shakes the field (±4 px, three times in 300 ms); the
+    // end of a long label stays in view
+    if root.edit && root.edit-keyboard: kbv := Rectangle {
         background: Theme.background;
+        TouchArea { }
+        property <int> limit: root.edit-timer ? 60 : 32;
+        property <int> count: root.edit-label.character-count;
+        property <bool> full: kbv.count >= kbv.limit;
+        property <bool> shaking;
+        property <duration> s0;
+        Timer { interval: 320ms; running: kbv.shaking; triggered => { kbv.shaking = false; } }
+        property <length> shake: kbv.shaking ? 4px * Math.sin(1080deg * clamp((animation-tick() - kbv.s0) / 300ms, 0, 1)) : 0px;
         Text { x: 20px; y: 52px; height: 34px; text: root.edit-timer ? "Timer label" : "Alarm label"; font-size: 20px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
         Rectangle { x: parent.width - 16px - 88px; y: 52px; width: 88px; height: 34px; border-radius: 17px; background: TFg.c;
             Text { width: parent.width; height: parent.height; text: "Done"; font-size: 15px; font-weight: 600; color: Theme.dark ? #101114 : #F5F3EE; horizontal-alignment: center; vertical-alignment: center; }
             TouchArea { clicked => { Act.act("alarm.key", "enter"); } } }
         Rectangle {
-            x: 16px; y: 100px; width: parent.width - 32px; height: 52px; border-radius: 14px; background: TFg.c.with-alpha(0.07); border-width: 1.5px; border-color: root.edit-tint;
-            lt := Text { x: 16px; width: min(self.preferred-width, parent.width - 70px); height: parent.height; text: root.edit-label; font-size: 18px; color: TFg.c; vertical-alignment: center; overflow: elide; }
-            Rectangle { x: 16px + lt.width + 2px; y: 14px; width: 2px; height: 24px; background: root.edit-tint; }
+            x: 16px + kbv.shake; y: 100px; width: parent.width - 32px; height: 52px; border-radius: 14px; background: TFg.c.with-alpha(0.07); border-width: 1.5px; border-color: root.edit-tint;
+            Rectangle {
+                x: 16px; width: parent.width - 66px; height: parent.height; clip: true;
+                lt := Text { x: Math.min(0px, parent.width - 6px - self.preferred-width); width: self.preferred-width; height: parent.height; text: root.edit-label; font-size: 18px;
+                    color: TFg.c; vertical-alignment: center; }
+                Rectangle { x: lt.x + lt.width + 2px; y: 14px; width: 2px; height: 24px; background: root.edit-tint; }
+            }
             if root.edit-label != "": Rectangle { x: parent.width - 44px; y: 8px; width: 36px; height: 36px; border-radius: 18px;
                 Icon { width: parent.width; height: parent.height; text: "\u{F0159}"; font-size: 20px; color: TFg.c.with-alpha(0.50); }
                 TouchArea { clicked => { Act.act("alarm.key", "clear"); } } }
         }
-        Text { x: 20px; y: 162px; width: parent.width - 40px; height: 20px; text: root.edit-timer ? (root.edit-h > 0 ? root.edit-h + " h " : "") + root.edit-m + " min"
+        Text { x: 20px; y: 162px; width: parent.width - 40px - 72px; height: 20px; text: root.edit-timer ? (root.edit-h > 0 ? root.edit-h + " h " : "") + root.edit-m + " min"
                 : AlarmClock.hm(root.edit-h, root.edit-m) + "  ·  " + root.sounds[min(root.edit-sound, root.sounds.length - 1)];
             font-size: 13px; color: TFg.c.with-alpha(0.50); vertical-alignment: center; overflow: elide; }
+        Text { x: parent.width - 20px - 72px; y: 162px; width: 72px; height: 20px; text: kbv.count + " / " + kbv.limit; font-size: 13px;
+            font-weight: kbv.full ? 700 : 400; color: kbv.full ? root.edit-tint : TFg.c.with-alpha(0.50); horizontal-alignment: right; vertical-alignment: center; }
         Keyboard { x: Theme.pad; y: Theme.keyboard-top; width: root.width - 2 * Theme.pad; layer: root.kb-layer; layout: root.kb-layout; enter-label: "Done"; accent: root.edit-tint;
-            key(k) => { Act.act("alarm.key", k); } }
+            key(k) => {
+                if kbv.full && k != "enter" && k != "back" && k != "clear" && k != "shift" && k != "symbols" && k != "layout" {
+                    kbv.s0 = animation-tick();
+                    kbv.shaking = true;
+                }
+                Act.act("alarm.key", k);
+            } }
     }
 
     // ---------------------------------------------------------------- the alarm and stopwatch tabs' settings (spec 35, 36): the page's
@@ -1899,66 +2026,6 @@ export component TimersPage inherits Rectangle {
                 if root.mode == 0 { root.sw-menu = false; root.al-menu = true; }
                 if root.mode == 2 { root.al-menu = false; root.sw-menu = true; }
             }
-        }
-    }
-
-    // ---------------------------------------------------------------- settings: functions, colour, theme (+ scene)
-    // the settings fades in (240 ms) and out (200 ms) instead of popping
-    property <float> settings-k: root.settings ? 1 : 0;
-    animate settings-k { duration: root.settings ? 240ms : 200ms; easing: ease-out; }
-    if root.settings-k > 0.001: Rectangle { opacity: root.settings-k; background: #00000080; }
-    if root.settings-k > 0.001: st := Rectangle { opacity: root.settings-k;
-        property <bool> scenes: root.theme == 3;
-        property <length> r0: 72px;
-        property <length> r1: self.r0 + 32px + 22px;
-        property <length> r2: self.r1 + 32px + 22px;
-        property <length> r3: self.r2 + 32px + 8px + 32px + 22px;
-        x: 0; y: root.height - self.height; width: root.width;
-        height: (st.scenes ? self.r3 + 32px + 8px + 32px : self.r2 + 32px + 8px + 32px) + 24px;
-        border-top-left-radius: 24px; border-top-right-radius: 24px;
-        background: Theme.sheet;
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: TFg.c.with-alpha(0.25); }
-        Text { x: 20px; y: 22px; text: "Alarms & timers"; font-size: 20px; font-weight: 600; color: TFg.c; }
-        Rectangle { x: parent.width - 16px - 88px - 46px; y: 18px; width: 36px; height: 36px; border-radius: 18px; background: TFg.c.with-alpha(0.12);
-            Icon { width: parent.width; height: parent.height; text: "\u{F02FD}"; font-size: 21px; color: TFg.c.with-alpha(0.90); } }
-        Rectangle { x: parent.width - 16px - 88px; y: 19px; width: 88px; height: 34px; border-radius: 17px; background: Theme.text;
-            Text { width: parent.width; height: parent.height; text: "Done"; font-size: 15px; font-weight: 600; color: Theme.background; horizontal-alignment: center; vertical-alignment: center; } }
-        HorizontalLayout {
-            x: 16px; y: st.r0; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: "Alarm"; on: root.alarm-on; check: true; }
-            Chip { text: "Timer"; on: root.timer-on; check: true; }
-            Chip { text: "Stopwatch"; on: root.watch-on; check: true; }
-        }
-        HorizontalLayout {
-            x: 16px; y: st.r1; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.0"); on: root.colourful; }
-            for c in [#ff3d6e, #ffb21e, #22d3a6, #3d9bff, #a76bff]: VerticalLayout { alignment: center;
-                Rectangle { width: 10px; height: 10px; border-radius: 5px; background: c; opacity: root.colourful ? 1 : 0.35; } }
-            Rectangle { width: 10px; }
-            Chip { text: Words.line("ui.looks.timers.1"); on: !root.colourful; }
-            VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: Theme.accent; opacity: root.colourful ? 0.35 : 1; } }
-        }
-        HorizontalLayout {
-            x: 16px; y: st.r2; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.2"); on: root.theme == 0; }
-            Chip { text: Words.line("ui.looks.timers.3"); on: root.theme == 1; }
-            Chip { text: Words.line("ui.looks.timers.4"); on: root.theme == 2; }
-        }
-        HorizontalLayout {
-            x: 16px; y: st.r2 + 40px; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.5"); on: root.theme == 3; }
-            Chip { text: Words.line("ui.looks.timers.6"); on: root.theme == 4; }
-        }
-        if st.scenes: HorizontalLayout {
-            x: 16px; y: st.r3; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.7"); on: root.sw-choice < 0; }
-            Chip { text: Words.line("ui.looks.timers.8"); on: root.sw-choice == 0; }
-            Chip { text: "Concrete Jungle"; on: root.sw-choice == 1; }
-        }
-        if st.scenes: HorizontalLayout {
-            x: 16px; y: st.r3 + 40px; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: "Life's a Beach"; on: root.sw-choice == 2; }
-            Chip { text: "Starry-Eyed"; on: root.sw-choice == 3; }
         }
     }
 }

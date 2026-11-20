@@ -1634,12 +1634,12 @@ export component HomeGrid inherits Rectangle {
         property <bool> tip;
         property <length> rows-h: bg-rows.preferred-height;
         ArcadeScreen {
-            property <length> h: self.need;
+            property <length> h: self.head-h + bg-host.rows-h + self.foot-h;
             x: 16px; y: Math.max(48px, 422px - self.h); width: 448px; height: self.h;
             tube: root.tubes[Math.max(0, Math.min(3, root.fl-scene))];
             title: "BACKGROUND";
-            body-h: bg-host.rows-h;
-            open: bg-host.open;
+            foot: true;
+            leaving: !bg-host.open;
             t-in: bg-host.t-in; t-out: bg-host.t-out;
             bg-rows := VerticalLayout {
                 width: 416px;
