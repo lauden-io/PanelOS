@@ -80,10 +80,19 @@ component Bar inherits Rectangle {
                 root.axis = 0;
                 root.drag-v = max(0, min(1, (self.mouse-x - 10px) / root.width));
                 root.easing = false;
-            } else if ev.kind == PointerEventKind.up && root.axis != 2 {
-                root.v0 = root.value;
-                root.holding = true;
-                root.done(root.drag-v);
+            } else if ev.kind == PointerEventKind.up {
+                // a flick can arrive as a press and a release with no move between (the pager holds the press for
+                // 100 ms before it hands it over): the release decides the axis then, and a flick across the bar
+                // never sets it
+                if root.axis == 0 && max(Math.abs((self.mouse-x - self.pressed-x) / 1px), Math.abs((self.mouse-y - self.pressed-y) / 1px)) > 8 {
+                    root.axis = Math.abs(self.mouse-x - self.pressed-x) >= Math.abs(self.mouse-y - self.pressed-y) ? 1 : 2;
+                    if root.axis == 1 { root.drag-v = max(0, min(1, (self.mouse-x - 10px) / root.width)); }
+                }
+                if root.axis != 2 {
+                    root.v0 = root.value;
+                    root.holding = true;
+                    root.done(root.drag-v);
+                }
             }
         }
         moved => {
@@ -578,6 +587,7 @@ export component MusicPage inherits Rectangle {
         property <bool> fdrag;
         property <bool> fpress;
         property <length> fy0;
+        property <length> fx0;
         property <float> fbase;
         property <float> fv;
         // let go: the fader stays where it was dropped until the player's volume follows (or 3 s), then glides
@@ -602,12 +612,18 @@ export component MusicPage inherits Rectangle {
                     tt.fpress = true;
                     tt.fdrag = false;
                     tt.fy0 = self.mouse-y;
+                    tt.fx0 = self.mouse-x;
                 }
                 if ev.kind == PointerEventKind.up {
                     if tt.fdrag {
                         tt.fhold = true; Act.act("music.volume", tt.fv);
-                    } else if tt.fpress {
-                        // a tap: the fader jumps to where the finger was
+                    } else if tt.fpress && abs(self.mouse-y - tt.fy0) > 6px && abs(self.mouse-y - tt.fy0) >= abs(self.mouse-x - tt.fx0) {
+                        // a flick along the fader that came as a press and a release (the pager holds the press for
+                        // 100 ms): it moves the fader by as much as the finger moved, like a drag
+                        tt.fv = max(0, min(1, tt.vol + (tt.fy0 - self.mouse-y) / 1px / (tt.f1 - tt.f0)));
+                        tt.fhold = true; Act.act("music.volume", tt.fv);
+                    } else if tt.fpress && abs(self.mouse-y - tt.fy0) <= 6px && abs(self.mouse-x - tt.fx0) <= 6px {
+                        // a tap: the fader jumps to where the finger was (a flick across it changes nothing)
                         tt.fv = max(0, min(1, (tt.f1 - (self.y + tt.fy0) / 1px) / (tt.f1 - tt.f0)));
                         tt.fhold = true; Act.act("music.volume", tt.fv);
                     }
@@ -618,8 +634,9 @@ export component MusicPage inherits Rectangle {
             }
             moved => {
                 if tt.fpress && !tt.fdrag && abs(self.mouse-y - tt.fy0) > 6px {
+                    // a drag starts from the value shown (during the hold after a release: the one dropped there)
+                    tt.fbase = tt.vol;
                     tt.fdrag = true;
-                    tt.fbase = root.volume;
                 }
                 if tt.fdrag {
                     tt.fv = max(0, min(1, tt.fbase + (tt.fy0 - self.mouse-y) / 1px / (tt.f1 - tt.f0)));
