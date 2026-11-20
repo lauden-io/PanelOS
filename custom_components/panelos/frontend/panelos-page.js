@@ -100,6 +100,8 @@ const TIMER_FUNCTIONS = [["timer", "Timers"], ["alarm", "Alarms"], ["stopwatch",
 const SW_LOOKS = [[0, "Plain"], [1, "Chronograph"], [2, "Timing tower"], [3, "LCD watch"], [4, "Nixie"]];
 const ALARM_LOOKS = [[0, "Plain"], [1, "Twin-bell"], [2, "Sunrise"], [3, "Clock radio"], [4, "24-hour dial"]];
 const VOICE_LOOKS = ["Plain", "Terminal", "Comic", "Oscilloscope"];
+// Option ids of the selects Home Assistant makes for a voice satellite, by the names Home Assistant shows for them
+const VOICE_OPTION_NAMES = { preferred: "Preferred", default: "Default", relaxed: "Relaxed", aggressive: "Aggressive", no_wake_word: "No wake word" };
 
 // Sounds. Stored values: "auto" (the place's default), "lib:<id>" (a PanelOS sound, {STATIC}/sounds/<id>.mp3
 // here), "own:<id>" (uploaded once for every panel, house.sounds). The last two PanelOS sounds are for
@@ -1164,6 +1166,7 @@ class PanelOSPage extends HTMLElement {
     }
     if (first && this.isConnected) this._start();
     this._liveSoon();
+    this._watchSat(hass);
   }
 
   get hass() {
@@ -3677,14 +3680,47 @@ class PanelOSPage extends HTMLElement {
 
   // -- voice ----------------------------------------------------------------------------
 
-  // A voice satellite's wake words as the satellite itself has them (its select entities can lag behind).
-  _loadSatCfg(sat) {
-    if (this._satCfgLoading === sat) return;
+  // A voice satellite's wake words as the satellite itself has them (its select entities can lag behind). Asked
+  // again when the satellite or its wake word selects change in Home Assistant (_watchSat), at most every 30 s while
+  // the Voice section is shown, and 10 s after a failed try. A failed try keeps the last answer; without one the rows
+  // say that it could not be read (never "No wake word"). The page is drawn again only when the answer changed.
+  _loadSatCfg(sat, force = false) {
+    const had = this._satCfg[sat];
+    if (this._satCfgLoading === sat) {
+      if (force) this._satCfgAgain = true;
+      return;
+    }
+    if (!force && had && Date.now() - had.at < (had.failed ? 10000 : 30000)) return;
     this._satCfgLoading = sat;
+    const words = (c) => JSON.stringify([c?.available_wake_words || [], c?.active_wake_words || [], Boolean(c?.failed && !c?.active_wake_words)]);
     this._hass.callWS({ type: "assist_satellite/get_configuration", entity_id: sat })
-      .then((cfg) => { this._satCfg[sat] = cfg; })
-      .catch(() => { this._satCfg[sat] = { available_wake_words: [], active_wake_words: [] }; })
-      .finally(() => { this._satCfgLoading = null; this._render(); });
+      .then((cfg) => { this._satCfg[sat] = { ...cfg, at: Date.now() }; })
+      .catch(() => { this._satCfg[sat] = { ...(had && had.active_wake_words ? had : {}), failed: true, at: Date.now() }; })
+      .finally(() => {
+        this._satCfgLoading = null;
+        if (this._satCfgAgain) {
+          this._satCfgAgain = false;
+          this._loadSatCfg(sat, true);
+          return;
+        }
+        if (words(had) !== words(this._satCfg[sat])) this._render();
+      });
+  }
+
+  // While the Voice section is shown: a change of the satellite or of its wake word selects (on the panel, through
+  // the selects, another browser) asks the satellite again, once at once and once 2 s later (the satellite takes the
+  // new words in the background); otherwise the answer is renewed when it is old (_loadSatCfg).
+  _watchSat(hass) {
+    const w = this._satWatch;
+    if (!w || this._route().view !== "voice") return;
+    const now = w.ids.map((id) => hass?.states?.[id]);
+    const changed = now.some((s, k) => s !== w.states[k]);
+    w.states = now;
+    if (changed) {
+      this._loadSatCfg(w.sat, true);
+      clearTimeout(this._satAgainTimer);
+      this._satAgainTimer = setTimeout(() => this._loadSatCfg(w.sat, true), 2000);
+    } else this._loadSatCfg(w.sat);
   }
 
   // The voice satellite's device (ESPHome), shown as connected via the panel's device.
@@ -3699,6 +3735,11 @@ class PanelOSPage extends HTMLElement {
     const ids = new Set(devices.map((d) => d.id));
     const ents = Object.values(this._entityReg).filter((e) => ids.has(e.device_id) && !e.hidden && !e.hidden_by && !e.disabled_by && /^(select|switch|number)\./.test(e.entity_id) && this._hass.states[e.entity_id]);
     const sat = Object.values(this._entityReg).find((e) => ids.has(e.device_id) && e.entity_id.startsWith("assist_satellite."))?.entity_id;
+    // the satellite and its wake word selects: a change of one asks the satellite again (_watchSat)
+    if (sat) {
+      const watch = [sat, ...ents.map((e) => e.entity_id).filter((x) => /^select\..*_wake_word(_2)?$/.test(x))];
+      if (this._satWatch?.sat !== sat || this._satWatch.ids.join() !== watch.join()) this._satWatch = { sat, ids: watch, states: watch.map((x) => this._hass.states[x]) };
+    } else this._satWatch = null;
     const control = (e) => {
       const id = e.entity_id;
       const s = this._hass.states[id];
@@ -3709,10 +3750,8 @@ class PanelOSPage extends HTMLElement {
       const wk = /_wake_word(_2)?$/.exec(id);
       if (domain === "select" && wk && sat) {
         const cfg = this._satCfg[sat];
-        if (!cfg) {
-          this._loadSatCfg(sat);
-          return h("span", { class: "muted" }, "…");
-        }
+        this._loadSatCfg(sat);
+        if (!cfg || !cfg.active_wake_words) return h("span", { class: "muted" }, cfg?.failed ? "Could not be read from the panel" : "…");
         const k = wk[1] ? 1 : 0;
         const names = Object.fromEntries((cfg.available_wake_words || []).map((w) => [w.id, w.wake_word]));
         const active = cfg.active_wake_words || [];
@@ -3721,12 +3760,16 @@ class PanelOSPage extends HTMLElement {
           const next = [active[0] || "", active[1] || ""];
           next[k] = v;
           const ids = next.filter((x, i) => x && next.indexOf(x) === i);
+          // shown at once; the satellite's own answer follows
+          this._satCfg[sat] = { ...cfg, active_wake_words: ids, at: Date.now() };
+          this._render();
           this._hass.callWS({ type: "assist_satellite/set_wake_words", entity_id: sat, wake_word_ids: ids })
-            .then(() => this._loadSatCfg(sat))
-            .catch((err) => this._toast(err.message || String(err), null, true));
+            .then(() => this._loadSatCfg(sat, true))
+            .catch((err) => { this._toast(err.message || String(err), null, true); this._loadSatCfg(sat, true); });
         }, { label: this._ename(id) });
       }
-      if (domain === "select") return this._choice((s.attributes.options || []).map((o) => [o, o === "no_wake_word" ? "No wake word" : o]), s.state, (v) => call("select_option", { option: v }), { label: this._ename(id) });
+      // the satellite selects' own ids (assistant, finished speaking detection, wake word) by their names
+      if (domain === "select") return this._choice((s.attributes.options || []).map((o) => [o, VOICE_OPTION_NAMES[o] || o]), s.state, (v) => call("select_option", { option: v }), { label: this._ename(id) });
       const a = s.attributes;
       const v = Number(s.state);
       return this._slider(Number.isNaN(v) ? a.min || 0 : v, a.min ?? 0, a.max ?? 100, a.step ?? 1, (x) => call("set_value", { value: x }), (x) => `${x}${a.unit_of_measurement ? ` ${a.unit_of_measurement}` : ""}`, { label: this._ename(id), disabled: s.state === "unavailable" });
