@@ -183,7 +183,7 @@ Dashboard mode is a secondary function. The panel is made first of all for the a
 
 The panel shows the dashboard as a browser does, custom cards included. It is logged in as its own Home Assistant user, so that user must be allowed to see the dashboard: a dashboard for administrators only, or views shown only to some users, stay empty on the panel.
 
-While a dashboard loads, the panel shows its loading screen (the PanelOS mark writing itself in Morse) over Home Assistant's own start-up and reveals the dashboard once it has settled: cards drawn, icons in, nothing changing any more (at most 45 s).
+While a dashboard loads, the panel shows its loading screen over Home Assistant's own start-up and reveals the dashboard once it has settled: cards drawn, icons in, nothing changing any more (at most 45 s).
 
 Options for dashboard mode, besides the dashboard, header and sidebar:
 
