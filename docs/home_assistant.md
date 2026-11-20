@@ -108,6 +108,8 @@ On the panel's device (this integration):
 | SoC temperature, Wi-Fi signal, IP address, App version | sensors | Diagnostics |
 | Restart app, Reboot | buttons | |
 
+The entities keep their last state for 30 s after the panel went away (a Wi-Fi hiccup, the app restarting), and turn unavailable only when it is still away then. The buttons are available only while the panel is connected. A reload of the integration keeps the last states and the 30 s as well.
+
 On the voice device (ESPHome): the Assist satellite, Volume, Mute microphone, and the Wake level, Wake SNR and Wake score sensors (sent with every wake word, see [app.md](app.md#esphome-native-api)), plus the selects Home Assistant creates for satellites (Assistant, Wake word, Finished speaking detection).
 
 Up to PanelOS 0.0.3 the panel's display, settings and sensors were on the ESPHome device. The integration takes these entities over with the same entity ids, history and settings. If the panel still runs an older PanelOS, they stay on the ESPHome device until it is updated, then move.
