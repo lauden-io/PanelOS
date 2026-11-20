@@ -648,9 +648,9 @@ fn update_clock(ui: &AppWindow) {
             let first = s.alarm_minute == 0;
             s.alarm_minute = minute;
             if !first {
-                if let Some((time, label, tone)) = alarms::due(s) {
+                if let Some((time, label, tone, hour)) = alarms::due(s) {
                     s.snooze = None;
-                    ring_alarm(ui, s, time, label, tone);
+                    ring_alarm(ui, s, time, label, tone, hour);
                 }
             }
             alarms::refresh(ui, s);
@@ -659,7 +659,9 @@ fn update_clock(ui: &AppWindow) {
         if s.snooze.as_ref().is_some_and(|(at, ..)| Instant::now() >= *at) {
             if let Some((_, _, label, tone)) = s.snooze.take() {
                 // the big time shows the time now (the alarm's own time has passed)
-                ring_alarm(ui, s, pages::local_format(pages::now(), "%-H:%M"), label, tone);
+                let (time, hour) = alarms::now_hm();
+                ring_alarm(ui, s, time, label, tone, hour);
+                alarms::refresh(ui, s);
             }
         }
         // Voice view: closes a few seconds after the end.
@@ -1138,6 +1140,8 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_quick(false);
     ui.set_timers_sheet(-1);
     ui.set_timers_settings(false);
+    ui.set_timers_edit(false);
+    ui.set_timers_edit_keyboard(false);
     ui.set_todo_picker(false);
     ui.set_cam_settings(false);
     ui.set_info_settings(false);
@@ -1642,6 +1646,12 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
             ui.set_timers_lap_marks(ModelRc::new(VecModel::from(marks)));
             ui.set_timers_laps(ModelRc::new(VecModel::from(laps)));
         }
+        // the stopwatch tab's look, from its settings menu (a page option the integration keeps)
+        "watch.look" => {
+            let look = (n as i32).clamp(0, 4);
+            ui.set_timers_sw_look(look);
+            page_set(ui, "timers", None, json!({ "sw_look": look }));
+        }
         "watch.reset" => {
             ui.invoke_watch_stop();
             ui.set_timers_watch_base(0.0);
@@ -1663,13 +1673,15 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
 }
 
 /// An alarm rings: its screen and its sound (looping until stopped, at most a minute).
-fn ring_alarm(ui: &AppWindow, s: &mut UiState, time: String, label: String, tone: String) {
+fn ring_alarm(ui: &AppWindow, s: &mut UiState, time: String, label: String, tone: String, hour: f32) {
     s.ring_tone = format!("{tone}|birds");
     ui.set_timers_ring_tint(accent(s));
     s.ringing = Some(Instant::now());
     s.ringing_flag.store(true, Ordering::SeqCst);
     ui.set_timers_ring_alarm(true);
     ui.set_timers_ring_time(time.into());
+    // the alarm looks draw the ringing time themselves (the radio's LED, the dial's hand)
+    ui.set_timers_ring_h(hour);
     ui.set_timers_ring_label(label.into());
     ui.set_timers_ringing(true);
     RANG.with(|r| r.set(true));
@@ -1683,7 +1695,11 @@ fn ring_more(ui: &AppWindow) {
     let tone = with_state(|s| s.ring_tone.rsplit_once('|').map(|(v, _)| v.to_string()).unwrap_or_default());
     stop_ringing(ui, "more time");
     if alarm {
-        with_state(|s| s.snooze = Some((Instant::now() + Duration::from_secs(9 * 60), time, label, tone)));
+        with_state(|s| {
+            s.snooze = Some((Instant::now() + Duration::from_secs(9 * 60), time, label, tone));
+            // the next-alarm lines show the snoozed ring
+            alarms::refresh(ui, s);
+        });
     } else {
         start_timer(ui, 60, label);
     }
