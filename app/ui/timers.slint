@@ -36,7 +36,7 @@ export struct AlarmItem {
 // a random line, never the last one, a random 10–30 s from below the front edge to the horizon; the next
 // one comes when it is gone)
 export struct SwCar {
-    line: float,        // which floor line (0 = the middle one, negative = left)
+    line: float,        // which floor line (-4 … 4: 0 = the middle one, negative = left)
     kind: int,          // 0 wedge, 1 flat tail with four round lights, 2 rounded fastback, 3 louvre, 4 winged, 5 patrol (police)
     tint: color,        // its colour (random, vivid)
     born: float,        // the scene clock (seconds) when it appeared
@@ -422,7 +422,7 @@ export component SynthScene inherits Rectangle {
             if self.mouse-y < 330px {
                 root.tap-x = self.mouse-x / 1px; root.tap-y = self.mouse-y / 1px; root.tap-t0 = animation-tick(); root.tap-star = true;
             } else {
-                Act.act("synth.lane", self.mouse-x / 1px);
+                Act.act("synth.lane", (self.mouse-x / 1px) + ":" + (self.mouse-y / 1px));
             }
         }
     }

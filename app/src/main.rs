@@ -3853,9 +3853,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         // Pages that fetch while on screen (cameras) start or stop.
         if let Some(ui) = weak.upgrade() {
             close_page_sheets(&ui);
-            if ui.get_pages().row_data(now as usize).is_some_and(|p| p.kind == "timers") {
-                synth::timers_opened();
-            }
+            synth::page_changed();
             leave_temporary_page(&ui, now);
             with_state(|s| cam::refresh(&ui, s));
             reroll_lines(ui.as_weak());

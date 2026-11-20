@@ -85,6 +85,20 @@ fn grid(scene: usize, view: &str) -> Color {
 /// A car's trip to the horizon (seconds): a random length in this range, so the speeds vary.
 const CAR_TRIP: (f32, f32) = (8.0, 18.0);
 
+/// The floor lines the cars drive along: the middle one and four on each side (the outer ones start partly off
+/// screen and come in from a lower corner).
+const LANES: [f32; 9] = [-4.0, -3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0];
+/// The outermost lane on either side.
+const MAX_LANE: f32 = 4.0;
+
+/// The floor line under a tap on the road at (`x`, `y`): the lines are 43.8 / d + 2.2 px apart at the depth
+/// d = 150 / (y - 330) of the tap (46 px at the bottom edge, closer towards the horizon).
+fn lane_at(x: f32, y: f32) -> f32 {
+    let d = 150.0 / (y - 330.0).max(1.0);
+    let spacing = 43.8 / d + 2.2;
+    ((x - 240.0) / spacing).round().clamp(-MAX_LANE, MAX_LANE)
+}
+
 /// A car's depth at a share of its trip (as the scene draws it: 0.46 under the front edge … 60).
 fn car_depth(share: f32) -> f32 {
     0.46 * (60.0f32 / 0.46).powf(share.clamp(0.0, 1.0))
@@ -138,7 +152,23 @@ fn on_screen(ui: &AppWindow, s: &crate::UiState) -> bool {
     let pages = ui.get_pages();
     let Some(p) = slint::Model::row_data(&pages, ui.get_page().max(0) as usize) else { return false };
     let theme = if p.theme >= 0 { p.theme } else { ui.get_weather().theme };
-    (p.kind == "home" && theme == 8) || (p.kind == "timers" && p.variant == 3) || (p.kind == "thermostat" && p.variant == 3)
+    ((p.kind == "home" || p.kind == "weather") && theme == 8) || (p.kind == "timers" && p.variant == 3) || (p.kind == "thermostat" && p.variant == 3)
+}
+
+/// The synthwave scene of the panel (one for every page with the synthwave background): the first custom or weather
+/// details page that has the synthwave background chooses it; else the first custom page's choice, else the old panel
+/// setting.
+fn scene_choice(s: &crate::UiState) -> usize {
+    let pages = s.panel_config.as_ref().and_then(|c| c.get("pages")).and_then(Value::as_array);
+    let own = pages.into_iter().flatten().find(|p| {
+        matches!(p.get("kind").and_then(Value::as_str), Some("home" | "weather"))
+            && p.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64) == Some(8)
+    });
+    own.and_then(|p| p.get("options")?.get("scene")?.as_u64())
+        .or_else(|| crate::page_option(s, "home", "scene").and_then(|v| v.as_u64()))
+        .or_else(|| s.panel_config.as_ref().and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
+        .unwrap_or(0)
+        .min(3) as usize
 }
 
 thread_local! {
@@ -168,13 +198,13 @@ fn patrol_clock(shown: bool) -> bool {
 pub fn test_cars(ui: &AppWindow, n: usize) {
     let n = n.clamp(1, 20);
     let now = ui.get_scene_t();
-    let lanes = [-2.0f32, 2.0, -1.0, 1.0, 0.0];
+    let lanes = [-4.0f32, 4.0, -2.0, 2.0, 0.0, -3.0, 3.0, -1.0, 1.0];
     let mut cars: Vec<SwCar> = Vec::new();
     for k in 0..n {
         let dur = 14.0;
         if k == n - 1 && k > 0 {
             let lead = cars[k - 1].clone();
-            let line = if lead.line < 2.0 { lead.line + 1.0 } else { lead.line - 1.0 };
+            let line = if lead.line < MAX_LANE { lead.line + 1.0 } else { lead.line - 1.0 };
             cars.push(SwCar { line, kind: PATROL, tint: Color::from_rgb_u8(255, 255, 255), born: lead.born + lead.dur * PATROL_BEHIND.0, dur: lead.dur, ..Default::default() });
             break;
         }
@@ -207,16 +237,47 @@ fn patrol_went() {
 const SCENE_WRAP_S: f32 = 1200.0;
 
 thread_local! {
-    /// The timers page's scene while its option says "random" (a new one each time the page is opened).
-    static TIMERS_RANDOM: std::cell::Cell<usize> = std::cell::Cell::new(random() as usize % 4);
+    /// The timers page's scene while its option says "random": the scene, whether the page has been shown with it,
+    /// and the scene clock's ticks since the timers page was last shown or a swipe moved the pages.
+    static TIMERS_RANDOM: std::cell::Cell<(usize, bool, u32)> = std::cell::Cell::new((random() as usize % 4, false, 0));
 }
 
-/// The timers page was opened: a random scene picks a new one (never the same twice in a row).
-pub fn timers_opened() {
+/// The next random scene: any of the other three (never the same twice in a row).
+fn next_random_scene(current: usize, roll: u64) -> usize {
+    (current + 1 + (roll % 3) as usize) % 4
+}
+
+/// The pages moved (a swipe settled on another page): the timers page's next scene waits until it is out of sight.
+pub fn page_changed() {
     TIMERS_RANDOM.with(|r| {
-        let next = (r.get() + 1 + random() as usize % 3) % 4;
-        r.set(next);
+        let (scene, seen, _) = r.get();
+        r.set((scene, seen, 0));
     });
+}
+
+/// The timers page's random scene (called once a second). A new one is picked while the page is out of sight, once it
+/// has been shown with the last one: two ticks after it went (by then a swipe's slide has settled) and with no finger
+/// moving the pages, so however the page is opened (a swipe, a timer on the island, the status bar's mark, a ring) it
+/// comes with its new scene from the first frame, and the scene never changes while the page is in view.
+fn timers_random_scene(ui: &AppWindow) -> usize {
+    let pages = ui.get_pages();
+    let showing = slint::Model::row_data(&pages, ui.get_page().max(0) as usize).is_some_and(|p| p.kind == "timers");
+    let dragging = ui.get_dragging();
+    TIMERS_RANDOM.with(|r| {
+        let (mut scene, mut seen, mut away) = r.get();
+        if showing || dragging {
+            seen |= showing;
+            away = 0;
+        } else {
+            away = away.saturating_add(1);
+            if seen && away >= 2 {
+                scene = next_random_scene(scene, random());
+                seen = false;
+            }
+        }
+        r.set((scene, seen, away));
+        scene
+    })
 }
 
 /// Updates the scenes that are in use (once a second).
@@ -224,17 +285,13 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     // any page on the list with a synthwave look (a kind may be there more than once)
     let pages = ui.get_pages();
     let any = |f: &dyn Fn(&crate::PageSlot) -> bool| (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i)).any(|p| f(&p));
-    let home = ui.get_weather().theme == 8 || any(&|p| p.kind == "home" && p.theme == 8);
+    let home = ui.get_weather().theme == 8 || any(&|p| (p.kind == "home" || p.kind == "weather") && p.theme == 8);
     let timers = any(&|p| p.kind == "timers" && p.variant == 3);
     let thermo = any(&|p| p.kind == "thermostat" && p.variant == 3);
     if !home && !timers && !thermo {
         return;
     }
-    let scene = crate::page_option(s, "home", "scene")
-        .and_then(|v| v.as_u64())
-        .or_else(|| s.panel_config.as_ref().and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
-        .unwrap_or(0)
-        .min(3) as usize;
+    let scene = scene_choice(s);
     // The view by the sun: day above +3°, night below -6°, a fade between; the
     // beach has a dawn view for the morning: it comes in over the night view while the
     // sun rises from -12° to -6° (never at solar midnight, never in the evening).
@@ -260,7 +317,7 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     // the timers page's own scene (its option; -1 = a new random one every time the page is opened; none = the
     // home page's)
     let tscene = match crate::page_option(s, "timers", "scene").and_then(|v| v.as_i64()) {
-        Some(-1) => TIMERS_RANDOM.with(|r| r.get()),
+        Some(-1) => timers_random_scene(ui),
         Some(n) => n.clamp(0, 3) as usize,
         None => scene,
     };
@@ -353,8 +410,7 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     let mut next = alive.clone();
     if room {
         let last_line = all.iter().max_by(|a, b| a.born.total_cmp(&b.born)).map(|c| c.line).unwrap_or(9.0);
-        let lines = [-2.0f32, -1.0, 0.0, 1.0, 2.0];
-        let choices: Vec<f32> = lines.iter().copied().filter(|l| *l != last_line && !alive.iter().any(|c| c.line == *l)).collect();
+        let choices: Vec<f32> = LANES.iter().copied().filter(|l| *l != last_line && !alive.iter().any(|c| c.line == *l)).collect();
         // a random trip; a faster car may overtake a slower one only where the two would not touch
         // (lanes far enough apart at the depth where it passes); otherwise it is made just slower than
         // that one, and when that would need a trip over the longest, it waits
@@ -380,7 +436,7 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
                 // a free neighbouring line where, at the leader's pace, it touches no other car
                 let side: Vec<f32> = [line - 1.0, line + 1.0]
                     .into_iter()
-                    .filter(|l| l.abs() <= 2.0 && !alive.iter().any(|c| c.line == *l))
+                    .filter(|l| l.abs() <= MAX_LANE && !alive.iter().any(|c| c.line == *l))
                     .filter(|l| alive.iter().all(|c| clear_of(*l, born, dur, c)))
                     .collect();
                 if !side.is_empty() {
@@ -441,7 +497,7 @@ thread_local! {
 }
 
 /// Taps on the synthwave home background (spec 25.H4 / H5): `synth.push` "born:side" shoves that car (a fresh shove while
-/// it skids), `synth.lane` x asks for a car in the lane under the tap.
+/// it skids), `synth.lane` "x:y" asks for a car on the floor line under the tap.
 pub fn act(ui: &AppWindow, what: &str, value: &str) {
     use slint::Model;
     let cars = ui.get_home_fl_cars();
@@ -470,8 +526,10 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             if now - ASKED.with(|a| a.get()) < 3.0 {
                 return;
             }
-            let x: f32 = value.parse().unwrap_or(240.0);
-            let line = ((x - 240.0) / 46.0).round().clamp(-2.0, 2.0);
+            let mut at = value.split(':').map(|v| v.parse::<f32>().ok());
+            let x = at.next().flatten().unwrap_or(240.0);
+            let y = at.next().flatten().unwrap_or(480.0);
+            let line = lane_at(x, y);
             let all: Vec<SwCar> = (0..vec.row_count()).filter_map(|i| vec.row_data(i)).collect();
             let alive: Vec<SwCar> = all.iter().filter(|c| now - c.born <= c.dur + 0.5).cloned().collect();
             if alive.iter().any(|c| c.line == line) {
@@ -497,5 +555,60 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             eprintln!("nspanel-app: synthwave car asked for (lane {line})");
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nine_lanes_from_minus_four_to_four() {
+        assert_eq!(LANES.len(), 9);
+        assert_eq!(LANES.first().copied(), Some(-MAX_LANE));
+        assert_eq!(LANES.last().copied(), Some(MAX_LANE));
+        assert!(LANES.windows(2).all(|w| w[1] - w[0] == 1.0));
+    }
+
+    #[test]
+    fn a_tap_at_the_bottom_picks_the_line_46_px_apart() {
+        assert_eq!(lane_at(240.0, 480.0), 0.0);
+        assert_eq!(lane_at(240.0 + 46.0, 480.0), 1.0);
+        assert_eq!(lane_at(240.0 - 2.0 * 46.0, 479.0), -2.0);
+        // the outer lines and beyond: the outermost one
+        assert_eq!(lane_at(240.0 + 4.0 * 46.0, 480.0), 4.0);
+        assert_eq!(lane_at(470.0, 480.0), 4.0);
+        assert_eq!(lane_at(5.0, 480.0), -4.0);
+    }
+
+    #[test]
+    fn a_tap_further_up_uses_the_closer_lines_there() {
+        // y 380: d = 3, lines 16.8 px apart
+        assert_eq!(lane_at(240.0 + 3.0 * 16.8, 380.0), 3.0);
+        assert_eq!(lane_at(240.0 - 16.8, 380.0), -1.0);
+        // at the horizon the tap still gives a line
+        assert_eq!(lane_at(250.0, 330.0), 4.0);
+    }
+
+    #[test]
+    fn a_random_scene_is_never_the_same_twice() {
+        for current in 0..4 {
+            let next: Vec<usize> = (0..3).map(|roll| next_random_scene(current, roll)).collect();
+            assert!(next.iter().all(|&n| n != current && n < 4));
+            // each of the other three can come
+            let mut sorted = next.clone();
+            sorted.sort();
+            sorted.dedup();
+            assert_eq!(sorted.len(), 3);
+        }
+    }
+
+    #[test]
+    fn cars_on_far_apart_lines_pass_each_other() {
+        // a slow car on -4 just set off; a fast one on +4 overtakes it without touching
+        let slow = SwCar { line: -4.0, born: 0.0, dur: 18.0, ..Default::default() };
+        assert!(clear_of(4.0, 0.5, 8.0, &slow));
+        // on the same line it would run into it
+        assert!(!clear_of(-4.0, 0.5, 8.0, &slow));
     }
 }
