@@ -1127,6 +1127,7 @@ fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
 /// hide the dots of the others).
 fn close_page_sheets(ui: &AppWindow) {
     ui.set_quick_sheet(false);
+    ui.set_quick_settings(false);
     ui.set_thermo_sheet(false);
     ui.set_thermo_picker(false);
     ui.set_thermo_settings(false);
