@@ -155,7 +155,7 @@ A panel that connects gets what is active at that moment. The panels also list t
 
 ## Sounds
 
-Timers, alarms and critical alerts each have a sound, picked on the PanelOS page with a button to listen: one of the panel's own sounds (Glass chimes, Marimba, Birds, Mechanical bell, Digital, Synth; for critical alerts also SOS and Warning tone), or one uploaded on the page (MP3, WAV, OGG or FLAC up to 10 MB). The defaults: a timers page rings with its look's own sound, alarms with Birds, critical alerts with SOS (the PanelOS start-up tone keying S O S). An uploaded sound is converted once with Home Assistant's ffmpeg (16-bit WAV, mono, at most a minute; it loops while it rings) and kept in `/config/panelos/sounds`; every panel that uses it fetches it (`GET /api/panelos/sound/<id>`, with its login) and keeps a copy, so it rings even when Home Assistant is away.
+Timers, alarms and critical alerts each have a sound, picked on the PanelOS page with a button to listen: one of the panel's own sounds (Glass chimes, Marimba, Birds, Mechanical bell, Digital, Synth; for critical alerts also SOS and Warning tone), or one uploaded on the page (MP3, WAV, OGG or FLAC up to 10 MB). The defaults: a timers page rings with its look's own sound, alarms with Birds, critical alerts with SOS. An uploaded sound is converted once with Home Assistant's ffmpeg (16-bit WAV, mono, at most a minute; it loops while it rings) and kept in `/config/panelos/sounds`; every panel that uses it fetches it (`GET /api/panelos/sound/<id>`, with its login) and keeps a copy, so it rings even when Home Assistant is away.
 
 The alarms live on the panel (they ring without Home Assistant); the timers page's settings on the PanelOS page show them and change them (`panelos/page/alarms`; the panel reports its list with `alarms` in `panelos/report`). An alarm can also ring with music from Music Assistant (its playlists and radio stations, or what a search finds; `panelos/page/ma`): the panel asks Music Assistant to play it on the panel's own media player, starting quietly and getting louder over half a minute; if no music comes within 12 seconds, the alarm's default sound rings instead. Music Assistant has the panel as a player by itself: the panel is a Sendspin player, paired through Home Assistant with no setup (see [docs/app.md](app.md#voice-satellite)).
 
@@ -183,7 +183,7 @@ Dashboard mode is a secondary function. The panel is made first of all for the a
 
 The panel shows the dashboard as a browser does, custom cards included. It is logged in as its own Home Assistant user, so that user must be allowed to see the dashboard: a dashboard for administrators only, or views shown only to some users, stay empty on the panel.
 
-While a dashboard loads, the panel shows its loading screen (the PanelOS mark writing itself in Morse) over Home Assistant's own start-up and reveals the dashboard once it has settled: cards drawn, icons in, nothing changing any more (at most 45 s).
+While a dashboard loads, the panel shows its loading screen over Home Assistant's own start-up and reveals the dashboard once it has settled: cards drawn, icons in, nothing changing any more (at most 45 s).
 
 Options for dashboard mode, besides the dashboard, header and sidebar:
 
