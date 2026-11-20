@@ -55,31 +55,85 @@ pub fn stops_ring(text: &str) -> bool {
     is_stop(text) || stem
 }
 
+/// Stop words and two-word stop phrases (Hungarian and English).
+const STOP_WORDS: &[&str] = &[
+    "állj", "álljál", "álljon", "stop", "stopp", "sztop", "elég", "csend", "csendet", "hallgass", "kuss", "enough", "quiet", "silence", "cancel",
+];
+const STOP_PAIRS: &[(&str, &str)] = &[
+    ("kapcsold", "ki"),
+    ("állítsd", "le"),
+    ("állítsd", "meg"),
+    ("hagyd", "abba"),
+    ("turn", "off"),
+    ("shut", "up"),
+];
+/// Small words that may stand around a stop word in a voice run's stop phrase ("állj már", "stop the timer").
+const STOP_FILLERS: &[&str] = &[
+    "már", "most", "kérlek", "légyszi", "a", "az", "időzítő", "időzítőt", "ébresztő", "ébresztőt", "please", "now", "it", "the", "timer",
+    "alarm",
+];
+
+fn words_of(text: &str) -> Vec<String> {
+    let clean: String = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect();
+    clean.split_whitespace().map(str::to_string).collect()
+}
+
 /// A short phrase that means "stop" (Hungarian and English): at most four words, one of them a stop word, or a
 /// two-word stop phrase.
 pub fn is_stop(text: &str) -> bool {
-    let clean: String = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect();
-    let words: Vec<&str> = clean.split_whitespace().collect();
+    let words = words_of(text);
     if words.is_empty() || words.len() > 4 {
         return false;
     }
-    const WORDS: &[&str] = &[
-        "állj", "álljál", "álljon", "stop", "stopp", "sztop", "elég", "csend", "csendet", "hallgass", "kuss", "enough", "quiet", "silence", "cancel",
-    ];
-    const PAIRS: &[(&str, &str)] = &[
-        ("kapcsold", "ki"),
-        ("állítsd", "le"),
-        ("állítsd", "meg"),
-        ("hagyd", "abba"),
-        ("turn", "off"),
-        ("shut", "up"),
-    ];
-    words.iter().any(|w| WORDS.contains(w)) || words.windows(2).any(|p| PAIRS.contains(&(p[0], p[1])))
+    words.iter().any(|w| STOP_WORDS.contains(&w.as_str())) || words.windows(2).any(|p| STOP_PAIRS.contains(&(p[0].as_str(), p[1].as_str())))
+}
+
+/// A voice run's whole transcript is a stop phrase: stop words or a stop pair, with at most a few small words around
+/// them, nothing else (at most five words). A command that only contains one ("kapcsold ki a lámpát", "turn off the
+/// light") is not: it goes to the assistant even while a timer rings.
+pub fn is_only_stop(text: &str) -> bool {
+    let words = words_of(text);
+    if words.is_empty() || words.len() > 5 {
+        return false;
+    }
+    let mut stop = vec![false; words.len()];
+    for (i, w) in words.iter().enumerate() {
+        stop[i] = STOP_WORDS.contains(&w.as_str());
+    }
+    for i in 1..words.len() {
+        if STOP_PAIRS.contains(&(words[i - 1].as_str(), words[i].as_str())) {
+            stop[i - 1] = true;
+            stop[i] = true;
+        }
+    }
+    stop.iter().any(|s| *s) && words.iter().zip(&stop).all(|(w, s)| *s || STOP_FILLERS.contains(&w.as_str()))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{is_stop, stops_ring};
+    use super::{is_only_stop, is_stop, stops_ring};
+
+    #[test]
+    fn run_transcripts_that_only_stop() {
+        assert!(is_only_stop("Állj!"));
+        assert!(is_only_stop("Állj, állj!"));
+        assert!(is_only_stop("Stop."));
+        assert!(is_only_stop("Elég már."));
+        assert!(is_only_stop("Kapcsold ki!"));
+        assert!(is_only_stop("Kapcsold ki az ébresztőt."));
+        assert!(is_only_stop("Állítsd le az időzítőt!"));
+        assert!(is_only_stop("Stop the timer, please."));
+        assert!(!is_only_stop(""));
+        assert!(!is_only_stop("Kapcsold ki a lámpát."));
+        assert!(!is_only_stop("Turn off the kitchen light."));
+        assert!(!is_only_stop("Mennyi az idő?"));
+        assert!(!is_only_stop("Köszönöm."));
+        assert!(!is_only_stop("Elég hangos."));
+        assert!(!is_only_stop("Állítólag igen."));
+        assert!(!is_only_stop("Stop the music."));
+        assert!(!is_only_stop("Indíts egy öt perces időzítőt."));
+        assert!(!is_only_stop("A"));
+    }
 
     #[test]
     fn ring_stops() {

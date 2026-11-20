@@ -1058,7 +1058,7 @@ enum State {
 pub struct VoiceControl {
     pub muted: Arc<AtomicBool>,
     /// A finished timer rings: listen without a wake word (as the ESPHome
-    /// satellites do); a short sentence (e.g. "stop") stops it.
+    /// satellites do); a stop word or a short stop phrase stops it.
     pub ringing: Arc<AtomicBool>,
     pub active_wake_words: Arc<Mutex<Vec<String>>>,
     /// Home Assistant base URL, for relative announcement media URLs.
@@ -1349,17 +1349,19 @@ pub fn spawn(
                                 test_audio = None;
                                 if kind == 4 {
                                     let text = get("text").unwrap_or_default();
-                                    let words = text.split_whitespace().count();
-                                    if control.ringing.load(Ordering::SeqCst) {
+                                    let ringing = control.ringing.load(Ordering::SeqCst);
+                                    if ringing {
                                         eprintln!("nspanel-app: voice: heard while the timer rings: '{text}'");
                                     }
-                                    if control.ringing.load(Ordering::SeqCst) && words > 0 && words <= 5 {
-                                        // Ringing timer + a short sentence = stop
-                                        // (speech recognition often returns only a
-                                        // fragment of a short word); not sent on to the assistant.
+                                    if ringing && crate::stt::is_only_stop(&text) {
+                                        // A timer rang up during the run and the run's whole sentence is a stop
+                                        // phrase: it stops the ring and the run (nothing for the assistant). Any
+                                        // other sentence, however short, is a command and goes on to the assistant.
                                         eprintln!("nspanel-app: voice: '{text}' while the timer rings -> stop");
                                         control.ringing.store(false, Ordering::SeqCst);
                                         let _ = to_api.send(ToApi::Stop);
+                                        state = State::Idle;
+                                        quiet_until = Some(Instant::now() + Duration::from_secs(3));
                                         player.stop();
                                         ui(VoiceUi::Stopped);
                                         follow_up_pending = false;
