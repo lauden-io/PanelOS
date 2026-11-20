@@ -4,7 +4,8 @@
 //! tap opens one (and marks it read), its card dismisses it, "Clear all"
 //! dismisses them all. The fridge look's notes are drawn by the app; the
 //! pager's buttons scroll and open. New ones pop up in the window (spec 30),
-//! several in one window ("i of n").
+//! several in one window ("i of n"). The page's settings menu (39) sets the
+//! look, the time format and the pager's finish (the integration's page option).
 
 use std::collections::HashMap;
 
@@ -32,6 +33,23 @@ pub struct Note {
 thread_local! {
     /// The pager picture's finish now shown.
     static PAGER_FINISH: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+}
+
+/// The pager's finishes, in the order of its menu and the integration's swatches.
+const FINISHES: [&str; 4] = ["graphite", "purple", "clear", "offwhite"];
+
+/// The clock's time as minutes of the day for the pager's and the TV news clock ("14", "28" → 868); -1 before the
+/// clock is set ("--").
+pub fn minute_of(hh: &str, mm: &str) -> i32 {
+    match (hh.parse::<i32>(), mm.parse::<i32>()) {
+        (Ok(h), Ok(m)) if (0..24).contains(&h) && (0..60).contains(&m) => h * 60 + m,
+        _ => -1,
+    }
+}
+
+/// A finish's place in the menu (an unknown one counts as graphite).
+fn finish_index(finish: &str) -> i32 {
+    FINISHES.iter().position(|f| *f == finish).unwrap_or(0) as i32
 }
 
 thread_local! {
@@ -354,7 +372,6 @@ fn show_window(ui: &AppWindow) {
         ui.set_pop_pager(crate::quick::picture("info/pager-window.png"));
         ui.set_info_pager_led(crate::quick::picture("info/pager-led.png"));
     }
-    ui.set_info_clock(crate::pages::local_format(now(), "%H:%M").into());
     if ui.get_pop_look() != look {
         ui.set_pop_look(look);
     }
@@ -507,11 +524,13 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
             big: false,
         }));
     }
-    // the pager's and the news look's clock and lines; the pager's body and the fridge door
-    ui.set_info_clock(crate::pages::local_format(now(), "%H:%M").into());
+    // the pager's and the news look's lines (their clock follows the panel's, `info-minute`); the pager's body and the
+    // fridge door
     if slot.variant == 2 {
         // the pager's finish: loaded again whenever it changes
         let finish = crate::page_option(_s, "info", "finish").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_else(|| "graphite".into());
+        let finish = FINISHES[finish_index(&finish) as usize].to_string();
+        ui.set_info_pager_finish(finish_index(&finish));
         if PAGER_FINISH.with(|f| *f.borrow() != finish) || ui.get_info_pager_body().size().width == 0 {
             ui.set_info_pager_body(crate::quick::picture(&format!("info/pager-{finish}.png")));
             ui.set_info_pager_led(crate::quick::picture("info/pager-led.png"));
@@ -542,6 +561,36 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
     }
     if let Some(m) = crate::pages::update_rows(&ui.get_info_notes(), rows) {
         ui.set_info_notes(m);
+    }
+}
+
+/// The pager's finish from its menu on the panel (39.3): the same page option the integration sets. It shows at once
+/// (the panel keeps it until the integration's settings come back with it).
+fn set_finish(ui: &AppWindow, finish: &str) {
+    if !FINISHES.contains(&finish) {
+        return;
+    }
+    with_state(|s| {
+        let page = s
+            .panel_config
+            .as_mut()
+            .and_then(|c| c.get_mut("pages"))
+            .and_then(Value::as_array_mut)
+            .and_then(|pages| pages.iter_mut().find(|p| p.get("kind").and_then(Value::as_str) == Some("info")));
+        if let Some(page) = page.and_then(Value::as_object_mut) {
+            let options = page.entry("options").or_insert_with(|| json!({}));
+            if let Some(o) = options.as_object_mut() {
+                o.insert("finish".into(), json!(finish));
+            }
+        }
+    });
+    crate::page_set(ui, "info", None, json!({ "finish": finish }));
+}
+
+/// The page left the screen (#9): its open notification closes (the list shows when it comes back).
+pub fn leave(ui: &AppWindow) {
+    if OPEN.with(|o| o.borrow_mut().take()).is_some() {
+        ui.set_info_card(false);
     }
 }
 
@@ -609,6 +658,8 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             let id = list.get(n).map(|(id, _)| id.clone());
             pop(ui, id.as_deref());
         }
+        // the pager's menu: its finish (graphite, purple, clear, offwhite)
+        "info.finish" => set_finish(ui, value),
         "info.clear" => {
             for (id, note) in list {
                 if note.own {
@@ -622,4 +673,26 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         _ => eprintln!("nspanel-app: act {what} {value} (not handled)"),
     }
     with_state(|s| refresh(ui, s));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn finishes() {
+        assert_eq!(finish_index("graphite"), 0);
+        assert_eq!(finish_index("purple"), 1);
+        assert_eq!(finish_index("offwhite"), 3);
+        assert_eq!(finish_index("gold"), 0);
+    }
+
+    #[test]
+    fn minutes_of_the_day() {
+        assert_eq!(minute_of("14", "28"), 868);
+        assert_eq!(minute_of("00", "00"), 0);
+        assert_eq!(minute_of("23", "59"), 1439);
+        assert_eq!(minute_of("--", "--"), -1);
+        assert_eq!(minute_of("24", "00"), -1);
+    }
 }

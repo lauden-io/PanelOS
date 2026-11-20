@@ -571,6 +571,8 @@ fn update_clock(ui: &AppWindow) {
             // the thermostat remote's own clock (hours and minutes as numbers)
             ui.set_thermo_clock_h(data.hh.parse().unwrap_or(0));
             ui.set_thermo_clock_m(data.mm.parse().unwrap_or(0));
+            // the notifications page's pager and TV news clock (minutes of the day; -1 before the clock is set)
+            ui.set_info_minute(info::minute_of(&data.hh, &data.mm));
             ui.set_clock(data);
             let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
             ui.invoke_sync_seconds(wall.rem_euclid(60.0) as f32);
@@ -1141,6 +1143,7 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_todo_picker(false);
     ui.set_cam_settings(false);
     ui.set_info_settings(false);
+    info::leave(ui);
     ui.set_home_bg_sheet(false);
     ui.set_home_settings(-1);
 }

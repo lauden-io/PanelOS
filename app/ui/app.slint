@@ -161,7 +161,8 @@ export component AppWindow inherits Window {
     // breathing (2 s), only computed while a critical alert shows
     in property <float> info-crit-pulse: 0.5 + 0.5 * Math.sin((animation-tick() - Clock.base) / 2000ms * 360deg);
     in property <bool> info-settings;
-    in property <string> info-clock;
+    in property <int> info-minute: -1;       // the clock (minutes of the day) for the pager and the TV news
+    in property <int> info-pager-finish;     // the pager's finish: 0 graphite, 1 purple, 2 clear, 3 off-white
     in property <string> info-pager-empty;
     in property <string> info-news-ticker;
     in property <int> info-news-epoch;
@@ -1135,7 +1136,8 @@ export component AppWindow inherits Window {
                     card: root.info-card; card-note: root.info-card-note; card-index: root.info-card-index; card-count: root.info-card-count;
                     critical: root.info-critical; crit-title: root.info-crit-title; crit-message: root.info-crit-message; crit-icon: root.info-crit-icon;
                     crit-source: root.info-crit-source; crit-hold: root.info-crit-hold; crit-pulse: root.info-crit-pulse; settings: root.info-settings;
-                    clock: root.info-clock; pager-empty: root.info-pager-empty; news-ticker: root.info-news-ticker; news-epoch: root.info-news-epoch; news-empty: root.info-news-empty;
+                    current: i == root.page && !root.screensaver-on; minute: root.info-minute; finish: root.info-pager-finish;
+                    pager-empty: root.info-pager-empty; news-ticker: root.info-news-ticker; news-epoch: root.info-news-epoch; news-empty: root.info-news-empty;
                     fridge-door: root.info-fridge-door; fridge-empty: root.info-fridge-empty;
                     pager-body: root.info-pager-body; pager-led: root.info-pager-led; pager-first: root.info-pager-first; crit-button: root.info-crit-button;
                 }
@@ -1425,7 +1427,7 @@ export component AppWindow inherits Window {
     // the new-notification window (30), in the notifications page's look
     NotifWindow { x: 0; y: 0; width: root.width; height: root.height;
         on: root.pop-on; notes: root.pop-notes; index: root.pop-index; count: root.pop-count; look: root.pop-look; until: root.pop-until;
-        seconds: root.pop-seconds; clock: root.info-clock; pager: root.pop-pager; led: root.info-pager-led; }
+        seconds: root.pop-seconds; minute: root.info-minute; pager: root.pop-pager; led: root.info-pager-led; }
     property <float> voice-k: root.voice-on ? 1 : 0;
     animate voice-k { duration: root.voice-on ? 200ms : 250ms; easing: ease-in-out; }
     if root.voice-k > 0.001: VoicePage {
