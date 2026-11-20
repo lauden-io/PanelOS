@@ -125,8 +125,8 @@ const OWN_CRIT_DOMAINS = ["binary_sensor", "sensor", "lock", "input_boolean", "s
 // accent "#rrggbb" ("" = the panel's accent), weight, tap, opts}.
 // kind: 0 clock, 1 date, 2 weather now, 3 next event, 4 forecast curve,
 //   5 hourly forecast, 6 daily forecast, 7 music, 8 a sensor's value (its
-//   sensor in "entity"), 9 the running timer, 10 the people at home,
-//   11 weather details.
+//   sensor in "entity"), 9 the running timer, 10 the people at home (the
+//   ones it shows in "people", person ids; none: everyone), 11 weather details.
 // style: clock 0 digital, 1 big digits + seconds line, 2 round, 3 square,
 //   4 minimal, 5 numerals, 6 split-flap, 7 the time in words, 8 nixie, 9 LCD quartz, 10 twin-bell; music: the
 //   scroll speed of long titles 1..5 (with opts bit 1); others 0.
@@ -919,6 +919,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .cat-item .pic.wicon { display: grid; place-items: center; background: var(--raised); color: var(--muted); aspect-ratio: 2; }
 .cat-item .pic.wicon .mdi { --mdc-icon-size: 34px; }
 .cat-item .pic.wicon .wpv { width: 100%; height: 100%; }
+.wpv-one { border-radius: 14px; overflow: hidden; background: var(--raised); margin: 0 auto 14px; }
 .cat-item > b { font-weight: 600; font-size: 14.5px; overflow-wrap: anywhere; }
 .cat-item > small { color: var(--muted); font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
 .cat-item:disabled { opacity: .5; cursor: default; }
@@ -4155,6 +4156,7 @@ class PanelOSPage extends HTMLElement {
       ...(Number.isInteger(w.bg) && w.bg >= 0 ? { bg: w.bg } : {}),
       ...(typeof w.neon === "boolean" ? { neon: w.neon } : {}),
       ...(w.kind === 8 && w.entity ? { entity: w.entity } : {}),
+      ...(w.kind === 10 && Array.isArray(w.people) && w.people.length ? { people: w.people } : {}),
     }));
     return this._setPage(p, i, { options: { ...(page.options || {}), items: clean } }, opts);
   }
@@ -5101,13 +5103,20 @@ class PanelOSPage extends HTMLElement {
     return { ...best, rel, time: best.allDay ? "All day" : `${hm(best.start)} – ${hm(best.end)}` };
   }
 
-  _widgetPreview(p, page, kind) {
+  // The previews' colours: the panel's look (dark or light).
+  _wpvInk(p) {
     const dark = this._lookMode(p) !== "light";
-    const c = {
+    return {
       bg: dark ? "#000000" : "#F5F3EF", ink: dark ? "#FFFFFF" : "#101114", card: dark ? "#1F1F1F" : "#D9D7D3",
       soft: dark ? "rgba(255,255,255,.75)" : "rgba(16,17,20,.72)", acc: "#FF4A1C", accText: dark ? "#FF8466" : "#C2401F",
       track: dark ? "rgba(255,255,255,.2)" : "rgba(16,17,20,.18)", rain: dark ? "#86B8FF" : "#3E7FD6",
     };
+  }
+
+  _widgetPreview(p, page, kind) {
+    const c = this._wpvInk(p);
+    // the People widget at its first size, showing everyone
+    if (kind === 10) return this._peoplePreview(c, { w: WIDGETS[10].def[0], h: WIDGETS[10].def[1], opts: WIDGETS[10].opts });
     const d = this._widgetData(p, page);
     const W = WIDGETS[kind].def[0] === 4 ? 460 : 236;
     const font = 'font-family="PanelOS Text, Noto Sans, sans-serif"';
@@ -5210,25 +5219,53 @@ class PanelOSPage extends HTMLElement {
       body = `<path transform="translate(14 34) scale(1.6)" d="M15 13V5A3 3 0 0 0 9 5V13A5 5 0 1 0 15 13M12 4A1 1 0 0 1 13 5V8H11V5A1 1 0 0 1 12 4Z" fill="${c.acc}"/>`
         + T(70, 42, 13, c.soft, fitText(name, W - 84, 13))
         + `<text x="70" y="82" ${font} fill="${c.ink}"><tspan font-size="36" font-weight="600">${esc(val)}</tspan><tspan font-size="16" fill="${c.soft}" dx="4">${esc(s.attributes.unit_of_measurement)}</tspan></text>`;
-    } else if (kind === 10) {
-      // the people of Home Assistant: the ones at home in their colour, the ones away faint (as the panel draws them)
-      const tints = ["#3b82f6", "#22a06b", "#a855f7", "#f59e0b", "#ef4444", "#06b6d4"];
-      const ps = Object.values(this._hass?.states || {}).filter((x) => x.entity_id.startsWith("person.")).sort((a, b) => (a.entity_id < b.entity_id ? -1 : 1));
-      if (!ps.length) return null;
-      const n = Math.min(ps.length, 4);
-      const x0 = W / 2 - (n * 52) / 2 + 26;
-      body = ps.slice(0, n).map((x, i) => {
-        const nm = x.attributes?.friendly_name || x.entity_id.slice(7);
-        const ini = nm.split(/\s+/).filter(Boolean).map((w) => w[0]).slice(0, 2).join("").toUpperCase();
-        const home = x.state === "home";
-        return `<circle cx="${x0 + i * 52}" cy="55" r="23" fill="${home ? tints[i % tints.length] : c.track}" ${home ? "" : `stroke="${c.soft}" stroke-width="1.5" stroke-opacity=".5"`}/>`
-          + T(x0 + i * 52, 61, 17, home ? "#ffffff" : c.soft, ini, { weight: 600, anchor: "middle" });
-      }).join("");
     }
     if (body == null) return null;
     const node = svgNode(`<svg viewBox="0 0 ${W} 110" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect width="${W}" height="110" fill="${c.bg}"/>${body}</svg>`, "art wpv");
     if (kind === 0 || kind === 1) this._wpvRun(p);
     return node;
+  }
+
+  // The People widget as the panel draws it (app/ui/home.slint, PeopleW) at its size: its people (none chosen:
+  // everyone) in entity id order, the ones at home in their colour, the ones away (or unknown) faint and only with its
+  // switch on, in as many rows as give the biggest heads. null when Home Assistant has no people.
+  _peoplePreview(c, w) {
+    const tints = ["#3b82f6", "#22a06b", "#a855f7", "#f59e0b", "#ef4444", "#06b6d4"];
+    const all = Object.values(this._hass?.states || {}).filter((x) => x.entity_id.startsWith("person.")).sort((a, b) => (a.entity_id < b.entity_id ? -1 : 1));
+    if (!all.length) return null;
+    const pick = Array.isArray(w.people) ? w.people : [];
+    const away = Boolean((w.opts || 0) & 1);
+    const shown = all.map((x, i) => ({ x, tint: tints[i % tints.length] }))
+      .filter(({ x }) => (!pick.length || pick.includes(x.entity_id)) && (away || x.state === "home"));
+    const cw = w.w || 2;
+    const ch = w.h || 1;
+    const W = cw * 112;
+    const H = ch * 98;
+    const most = ch >= 2 ? 64 : cw < 2 ? 40 : 46;
+    const gap = ch >= 2 ? 10 : 6;
+    const n = shown.length;
+    let body = "";
+    if (n) {
+      const size = (k) => { const r = Math.ceil(n / k); return Math.min(most, (W - 16 - (k - 1) * gap) / k, (H - 12 - (r - 1) * gap) / r); };
+      const [c1, c2, c3, c4] = [n, Math.ceil(n / 2), Math.ceil(n / 3), Math.ceil(n / 4)];
+      const beats = (a, ...others) => others.every((o) => size(a) > size(o) + 0.5);
+      const cols = beats(c4, c3, c2, c1) ? c4 : beats(c3, c2, c1) ? c3 : beats(c2, c1) ? c2 : c1;
+      const rows = Math.ceil(n / cols);
+      const d = size(cols);
+      const top = (H - (rows * d + (rows - 1) * gap)) / 2;
+      body = shown.map(({ x, tint }, at) => {
+        const row = Math.floor(at / cols);
+        const inRow = Math.min(cols, n - row * cols);
+        const cx = (W - (inRow * d + (inRow - 1) * gap)) / 2 + (at % cols) * (d + gap) + d / 2;
+        const cy = top + row * (d + gap) + d / 2;
+        const nm = x.attributes?.friendly_name || x.entity_id.slice(7);
+        const ini = nm.split(/\s+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join("").toUpperCase();
+        const home = x.state === "home";
+        return `<circle cx="${cx}" cy="${cy}" r="${home ? d / 2 : d / 2 - 0.75}" fill="${home ? tint : c.track}" ${home ? "" : `stroke="${c.soft}" stroke-width="1.5" stroke-opacity=".5"`}/>`
+          + `<text x="${cx}" y="${cy}" font-size="${(d * 0.38).toFixed(1)}" font-weight="600" fill="${home ? "#ffffff" : c.soft}" text-anchor="middle" dominant-baseline="central" font-family="PanelOS Text, Noto Sans, sans-serif">${esc(ini)}</text>`;
+      }).join("");
+    }
+    return svgNode(`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect width="${W}" height="${H}" fill="${c.bg}"/>${body}</svg>`, "art wpv");
   }
 
   // The clock and the date of the open picker go on live (every second, in place; stops with the picker).
@@ -5263,6 +5300,30 @@ class PanelOSPage extends HTMLElement {
         why ? { sub: why, cls: "dim" } : {});
     };
     const body = [];
+    if (w.kind === 10) {
+      const pv = this._peoplePreview(this._wpvInk(p), w);
+      // at its size on the panel, half again as big
+      const [pw, ph] = [(w.w || 2) * 112, (w.h || 1) * 98];
+      if (pv) body.push(h("div", { class: "wpv-one", style: { aspectRatio: `${pw} / ${ph}`, maxWidth: `${pw * 1.5}px` } }, pv));
+      // the people it shows, in the widget's order; every one ticked is everyone (the ones added later too), the last
+      // one ticked stays
+      const all = this._ents(["person"]).sort((a, b) => (a.id < b.id ? -1 : 1));
+      const ids = all.map((e) => e.id);
+      const own = Array.isArray(w.people) ? w.people : [];
+      // (read at the click: All and None tick several in a row)
+      const toggle = (id) => {
+        const cur = Array.isArray(w.people) ? w.people : [];
+        let list = cur.length ? [...cur] : [...ids];
+        if (list.includes(id)) {
+          if (list.filter((x) => ids.includes(x)).length <= 1) { this._toast("At least one person stays on the widget"); return; }
+          list = list.filter((x) => x !== id);
+        } else list = [...list, id].sort();
+        if (ids.every((x) => list.includes(x))) { delete w.people; set({}); } else set({ people: list });
+      };
+      body.push(h("div", { class: "sec" }, h("h3", null, "People"), all.length
+        ? this._multi({ label: "People", key: `people:${p.entry_id}:${sh.page}:${sh.item}` }, all.map((e) => this._mi(!own.length || own.includes(e.id), e.name, () => toggle(e.id))))
+        : h("div", { class: "empty" }, "No people in Home Assistant.")));
+    }
     if (w.kind === 8) body.push(h("div", { class: "group" }, this._row("Sensor", this._entityButton(w.entity || "", { title: "Sensor", domains: ["sensor"], p, back: sh,
       onPick: (id) => { if (id) { set({ entity: id }); if (this._ui.sheet === sh) this._renderLayer(); } } }), { cls: "first" })));
     if (w.kind === 0) body.push(h("div", { class: "sec" }, h("h3", null, "Style"),

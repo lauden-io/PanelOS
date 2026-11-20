@@ -136,13 +136,24 @@ def _option_value(value: Any, depth: int = 0) -> Any:
     raise vol.Invalid("not a valid page option")
 
 
+def _page_options(value: Any) -> dict[str, Any]:
+    """A page's options: plain ones (see _option_value); its widgets ("items") have their own schema (_HOME_ITEM)."""
+    if not isinstance(value, dict):
+        raise vol.Invalid("the options are an object")
+    options = _option_value({k: v for k, v in value.items() if k != "items"})
+    if "items" in value:
+        options["items"] = value["items"]
+    return options
+
+
 # A widget of a custom or weather details page on its 4 x 4 grid, as the panel
 # draws it (app/ui/home.slint, HomeItem; panelos-page.js, WIDGETS): kind 0 clock,
 # 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly forecast,
 # 6 daily forecast, 7 music, 8 a sensor's value, 9 the running timer, 10 the
 # people at home, 11 weather details; style and opts per kind; the sensor
-# widget names its sensor.
+# widget names its sensor, the People widget the people it shows (none: everyone).
 _WIDGET_KINDS = (0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11)
+_PEOPLE_MAX = 32
 # the weather details page offers the weather widgets only
 _WEATHER_WIDGET_KINDS = (2, 4, 5, 6, 11)
 _HOME_ITEM = vol.Schema(
@@ -163,6 +174,8 @@ _HOME_ITEM = vol.Schema(
         vol.Optional("bg", default=-1): vol.All(int, vol.Range(min=-1, max=100)),
         # the sensor widget's sensor
         vol.Optional("entity"): vol.Any("", cv.entity_domain("sensor")),
+        # the People widget's people (none: everyone, the ones added later too)
+        vol.Optional("people"): vol.All([cv.entity_domain("person")], vol.Length(max=_PEOPLE_MAX)),
     }
 )
 
@@ -185,7 +198,7 @@ def _page(value: Any) -> dict[str, Any]:
             vol.Required("kind"): vol.In(list(PAGE_KINDS)),
             vol.Optional("variant", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=9)),
             vol.Optional("entities", default=list): [cv.entity_id],
-            vol.Optional("options", default=dict): vol.All(dict, _option_value),
+            vol.Optional("options", default=dict): _page_options,
             # kept here with its settings, not sent to the panel
             vol.Optional("hidden", default=False): bool,
         }
