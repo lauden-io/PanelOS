@@ -50,6 +50,8 @@ pub struct Settings {
     pub alarms: Vec<crate::alarms::Alarm>,
     /// The touch calibration's correction (pixels), from the touch test.
     pub touch_offset: (f32, f32),
+    /// Child lock: touches do nothing until the lock is held (see `device_options`).
+    pub child_lock: bool,
 }
 
 /// What the web view shows in dashboard mode.
@@ -193,6 +195,7 @@ impl Default for Settings {
             calendar_view: 0,
             alarms: Vec::new(),
             touch_offset: (0.0, 0.0),
+            child_lock: false,
         }
     }
 }

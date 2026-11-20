@@ -47,16 +47,23 @@ from .const import (
     CONF_DND,
     CONF_POPUPS,
     CONF_SCREENSAVER,
+    CONF_THEME_AUTO,
+    CONF_WAKE_DISTANCE,
+    CONF_WIFI_ROAMING,
     DEFAULT_CAPS,
     DEFAULT_DND,
     DEFAULT_PAGES,
     DEFAULT_POPUPS,
     DEFAULT_SCREENSAVER,
+    DEFAULT_THEME_AUTO,
+    DEFAULT_WAKE_DISTANCE,
     DND_ALLOW,
     DND_MODES,
     DOMAIN,
     POPUP_KINDS,
     SCREENSAVER_WHEN,
+    THEME_AUTO_BY,
+    WAKE_DISTANCES,
     ENTITY_KEYS,
     ESPHOME_ENTITIES,
     REPORTING,
@@ -141,6 +148,10 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         "screensaver": screensaver_config(options.get(CONF_SCREENSAVER)),
         "dnd": dnd_config(options.get(CONF_DND)),
         "popups": popups_config(options.get(CONF_POPUPS)),
+        # what switches the Auto theme, Wi-Fi roaming, how close someone comes before the panel wakes
+        "theme_auto": theme_auto_config(options.get(CONF_THEME_AUTO)),
+        "wifi_roaming": options.get(CONF_WIFI_ROAMING, True) is not False,
+        "wake_distance": options[CONF_WAKE_DISTANCE] if options.get(CONF_WAKE_DISTANCE) in WAKE_DISTANCES else DEFAULT_WAKE_DISTANCE,
         "keep_sounds": _keep_sounds(entry),
         "media_player": _media_player(entry),
         # the Music Assistant entity of that player (music alarms play through it), "" until it has one
@@ -307,6 +318,16 @@ def screensaver_config(stored: Any) -> dict[str, Any]:
         "width": _int(s.get("width"), 100, 70, 130),
         "speed": _int(s.get("speed"), 20, 5, 60),
         "colour": s["colour"] if isinstance(s.get("colour"), str) else "",
+    }
+
+
+def theme_auto_config(stored: Any) -> dict[str, Any]:
+    """What switches the Auto theme, with the defaults filled in."""
+    s = stored if isinstance(stored, dict) else {}
+    return {
+        "by": s["by"] if s.get("by") in THEME_AUTO_BY else DEFAULT_THEME_AUTO["by"],
+        "from": _time(s.get("from"), DEFAULT_THEME_AUTO["from"]),
+        "to": _time(s.get("to"), DEFAULT_THEME_AUTO["to"]),
     }
 
 

@@ -255,6 +255,9 @@
       },
       "proximity_wake": {
         "name": "Wake on approach"
+      },
+      "child_lock": {
+        "name": "Child lock"
       }
     },
     "notify": {

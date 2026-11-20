@@ -35,7 +35,7 @@
 
 ## Home Assistant entities (see docs/home_assistant.md)
 
-On the panel's device (PanelOS integration): screen, dashboard, theme, screensaver, display mode, brightness, automatic brightness, wake on approach, illuminance, presence, SoC temperature, Wi-Fi signal, IP address, app version, restart, reboot. On the voice device (ESPHome): the Assist satellite, volume, microphone switch, wake word sensors.
+On the panel's device (PanelOS integration): screen, dashboard, theme, screensaver, display mode, brightness, automatic brightness, wake on approach, child lock, illuminance, presence, SoC temperature, Wi-Fi signal, IP address, app version, restart, reboot. On the voice device (ESPHome): the Assist satellite, volume, microphone switch, wake word sensors.
 
 Later: last touch, current page, stop audio, auto brightness limits, wake sensitivity.
 

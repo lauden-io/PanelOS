@@ -94,6 +94,7 @@ pub fn states(s: &DeviceState) -> Map<String, Value> {
     m.insert("screensaver".into(), screensaver);
     m.insert("screensaver_style".into(), label(&STYLES, &s.screensaver_style));
     m.insert("proximity_wake".into(), s.proximity_wake.into());
+    m.insert("child_lock".into(), s.child_lock.into());
     m.insert("display_mode".into(), label(&DISPLAY_MODES, &s.display_mode));
     m.insert("illuminance".into(), s.lux.into());
     m.insert("presence".into(), s.presence.into());
@@ -161,7 +162,7 @@ pub fn command(key: &str, value: &Value, s: &DeviceState) -> Option<Control> {
             .and_then(|i| setting("screensaver_index", i.to_string())),
         "dashboard" => s.dashboards.iter().position(|(_, t)| *t == text).and_then(|i| setting("dashboard_index", i.to_string())),
         "brightness" => value.as_f64().and_then(|v| setting("brightness", format!("{}", v.round().clamp(1.0, 100.0) as i32))),
-        "auto_brightness" | "proximity_wake" => value.as_bool().and_then(|v| setting(key, v.to_string())),
+        "auto_brightness" | "proximity_wake" | "child_lock" => value.as_bool().and_then(|v| setting(key, v.to_string())),
         "restart_app" | "reboot" => setting(key, String::new()),
         // (the place of a page among the pages shown)
         "page" => value.as_u64().and_then(|i| setting("show_page", i.to_string())),

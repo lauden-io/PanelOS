@@ -16,7 +16,10 @@ For administrators. The page uses these websocket commands:
 * ``panelos/page/test``: show a critical alert or a status screen on one panel
   for a few seconds;
 * ``panelos/page/touch_test``: start the panel's touch calibration (its
-  nine-point test; the result shows on the panel).
+  nine-point test; the result shows on the panel);
+* ``panelos/page/proximity_calibration``: start the panel's wake distance
+  calibration (it measures the proximity sensor's resting level; the result
+  shows on the panel).
 
 The panel sends that picture with ``panelos/screen`` when its subscription
 asks for it (command ``screenshot``).
@@ -67,6 +70,9 @@ from .const import (
     CONF_DND,
     CONF_POPUPS,
     CONF_SCREENSAVER,
+    CONF_THEME_AUTO,
+    CONF_WAKE_DISTANCE,
+    CONF_WIFI_ROAMING,
     DEFAULT_PAGES,
     DND_ALLOW,
     DND_MODES,
@@ -82,7 +88,9 @@ from .const import (
     SIGNAL_PAGE,
     SIGNAL_SHOW,
     STATUS_CATS,
+    THEME_AUTO_BY,
     TILE_DOMAINS,
+    WAKE_DISTANCES,
 )
 from .house import HOUSE_SCHEMA, House, _tone
 from .panel import KEY_DOMAIN, Panel, find_entry, panel_caps, panel_config
@@ -223,6 +231,8 @@ DND_SCHEMA = vol.Schema(
     }
 )
 
+THEME_AUTO_SCHEMA = vol.Schema({vol.Optional("by"): vol.In(THEME_AUTO_BY), vol.Optional("from"): _TIME, vol.Optional("to"): _TIME})
+
 POPUPS_SCHEMA = vol.Schema(
     {
         vol.Optional("kind"): vol.In(POPUP_KINDS),
@@ -251,6 +261,9 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_SCREENSAVER): SCREENSAVER_SCHEMA,
         vol.Optional(CONF_DND): DND_SCHEMA,
         vol.Optional(CONF_POPUPS): POPUPS_SCHEMA,
+        vol.Optional(CONF_THEME_AUTO): THEME_AUTO_SCHEMA,
+        vol.Optional(CONF_WIFI_ROAMING): bool,
+        vol.Optional(CONF_WAKE_DISTANCE): vol.In(WAKE_DISTANCES),
         **{
             vol.Optional(key): vol.All(vol.Coerce(float), vol.Range(min=low, max=high))
             for key, (_default, low, high, _step, _unit) in REPORTING.items()
@@ -286,6 +299,7 @@ async def async_setup_page(hass: HomeAssistant) -> None:
         ws_page_house,
         ws_page_test,
         ws_page_touch_test,
+        ws_page_proximity_calibration,
         ws_page_alarms,
         ws_page_ma,
         ws_page_ma_player,
@@ -430,7 +444,7 @@ def ws_page_options(hass: HomeAssistant, connection: websocket_api.ActiveConnect
         return
     options = {**entry.options, **changes}
     # The grouped settings change field by field.
-    for key in (CONF_SCREENSAVER, CONF_DND, CONF_POPUPS):
+    for key in (CONF_SCREENSAVER, CONF_DND, CONF_POPUPS, CONF_THEME_AUTO):
         if key in changes and isinstance(entry.options.get(key), dict):
             merged = {**entry.options[key], **changes[key]}
             if key == CONF_DND and "allow" in changes[key] and isinstance(entry.options[key].get("allow"), dict):
@@ -667,6 +681,22 @@ def ws_page_touch_test(hass: HomeAssistant, connection: websocket_api.ActiveConn
         connection.send_error(msg["id"], "not_connected", str(err))
         return
     async_dispatcher_send(hass, SIGNAL_SHOW, panel_config(panel.entry)["panel_id"], {"type": "touch_test"})
+    connection.send_result(msg["id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "panelos/page/proximity_calibration", vol.Required("entry_id"): str})
+@callback
+def ws_page_proximity_calibration(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Start the panel's wake distance calibration (it measures the sensor's resting level with nothing in front)."""
+    try:
+        panel = _panel(hass, msg["entry_id"])
+        if not panel.connected:
+            raise HomeAssistantError(f"The PanelOS panel '{panel.panel_id}' is not connected")
+    except HomeAssistantError as err:
+        connection.send_error(msg["id"], "not_connected", str(err))
+        return
+    async_dispatcher_send(hass, SIGNAL_SHOW, panel_config(panel.entry)["panel_id"], {"type": "proximity_calibration"})
     connection.send_result(msg["id"])
 
 

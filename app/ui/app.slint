@@ -19,6 +19,7 @@ import "./fonts/CourierPrime-Bold.ttf";
 
 import { Theme, Act, Clock, Words } from "theme.slint";
 import { Jelly } from "widgets.slint";
+import { ChildLockLayer, ProxCalLayer } from "device_layers.slint";
 import { PairingScreen, FoundHa, SetupScreen, WifiNet, WifiScreen, WifiPasswordScreen, HiddenNetworkScreen, HaPickScreen, ConnectingScreen, OfflineScreen, Phrases } from "overlays.slint";
 import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData, WeatherPanel } from "panels.slint";
 import { HomeItem, HomeEvent, HomeMusic, HomeGrid, WxIcons } from "home.slint";
@@ -608,6 +609,15 @@ export component AppWindow inherits Window {
     in property <string> prox-test-details: "";
     in property <bool> prox-test-near: false;
     in property <string> prox-test-prompt: "";
+    // Child lock (the integration's switch): touches reach nothing but the lock card; the card is shown.
+    in property <bool> child-lock: false;
+    in-out property <bool> child-lock-open: false;
+    // The wake distance calibration (from the integration): step 0 lead-in, 1 measuring, 2 done.
+    in property <bool> prox-cal-on: false;
+    in property <int> prox-cal-step: 0;
+    in property <int> prox-cal-count: 10;
+    in property <int> prox-cal-reach: 45;
+    in property <bool> prox-cal-ok: true;
     // Touch test (development): nine points to touch one after the other.
     in property <bool> touch-test: false;
     in property <int> touch-test-step: 0;   // the point to touch now; 9 = all done
@@ -768,8 +778,8 @@ export component AppWindow inherits Window {
         clip: true;
         y: 4px * root.sink-k;
         opacity: 1 - 0.5 * root.sink-k;
-        // fully covered by the saver: not drawn at all
-        visible: root.saver-k < 0.999;
+        // fully covered by the saver or the wake distance calibration (it measures while nothing is drawn): not drawn
+        visible: root.saver-k < 0.999 && !root.prox-cal-on;
         swipe := SwipeGestureHandler {
             handle-swipe-left: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open;
             handle-swipe-right: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open;
@@ -1356,12 +1366,12 @@ export component AppWindow inherits Window {
         cancelled => { root.shade-pulling = false; }
     }
 
-    // the theme switch: every colour of the palette eases between light and dark over 0.4 s
-    // light / dark: 700 ms when someone switches it, 1200 ms when Auto does (nobody waits for it); a sine
-    // ease-in-out, softer at both ends; every colour moves together
+    // the theme switch: every colour of the palette eases between light and dark
+    // light / dark: 700 ms when someone switches it, 3 s when Auto does (a change by itself blends over a few
+    // seconds, nobody waits for it); a sine ease-in-out, softer at both ends; every colour moves together
     in property <bool> theme-slow;
     property <float> theme-k: Theme.dark ? 1 : 0;
-    animate theme-k { duration: root.theme-slow ? 1200ms : 700ms; easing: cubic-bezier(0.37, 0, 0.63, 1); }
+    animate theme-k { duration: root.theme-slow ? 3000ms : 700ms; easing: cubic-bezier(0.37, 0, 0.63, 1); }
     changed theme-k => { Theme.k = root.theme-k; }
     // the clocks of spec 24.9 show the next alarm and ring with it
     changed timers-next-h => { AlarmNow.next-h = root.timers-next-h; }
@@ -1369,12 +1379,12 @@ export component AppWindow inherits Window {
     changed timers-ring-alarm => { AlarmNow.ringing = root.timers-ringing && root.timers-ring-alarm; }
     init => { Theme.k = Theme.dark ? 1 : 0; }
     // §22.6: the whole screen crossfades between the looks: a picture of the screen before the switch fades out
-    // over the new look (700 ms by hand, 1200 ms by Auto, sine ease-in-out); pictures and images that have a light and
+    // over the new look (700 ms by hand, 3 s by Auto, sine ease-in-out); pictures and images that have a light and
     // a dark version change with it, not in a jump
     in-out property <image> theme-shot;
     property <bool> shot-on;
     property <duration> shot-t0;
-    property <duration> shot-dur: root.theme-slow ? 1200ms : 700ms;
+    property <duration> shot-dur: root.theme-slow ? 3000ms : 700ms;
     public function theme-fade() { root.shot-t0 = animation-tick(); root.shot-on = true; }
     Timer { interval: root.shot-dur + 30ms; running: root.shot-on; triggered => { root.shot-on = false; root.theme-shot = @image-url(""); } }
     property <float> shot-x: root.shot-on ? clamp((animation-tick() - root.shot-t0) / root.shot-dur, 0, 1) : 1;
@@ -1603,6 +1613,15 @@ export component AppWindow inherits Window {
         toggle-show => { root.wifi-password-toggle-show(); }
         theme-changed(m) => { root.theme-mode-changed(m); }
     }
+
+    // ---- the child lock and the wake distance calibration ----
+    // over every page, layer and system screen; not while a timer rings (a tap stops it) or a critical alert is up (it
+    // is held to silence it), not before the panel is set up and paired; the touch test stays above it
+    if root.child-lock && root.paired && !root.setup && !root.timers-ringing && !root.info-critical: ChildLockLayer {
+        saver: root.screensaver-on;
+        open <=> root.child-lock-open;
+    }
+    if root.prox-cal-on: ProxCalLayer { step: root.prox-cal-step; count: root.prox-cal-count; reach: root.prox-cal-reach; ok: root.prox-cal-ok; }
 
     // ---- development views ----
     // Proximity test view: still black background, only the numbers change.
