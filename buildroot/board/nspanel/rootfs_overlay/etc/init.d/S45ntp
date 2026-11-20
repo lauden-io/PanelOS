@@ -7,7 +7,7 @@
 # resolve without internet). Until NTP has set the clock, the panel app takes
 # the time from Home Assistant.
 
-SERVERS="-p hu.pool.ntp.org -p pool.ntp.org"
+SERVERS="-p pool.ntp.org"
 PIDFILE=/var/run/nspanel-ntp.pid
 
 log() { echo "<5>nspanel-ntp: $*" > /dev/kmsg; }
