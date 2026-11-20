@@ -27,6 +27,7 @@
 - Alarms can be added, edited and switched in every alarm look; the clock radio's preset keys add, switch and edit (hold) alarms, with a 12H / 24H switch on its body.
 - Each alarm look rings in its own way; a snoozed alarm shows in the next-alarm line.
 - Every stopwatch look lists its laps.
+- The alarm and stopwatch tabs come into view in their look's way, like the timers tab.
 - After a ring or a view shown for some seconds, the panel goes back to the page it was on, also from a temporary page.
 
 ### Calendar
@@ -34,6 +35,8 @@
 - Events can be edited and deleted from the panel (calendars that allow it); a delete can be taken back for 5 s.
 - Picking Day or 3 days in the view list works.
 - Six-week months on the wall calendar end above the page dots.
+- An event's details show its description in every look: without HTML, long links shortened to their host.
+- The day, 3-day and week grids open on the current time and fit 8 to 18 on the screen; two fingers zoom the grid in and out. The 3-day view is today and the next two days.
 
 ### Cameras
 - The page's settings are a card under the status bar (Picture, Show); the picture follows its setting (Fill the screen by default).
@@ -43,6 +46,8 @@
 - The settings open in each look's own menu with the look, the time format and, for the pager, its finish; in the plain look a tapped notification opens in the notification window's card, which grows out of its row.
 - The pager's and the TV news clock turn exactly on the minute.
 - The status strip runs under the status bar, which stays visible; its × closes it (a critical alert's strip has none); long titles wrap to two lines.
+- The page lists the active status screens and critical alerts above the notifications.
+- A status screen stays when its sensor is unavailable for up to 2 minutes (a reconnect, a restart).
 
 ### To-do
 - The chip's list picker and the page settings are the look's own menus (brand card, till paper, the terminal's commands, embossed tapes, a page of the pad).
@@ -56,6 +61,8 @@
 ### Home and weather
 - Editing a custom page on the panel (long press, lock, move, resize, remove, settings, add, background), switched on in the integration ("Allow editing on the panel"); the edit mode's menus are objects of the look.
 - New widgets: Sensor, Timer, People and Details (wind, humidity, chance of rain, sunrise and sunset).
+- The People widget shows Home Assistant's people, in as many rows as make the heads biggest; its people are chosen in its settings, in the integration and in the panel's widget menu (all ticked means everyone, also people added later).
+- Glow Up in the background menu reads widgets without their own neon switch as the page draws them.
 - Weather details page: a background and weather widgets on the custom page's grid, edited the same way.
 - Hourly and daily forecasts show as many cards as fit; the chance of rain reads on the light ground.
 - Rain on the glass: drops land on the glass over the photo backgrounds while it rains, merge and run down with a wet streak; the wind bends their path, and they dry up after the rain. A finger stroke up or down wipes them away. Rain on the glass and Lightning are switches of the panel, on by default.
@@ -64,7 +71,7 @@
 ### Display and settings
 - Time format (24-hour / 12-hour) for every clock time: on the panel's Display page, in the integration and on the looks' own keys; a change anywhere applies everywhere.
 - Auto theme switches by the light in the room, by sunset and sunrise, or between set times; a change Auto makes by itself blends over 3 s.
-- Wake distance near / medium / far, and a calibration started from the integration that shows how far the panel wakes.
+- Wake distance near (30 cm), medium (40 cm) or far (45 cm), and a calibration started from the integration that shows how far the panel wakes.
 - Child lock (a switch in Home Assistant): touches do nothing until the lock is held for 3 s; it locks again after a minute without a touch.
 - The settings list opens Wi-Fi, Home Assistant, Display, Voice, Sound and About; a new Wi-Fi network is tried first and kept only when Home Assistant answers on it, otherwise the panel goes back to its network.
 - Touch calibration has a Cancel button, and only touches near the point count.
