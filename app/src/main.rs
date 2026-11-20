@@ -665,7 +665,7 @@ fn update_clock(ui: &AppWindow) {
         // Voice view: closes a few seconds after the end.
         if s.voice_hide_at.is_some_and(|t| Instant::now() >= t) {
             s.voice_hide_at = None;
-            ui.set_voice_on(false);
+            close_voice_view(ui);
         }
         // Ringing timer or alarm: its sound loops until stopped, at most a minute.
         match s.ringing {
@@ -1835,6 +1835,15 @@ fn voice_meter(ui: &AppWindow, on: bool) {
     });
 }
 
+/// The voice view closes (its time is up, or a tap): its meter, follow-up drain and typing stop with it, so nothing
+/// keeps measuring the microphone for a view nobody sees.
+fn close_voice_view(ui: &AppWindow) {
+    ui.set_voice_on(false);
+    voice_meter(ui, false);
+    follow_up_drain(ui, false);
+    TYPING.with(|t| t.stop());
+}
+
 /// Listening for more: the 5 s drain (`voice-left`, 1 … 0) until speech starts (spec 31, F2).
 fn follow_up_drain(ui: &AppWindow, on: bool) {
     FOLLOW.with(|t| {
@@ -1906,7 +1915,8 @@ fn handle_voice_ui(ui: &AppWindow, event: voice::VoiceUi) {
             ui.set_voice_line(voice_line(ui, if more { "more" } else { "listen" }).into());
             ui.set_voice_state(if more { 5 } else { 1 });
             follow_up_drain(ui, more);
-            voice_meter(ui, true);
+            // the meter only for a view that shows
+            voice_meter(ui, show);
             ui.set_voice_on(show);
         }
         VoiceUi::Heard(text) => {
@@ -3300,7 +3310,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             }
         }
         w if w.starts_with("timers.") || w.starts_with("watch.") => timers_act(ui, w, value),
-        "voice.close" => ui.set_voice_on(false),
+        "voice.close" => close_voice_view(ui),
         // the bell: the notifications page, or the list as a temporary page when the panel has none
         "notes.open" => {
             if !go_to_page(ui, "info") {
