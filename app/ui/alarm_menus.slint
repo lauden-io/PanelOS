@@ -1,0 +1,798 @@
+// The alarm tab's menus (spec 35) and its ringing screens (spec 24.5-24.8): the alarm editor and the page's settings as
+// objects of each alarm look (plain: the brand card, twin-bell: the clock's enamel face, sunrise: the dawn sky, clock
+// radio: the radio's plastic, LED and keys, 24-hour dial: the night dial with a live sleep arc), placed by MenuHost.
+// Also the parts the stopwatch tab's settings share (watch_menus.slint): the look colours, the settings rows.
+// Every clock time here follows the panel's time format (Clock.h24); durations never change.
+import { Theme, Act, Clock } from "theme.slint";
+import { Icon, MenuHost, Jelly, Segmented, Dropdown, TextButton, CheckBox, WeekdayRow, GlowText } from "widgets.slint";
+import { Seg7, TwinBellClock } from "clocks.slint";
+
+// A time of day in the panel's time format: "6:45" / "18:05" (24-hour, as the alarm looks write it) or "6:45 AM".
+export global AlarmClock {
+    pure public function two(n: int) -> string { (n < 10 ? "0" : "") + n }
+    pure public function hm(h: int, m: int) -> string {
+        Clock.h24 ? Math.mod(h, 24) + ":" + AlarmClock.two(m)
+            : (Math.mod(h, 12) == 0 ? 12 : Math.mod(h, 12)) + ":" + AlarmClock.two(m) + (Math.mod(h, 24) < 12 ? " AM" : " PM")
+    }
+    // from hours of the day (6.75 = 6:45)
+    pure public function of(hour: float) -> string {
+        AlarmClock.hm(Math.floor(hour + 0.0001), Math.mod(Math.round((hour - Math.floor(hour + 0.0001)) * 60), 60))
+    }
+    // the digits alone ("6:45") and the AM / PM beside them ("" in 24-hour mode), for looks that write them apart
+    pure public function digits(hour: float) -> string {
+        Clock.h24 ? AlarmClock.of(hour)
+            : (Math.mod(Math.floor(hour + 0.0001), 12) == 0 ? 12 : Math.mod(Math.floor(hour + 0.0001), 12)) + ":"
+                + AlarmClock.two(Math.mod(Math.round((hour - Math.floor(hour + 0.0001)) * 60), 60))
+    }
+    pure public function ampm(hour: float) -> string { Clock.h24 ? "" : Math.mod(Math.floor(hour + 0.0001), 24) < 12 ? "AM" : "PM" }
+    // the time until an alarm as the next-alarm lines write it: "in 33 min", "in 8 h 33 min", "in 2 d 3 h"
+    pure public function when(m: int) -> string {
+        m >= 1440 ? "in " + Math.floor(m / 1440) + " d " + Math.mod(Math.floor(m / 60), 24) + " h"
+            : m >= 60 ? "in " + Math.floor(m / 60) + " h " + Math.mod(m, 60) + " min" : "in " + m + " min"
+    }
+    // a time left: "8 h 33 min", "12 min"
+    pure public function left(m: int) -> string { m >= 60 ? Math.floor(m / 60) + " h " + Math.mod(m, 60) + " min" : m + " min" }
+    // minutes from a time of day to an alarm's (a full day when they are the same minute)
+    pure public function until(now-h: float, h: int, m: int) -> int {
+        Math.mod(h * 60 + m - Math.floor(now-h * 60 + 0.001) + 2880 - 1, 1440) + 1
+    }
+}
+
+// A look's colours for its menus (spec 32.0 tokens and what each look adds).
+export struct MenuInk {
+    raised: color,        // fields, unselected controls
+    line: color,
+    text: color,
+    muted: color,
+    on-text: color,       // a label on a text-coloured pill
+    menu: color,          // dropdown lists
+    pressed: color,
+    accent: color,        // checkboxes, switches
+    on-accent: color,
+    blob: color,          // a chosen weekday's disc
+    on-blob: color,
+    pill: color,          // the segmented pill
+    band: color,          // the drums' band
+    save: color,          // the primary button
+    on-save: color,
+    danger: color,        // Delete: its ground and text
+    danger-text: color,
+    label: color,         // row labels
+    label-size: length,
+    label-weight: int,
+    label-spacing: length,
+    caps: bool,           // the look writes its labels in capitals
+    italic: bool,
+    glow: color,          // a glow around the writing (transparent: none)
+    drum-weight: int,
+}
+
+export global LookInk {
+    // the alarm looks: 0 plain, 1 twin-bell, 2 sunrise, 3 clock radio, 4 24-hour dial
+    pure public function alarm(look: int) -> MenuInk {
+        look == 1 ? { raised: #ebe3d1, line: #281e142e, text: #1d1a16, muted: #6b6152, on-text: #fbf7ee, menu: #fbf7ee, pressed: #ddd3be,
+                accent: #e2452e, on-accent: #ffffff, blob: #e2452e, on-blob: #ffffff, pill: #1d1a16, band: #e2452e1f, save: #e2452e, on-save: #ffffff, danger: #ebe3d1, danger-text: #c8320c,
+                label: #6b6152, label-size: 11px, label-weight: 700, label-spacing: 2px, caps: true, italic: false, glow: transparent, drum-weight: 700 }
+        : look == 2 ? { raised: #ffffff24, line: #ffffff2e, text: #ffffff, muted: #ffffffbf, on-text: #2a1a10, menu: #2a2f57, pressed: #ffffff38,
+                accent: #ffcf6a, on-accent: #2a1a10, blob: #ffcf6a, on-blob: #2a1a10, pill: #ffffff, band: #ffffff1f, save: #ffcf6a, on-save: #2a1a10, danger: #101a3c6b, danger-text: #ffe0d4,
+                label: #ffffffcc, label-size: 14px, label-weight: 500, label-spacing: 0px, caps: false, italic: false, glow: transparent, drum-weight: 600 }
+        : look == 3 ? { raised: #3a3b40, line: #ffffff1a, text: #ecece8, muted: #a9aab0, on-text: #1b1c1f, menu: #34363b, pressed: #46474d,
+                accent: #ff2a1a, on-accent: #ffffff, blob: #ff2a1a, on-blob: #ffffff, pill: #ecece8, band: #ffffff12, save: #e0e0dc, on-save: #1b1c1f, danger: #3a3b40, danger-text: #ff7a6a,
+                label: #a9aab0, label-size: 11px, label-weight: 700, label-spacing: 1.5px, caps: true, italic: false, glow: transparent, drum-weight: 600 }
+        : look == 4 ? { raised: #1b2340, line: #ffffff1a, text: #eef1f8, muted: #9aa3bd, on-text: #0e1426, menu: #161d36, pressed: #252e50,
+                accent: #ffb21e, on-accent: #0e1426, blob: #ffb21e, on-blob: #0e1426, pill: #eef1f8, band: #eef1f812, save: #ffb21e, on-save: #0e1426, danger: #1b2340, danger-text: #ff8a7a,
+                label: #9aa3bd, label-size: 14px, label-weight: 500, label-spacing: 0px, caps: false, italic: false, glow: transparent, drum-weight: 600 }
+        : LookInk.plain()
+    }
+    // the stopwatch looks: 0 plain, 1 chronograph, 2 timing tower, 3 LCD watch, 4 nixie
+    pure public function watch(look: int) -> MenuInk {
+        look == 1 ? { raised: #00000014, line: #00000033, text: #15181b, muted: #4b5056, on-text: #e9ecee, menu: #d8dbde, pressed: #00000024,
+                accent: #1d2024, on-accent: #e9ecee, blob: #1d2024, on-blob: #e9ecee, pill: #1d2024, band: #00000012, save: #1d2024, on-save: #e9ecee, danger: #00000014, danger-text: #8a1c10,
+                label: #3c4146, label-size: 11px, label-weight: 700, label-spacing: 1.5px, caps: true, italic: false, glow: transparent, drum-weight: 600 }
+        : look == 2 ? { raised: #1d2027, line: #ffffff14, text: #f1f2f5, muted: #9aa0ad, on-text: #ffffff, menu: #14161b, pressed: #262a33,
+                accent: #a24bff, on-accent: #ffffff, blob: #a24bff, on-blob: #ffffff, pill: #a24bff, band: #ffffff12, save: #a24bff, on-save: #ffffff, danger: #1d2027, danger-text: #ff7a6a,
+                label: #9aa0ad, label-size: 10px, label-weight: 800, label-spacing: 1.5px, caps: true, italic: true, glow: transparent, drum-weight: 600 }
+        : look == 3 ? { raised: #1e24181a, line: #1e24184d, text: #1e2418, muted: #4d5541, on-text: #c3cba9, menu: #c8d0ae, pressed: #1e24182e,
+                accent: #1e2418, on-accent: #c3cba9, blob: #1e2418, on-blob: #c3cba9, pill: #1e2418, band: #1e241812, save: #1e2418, on-save: #c3cba9, danger: #1e24181a, danger-text: #1e2418,
+                label: #3a4130, label-size: 10px, label-weight: 800, label-spacing: 1.5px, caps: true, italic: false, glow: transparent, drum-weight: 600 }
+        : look == 4 ? { raised: #00000061, line: #ff9a4a47, text: #ffb36b, muted: #d8925a, on-text: #2a1608, menu: #2a1a10, pressed: #00000080,
+                accent: #ff9a4a, on-accent: #2a1608, blob: #ff9a4a, on-blob: #2a1608, pill: #ff9a4a, band: #ff9a4a12, save: #ff9a4a, on-save: #2a1608, danger: #00000061, danger-text: #ffb36b,
+                label: #ffa45a, label-size: 11px, label-weight: 700, label-spacing: 1.5px, caps: true, italic: false, glow: #ff6a1a, drum-weight: 600 }
+        : LookInk.plain()
+    }
+    // the plain look: the brand card in the panel's theme
+    pure public function plain() -> MenuInk {
+        { raised: Theme.surface-raised, line: Theme.outline, text: Theme.text, muted: Theme.muted, on-text: Theme.background, menu: Theme.surface-raised,
+          pressed: Theme.surface-pressed, accent: Theme.accent, on-accent: #F5F3EE, blob: Theme.text, on-blob: Theme.background, pill: Theme.text, band: Theme.text.with-alpha(0.07),
+          save: Theme.text, on-save: Theme.background, danger: Theme.surface-raised, danger-text: Theme.dark ? #FF6A4D : #C7361B,
+          label: Theme.muted, label-size: 14px, label-weight: 500, label-spacing: 0px, caps: false, italic: false, glow: transparent, drum-weight: 600 }
+    }
+}
+
+// A look's writing: optional glow (the nixie's amber: soft copies around the glyphs, no disc behind).
+export component InkText inherits Rectangle {
+    in property <string> text;
+    in property <color> ink;
+    in property <length> size: 14px;
+    in property <int> weight: 500;
+    in property <length> spacing;
+    in property <bool> italic;
+    in property <string> family: "Noto Sans";
+    in property <color> glow: transparent;
+    in property <color> emboss: transparent;   // an engraved line's light edge 1 px below (the steel case back)
+    in property <TextHorizontalAlignment> align: left;
+    out property <length> natural-w: t.preferred-width;
+    height: t.preferred-height;
+    if root.emboss != transparent: Text { y: 1px; width: root.width; text: root.text; color: root.emboss; font-size: root.size; font-weight: root.weight;
+        letter-spacing: root.spacing; font-italic: root.italic; font-family: root.family; horizontal-alignment: root.align; wrap: word-wrap; }
+    if root.glow != transparent: Rectangle {
+        for o in [{ x: -1.5, y: 0 }, { x: 1.5, y: 0 }, { x: 0, y: -1.5 }, { x: 0, y: 1.5 }]: Text { x: o.x * 1px; y: o.y * 1px; width: root.width; text: root.text;
+            color: root.glow.with-alpha(0.32); font-size: root.size; font-weight: root.weight; letter-spacing: root.spacing; font-italic: root.italic;
+            font-family: root.family; horizontal-alignment: root.align; wrap: word-wrap; }
+    }
+    t := Text { width: root.width; text: root.text; color: root.ink; font-size: root.size; font-weight: root.weight; letter-spacing: root.spacing;
+        font-italic: root.italic; font-family: root.family; horizontal-alignment: root.align; wrap: word-wrap; }
+}
+
+// One of the agreed drums (spec 34): the middle row is the value; a drag moves a row per 40 px and the drum follows the
+// finger, a tap on the upper / lower row steps once; a step glides one row in 180 ms, ease-out (34.0).
+export component Drum inherits Rectangle {
+    in property <int> value;
+    in property <int> n: 24;
+    in property <int> fmt;                 // 0 the number, 1 two digits, 2 the 12-hour hour (0 shows 12), 3 AM / PM
+    in property <color> ink: Theme.text;
+    in property <length> mid-size: 38px;
+    in property <length> row-size: 24px;
+    in property <int> mid-weight: 600;
+    in property <int> row-weight: 500;
+    in property <string> family: "Noto Sans";
+    callback picked(int);
+    width: 96px; height: 120px;
+    clip: true;
+    pure function wrap(v: int) -> int { Math.mod(Math.mod(v, root.n) + root.n, root.n) }
+    pure function label(v: int) -> string {
+        root.fmt == 1 ? AlarmClock.two(v) : root.fmt == 2 ? (v == 0 ? "12" : "" + v) : root.fmt == 3 ? (v == 0 ? "AM" : "PM") : "" + v
+    }
+    // where the drum stands (in values, not wrapped) and where it is going
+    property <int> target: root.value;
+    property <float> p: root.value;
+    property <bool> dragging;
+    property <bool> moved;
+    property <float> base;
+    animate p { duration: root.dragging ? 0ms : 180ms; easing: ease-out; }
+    changed value => {
+        if root.wrap(root.target) != root.value {
+            root.target = root.value + root.n * Math.round((root.target - root.value) / root.n);
+            root.p = root.target;
+        }
+    }
+    property <int> c: Math.round(root.p);
+    for k in [-2, -1, 0, 1, 2]: Text {
+        property <int> v: root.c + k;
+        property <float> d: Math.min(1.5, Math.abs(self.v - root.p));
+        x: 0; y: 40px + (self.v - root.p) * 40px; width: root.width; height: 40px;
+        text: root.label(root.wrap(self.v));
+        font-family: root.family;
+        font-size: root.mid-size * Math.max(0, 1 - self.d) + root.row-size * Math.min(1, self.d);
+        font-weight: self.d < 0.5 ? root.mid-weight : root.row-weight;
+        color: root.ink.with-alpha(Math.max(0, 1 - 0.65 * Math.min(1, self.d) - 0.7 * Math.max(0, self.d - 1)));
+        horizontal-alignment: center; vertical-alignment: center;
+    }
+    TouchArea {
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down {
+                root.base = root.target;
+                root.moved = false;
+            } else if ev.kind == PointerEventKind.up && root.dragging {
+                root.dragging = false;
+                root.target = Math.round(root.p);
+                root.p = root.target;
+            }
+        }
+        moved => {
+            if !root.moved && Math.abs(self.mouse-y - self.pressed-y) > 6px {
+                root.moved = true;
+                root.dragging = true;
+            }
+            if root.dragging {
+                root.p = root.base + (self.pressed-y - self.mouse-y) / 40px;
+                root.target = Math.round(root.p);
+                root.picked(root.wrap(root.target));
+            }
+        }
+        clicked => {
+            if !root.moved {
+                let k = self.mouse-y < 40px ? -1 : self.mouse-y > 80px ? 1 : 0;
+                if k != 0 {
+                    root.target = root.target + k;
+                    root.p = root.target;
+                    root.picked(root.wrap(root.target));
+                }
+            }
+        }
+    }
+}
+
+// The time as drums: hours and minutes with a ":" between them; in 12-hour mode hours 1-12 and an AM / PM drum (70 px,
+// 18 / 22 px). A band behind the value row.
+component DrumTime inherits Rectangle {
+    in-out property <int> h;
+    in-out property <int> m;
+    in property <MenuInk> ink;
+    height: 120px;
+    property <bool> h12: !Clock.h24;
+    Rectangle { x: 70px; y: 40px; width: root.width - 140px; height: 40px; border-radius: 14px; background: root.ink.band; }
+    HorizontalLayout {
+        alignment: center;
+        if !root.h12: Drum { value: root.h; n: 24; ink: root.ink.text; mid-weight: root.ink.drum-weight; picked(v) => { root.h = v; } }
+        if root.h12: Drum { value: Math.mod(root.h, 12); n: 12; fmt: 2; ink: root.ink.text; mid-weight: root.ink.drum-weight;
+            picked(v) => { root.h = v + (root.h >= 12 ? 12 : 0); } }
+        Text { width: 22px; text: ":"; font-size: 34px; font-weight: 600; color: root.ink.text; horizontal-alignment: center; vertical-alignment: center; }
+        Drum { value: root.m; n: 60; fmt: 1; ink: root.ink.text; mid-weight: root.ink.drum-weight; picked(v) => { root.m = v; } }
+        if root.h12: Drum { width: 70px; value: root.h >= 12 ? 1 : 0; n: 2; fmt: 3; mid-size: 22px; row-size: 18px; ink: root.ink.text; mid-weight: root.ink.drum-weight;
+            picked(v) => { root.h = Math.mod(root.h, 12) + v * 12; } }
+    }
+}
+
+// A rubber key of the clock radio (52 x 30): it goes down 2 px while pressed.
+component RadioKey inherits Rectangle {
+    in property <string> glyph;
+    callback tap;
+    width: 52px; height: 32px;
+    property <length> down: ta.pressed ? 2px : 0px;
+    Rectangle { y: 2px; height: 30px; border-radius: 7px; background: #1a1b1e; }
+    Rectangle { y: root.down; height: 30px; border-radius: 7px; background: #4c4e55;
+        Rectangle { x: 7px; y: 1px; width: parent.width - 14px; height: 1px; background: #ffffff1f; }
+        Icon { text: root.glyph; font-size: 20px; color: #ecece8; } }
+    ta := TouchArea { clicked => { root.tap(); } }
+}
+
+// The clock radio's time: red LED digits in the seven-segment outlines (46 px, ghosts at 7 %, a square colon) in a black
+// glass window, a PM dot in 12-hour mode; the HOUR and MIN keys beside it (up adds, down takes). `led`: 0 dark (it slides
+// in), 1 the 88:88 test at 45 %, 2 the time.
+component RadioTime inherits Rectangle {
+    in-out property <int> h;
+    in-out property <int> m;
+    in property <int> led: 2;
+    height: 80px;
+    property <bool> h12: !Clock.h24;
+    property <int> hh: root.h12 ? (Math.mod(root.h, 12) == 0 ? 12 : Math.mod(root.h, 12)) : root.h;
+    property <length> pm-w: root.h12 ? 26px : 0px;
+    property <length> win-w: 14px + root.pm-w + 4 * 28px + 8px + 16px + 14px;
+    Rectangle { x: 0; y: 7px; width: root.win-w; height: 66px; border-radius: 8px; background: #160606; border-width: 1px; border-color: #ffffff0f;
+        Rectangle { x: 1px; y: 1px; width: parent.width - 2px; height: 4px; border-top-left-radius: 7px; border-top-right-radius: 7px; background: #00000099; }
+        if root.h12: Rectangle { x: 12px; y: 18px; width: 22px; height: 30px;
+            Rectangle { x: 7px; y: 4px; width: 7px; height: 7px; border-radius: 3.5px; background: root.h >= 12 && root.led == 2 ? #ff2a1a : #3a0c08;
+                drop-shadow-blur: root.h >= 12 && root.led == 2 ? 5px : 0px; drop-shadow-color: #ff2a1acc; }
+            Text { y: 14px; width: 22px; text: "PM"; font-size: 9px; font-weight: 700; letter-spacing: 1px; horizontal-alignment: center;
+                color: root.h >= 12 && root.led == 2 ? #ff2a1a : #5a1a12; } }
+        Rectangle { x: 14px + root.pm-w; y: 10px; width: 160px; height: 46px; opacity: root.led == 0 ? 0 : root.led == 1 ? 0.45 : 1;
+            Seg7 { x: 0; y: 0; d: root.led == 1 ? 8 : root.hh >= 10 ? Math.floor(root.hh / 10) : -1; x0: 0; y0: 0; w: 26; h: 46; t: 6; slant: 0.06; ink: #ff2a1a; }
+            Seg7 { x: 0; y: 0; d: root.led == 1 ? 8 : Math.mod(root.hh, 10); x0: 30; y0: 0; w: 26; h: 46; t: 6; slant: 0.06; ink: #ff2a1a; }
+            Rectangle { x: 62px; y: 12px; width: 6px; height: 6px; border-radius: 1px; background: #ff2a1a; }
+            Rectangle { x: 61px; y: 28px; width: 6px; height: 6px; border-radius: 1px; background: #ff2a1a; }
+            Seg7 { x: 0; y: 0; d: root.led == 1 ? 8 : Math.floor(root.m / 10); x0: 74; y0: 0; w: 26; h: 46; t: 6; slant: 0.06; ink: #ff2a1a; }
+            Seg7 { x: 0; y: 0; d: root.led == 1 ? 8 : Math.mod(root.m, 10); x0: 104; y0: 0; w: 26; h: 46; t: 6; slant: 0.06; ink: #ff2a1a; }
+        }
+    }
+    // HOUR and MIN
+    for g[i] in [{ t: "HOUR" }, { t: "MIN" }]: Rectangle {
+        x: root.width - (2 - i) * 52px - (1 - i) * 10px; y: 0; width: 52px; height: 80px;
+        RadioKey { y: 0; glyph: "\u{F0360}"; tap => { if i == 0 { root.h = Math.mod(root.h + 1, 24); } else { root.m = Math.mod(root.m + 1, 60); } } }
+        Text { y: 33px; width: 52px; height: 14px; text: g.t; font-size: 10px; font-weight: 700; letter-spacing: 1px; color: #a9aab0; horizontal-alignment: center; vertical-alignment: center; }
+        RadioKey { y: 48px; glyph: "\u{F035D}"; tap => { if i == 0 { root.h = Math.mod(root.h + 23, 24); } else { root.m = Math.mod(root.m + 59, 60); } } }
+    }
+}
+
+// The clock radio's days: seven preset keys MO-SU (44 px), each with its own red LED that lights with a glow when on.
+component RadioDays inherits Rectangle {
+    in property <[bool]> days;
+    callback toggled(int);
+    height: 46px;
+    property <length> kw: (root.width - 6 * 5px) / 7;
+    for d[i] in ["MO", "TU", "WE", "TH", "FR", "SA", "SU"]: key := Rectangle {
+        property <bool> on: i < root.days.length && root.days[i];
+        x: i * (root.kw + 5px); y: 0; width: root.kw; height: 46px;
+        Rectangle { y: 2px; height: 44px; border-radius: 8px; background: #1a1b1e; }
+        Rectangle { y: dta.pressed ? 2px : 0px; height: 44px; border-radius: 8px; background: #45474d;
+            Rectangle { x: 8px; y: 1px; width: parent.width - 16px; height: 1px; background: #ffffff1a; }
+            Rectangle { x: (parent.width - 6px) / 2; y: 10px; width: 6px; height: 6px; border-radius: 3px; background: key.on ? #ff2a1a : #4a1a14;
+                drop-shadow-blur: key.on ? 6px : 0px; drop-shadow-color: #ff2a1acc;
+                animate background { duration: 150ms; } }
+            Text { y: 20px; width: parent.width; height: 18px; text: d; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #ecece8;
+                horizontal-alignment: center; vertical-alignment: center; } }
+        dta := TouchArea { clicked => { root.toggled(i); } }
+    }
+}
+
+// The editor's form: time, days, sound (with the ⓘ for sounds from Home Assistant), label, Delete / Save.
+component AlarmForm inherits VerticalLayout {
+    in property <int> look;
+    in property <MenuInk> ink;
+    in-out property <int> h;
+    in-out property <int> m;
+    in property <[bool]> days;
+    in property <string> label;
+    in property <int> sound;
+    in property <[string]> sound-options;
+    in property <bool> ha-sounds;
+    in property <bool> info;
+    in property <bool> is-new;
+    in property <int> led: 2;
+    property <bool> radio: root.look == 3;
+    property <bool> tight: root.look == 4;
+    spacing: 0;
+    if !root.radio: DrumTime { h <=> root.h; m <=> root.m; ink: root.ink; }
+    if root.radio: RadioTime { h <=> root.h; m <=> root.m; led: root.led; }
+    Rectangle { height: root.tight ? 2px : 12px; }
+    if !root.radio: WeekdayRow { days: root.days; tk-raised: root.ink.raised; tk-muted: root.ink.muted; tk-text: root.ink.blob; tk-on-text: root.ink.on-blob;
+        toggled(i) => { Act.act("alarm.day", i); } }
+    if root.radio: RadioDays { days: root.days; toggled(i) => { Act.act("alarm.day", i); } }
+    Rectangle { height: root.tight ? 8px : 12px; }
+    HorizontalLayout {
+        spacing: 8px;
+        Dropdown { options: root.sound-options; selected: root.sound; picked(i) => { Act.act("alarm.sound", i); }
+            tk-raised: root.ink.raised; tk-line: root.ink.line; tk-text: root.ink.text; tk-muted: root.ink.muted; tk-menu: root.ink.menu;
+            tk-pressed: root.ink.pressed; tk-accent: root.ink.accent; }
+        if root.ha-sounds: Rectangle { width: 44px;
+            Rectangle { x: 4px; y: 6px; width: 36px; height: 36px; border-radius: 18px; background: root.info ? root.ink.text.with-alpha(0.18) : root.ink.raised;
+                Icon { text: "\u{F02FD}"; font-size: 18px; color: root.ink.muted; }
+                TouchArea { clicked => { Act.act("alarm.info", ""); } } } }
+    }
+    // the ⓘ note: where the other sounds come from
+    if root.info: VerticalLayout { padding-top: 8px;
+        Rectangle { border-radius: 12px; background: root.ink.raised; height: nt.preferred-height + 20px;
+            nt := Text { x: 12px; width: parent.width - 24px; height: parent.height; wrap: word-wrap; font-size: 13px; color: root.ink.text; vertical-alignment: center;
+                text: "Music from Music Assistant or a sound of your own: pick it for this alarm in Home Assistant and it shows up here."; } } }
+    Rectangle { height: 10px; }
+    // the label: a tap opens the keyboard
+    Rectangle { height: 44px; border-radius: 14px; background: root.ink.raised;
+        Icon { x: 14px; width: 22px; text: "\u{F04FC}"; font-size: 19px; color: root.ink.muted; }
+        Text { x: 46px; width: parent.width - 60px; text: root.label != "" ? root.label : "Label"; font-size: 16px;
+            color: root.label != "" ? root.ink.text : root.ink.muted; vertical-alignment: center; overflow: elide; }
+        TouchArea { clicked => { Act.act("alarm.label", ""); } } }
+    Rectangle { height: root.tight ? 10px : 12px; }
+    HorizontalLayout {
+        spacing: 10px;
+        if !root.is-new: TextButton { width: 116px; text: "Delete"; tint: root.ink.danger-text; tk-raised: root.ink.danger; tk-pressed: root.ink.pressed;
+            clicked => { Act.act("alarm.delete", ""); } }
+        Rectangle { horizontal-stretch: 1; }
+        // the radio's SET key: light plastic with a red LED
+        if root.radio: Rectangle { width: 116px; height: 48px;
+            Rectangle { y: 2px; height: 46px; border-radius: 23px; background: #1a1b1e; }
+            Rectangle { y: sta.pressed ? 2px : 0px; height: 46px; border-radius: 23px; background: #dcdcd7;
+                Rectangle { x: 20px; y: 1px; width: parent.width - 40px; height: 1px; background: #ffffff99; }
+                HorizontalLayout { alignment: center; spacing: 8px;
+                    VerticalLayout { alignment: center; Rectangle { width: 6px; height: 6px; border-radius: 3px; background: #ff2a1a; drop-shadow-blur: 5px; drop-shadow-color: #ff2a1ae6; } }
+                    Text { text: "Set"; font-size: 16px; font-weight: 600; color: #1b1c1f; vertical-alignment: center; } } }
+            sta := TouchArea { clicked => { Act.act("alarm.save", ""); } } }
+        if !root.radio: TextButton { width: 116px; text: "Save"; primary: true; tk-text: root.ink.save; tk-on-text: root.ink.on-save;
+            clicked => { Act.act("alarm.save", ""); } }
+    }
+}
+
+// A look's menu frame for the alarm looks: its ground and its own parts (the bells, the sky and its glow, the grille), the
+// head (title, the radio's red print). `top` is where the content starts, `side` and `bottom` its margins.
+component AlarmFrame inherits Rectangle {
+    in property <int> look;
+    in property <string> title;
+    in property <string> sub;              // the radio's red print ("ALARM SET", "SETUP")
+    in property <string> note;             // the 24-hour dial's amber line ("8 h 33 min of sleep")
+    in property <float> dawn: 1;           // sunrise: night (0) to dawn (1)
+    in property <float> glow: 1;
+    in property <bool> ruler;              // the 24-hour dial's ruler sits on top (the editor)
+    out property <length> top: root.look == 1 ? 7px + 16px + 30px : root.look == 2 ? 16px + 34px : root.look == 3 ? 12px + 20px + 26px
+        : root.look == 4 ? 8px + (root.ruler ? 40px : 0px) + 30px : 52px;
+    out property <length> side: root.look == 1 ? 25px : root.look == 2 ? 18px : root.look == 3 ? 16px : root.look == 4 ? 16px : 16px;
+    out property <length> bottom: root.look == 1 ? 19px : root.look == 0 ? 16px : 12px;
+    // plain: the brand card (surface, a 1 px line, radius 14)
+    if root.look == 0: Rectangle { border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.outline;
+        drop-shadow-blur: 24px; drop-shadow-offset-y: 10px; drop-shadow-color: #00000073; }
+    if root.look == 0: Text { x: 16px; y: 12px; height: 32px; text: root.title; font-family: "Space Grotesk"; font-size: 20px; font-weight: 500; color: Theme.text; vertical-alignment: center; }
+    // twin-bell: cream enamel in a 7 px red rim, a fine black ring inside, two dome bells in the top corners
+    if root.look == 1: Rectangle { border-radius: 26px; background: #f5efe0; drop-shadow-blur: 26px; drop-shadow-offset-y: 14px; drop-shadow-color: #00000080;
+        Rectangle { x: 7px; y: 7px; width: parent.width - 14px; height: parent.height - 14px; border-radius: 19px;
+            background: @radial-gradient(circle, #fbf7ee 0%, #f7f1e3 55%, #efe6d2 100%); clip: true; }
+        Rectangle { border-radius: 26px; border-width: 7px; border-color: #e2452e; }
+        Rectangle { x: 7px; y: 7px; width: parent.width - 14px; height: parent.height - 14px; border-radius: 19px; border-width: 1.5px; border-color: #0000008c; }
+        for b in [{ x: 18 }, { x: -52 }]: Rectangle { x: b.x < 0 ? parent.width + b.x * 1px : b.x * 1px; y: 15px; width: 34px; height: 20px;
+            border-top-left-radius: 17px; border-top-right-radius: 17px; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; background: #d63c26;
+            Rectangle { x: 4px; y: 2px; width: 26px; height: 7px; border-radius: 4px; background: #ff8a6e99; }
+            Rectangle { y: parent.height - 5px; height: 5px; border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; background: #a82a18; } }
+    }
+    if root.look == 1: Text { x: 60px; y: 7px + 16px; width: root.width - 120px; height: 24px; text: root.title; font-size: 15px; font-weight: 700; letter-spacing: 3px;
+        color: #1d1a16; horizontal-alignment: center; vertical-alignment: center; }
+    // sunrise: the dawn sky (night blue above, rose at the horizon), a warm glow rising under its lower edge
+    if root.look == 2: Rectangle { border-radius: 22px; clip: true; drop-shadow-blur: 28px; drop-shadow-offset-y: 14px; drop-shadow-color: #00000080;
+        background: @linear-gradient(180deg, #101a3c 0%, #3b3d78.mix(#101a3c, root.dawn) 55%, #f0957c.mix(#1b2450, root.dawn) 100%);
+        Rectangle { x: (parent.width - 360px) / 2; y: parent.height - 110px; width: 360px; height: 220px; opacity: root.glow;
+            background: @radial-gradient(circle, #ffcf6a8c 0%, #ffaa6e40 55%, #ffaa6e00 100%); } }
+    if root.look == 2: Text { x: 18px; y: 12px; height: 32px; text: root.title; font-family: "Space Grotesk"; font-size: 20px; font-weight: 500; color: #ffffff; vertical-alignment: center; }
+    // clock radio: charcoal plastic, a speaker grille strip on top, the head in printed caps with a red print
+    if root.look == 3: Rectangle { border-radius: 18px; background: @linear-gradient(180deg, #2f3035 0%, #222327 100%);
+        drop-shadow-blur: 28px; drop-shadow-offset-y: 14px; drop-shadow-color: #0000008c;
+        Rectangle { x: 18px; y: 0; width: parent.width - 36px; height: 1px; background: #ffffff14; }
+        Rectangle { x: 16px; y: 12px; width: parent.width - 32px; height: 12px; border-radius: 4px; background: #303136; clip: true; cache-rendering-hint: true;
+            for c in 70: Rectangle { x: 4px + c * 6px; y: 0;
+                Rectangle { x: -1.3px; y: 1.7px; width: 2.6px; height: 2.6px; border-radius: 1.3px; background: #000000a6; }
+                Rectangle { x: -1.3px; y: 7.7px; width: 2.6px; height: 2.6px; border-radius: 1.3px; background: #000000a6; } } }
+    }
+    if root.look == 3: Text { x: 18px; y: 32px; height: 18px; text: root.title; font-size: 13px; font-weight: 700; letter-spacing: 2.5px; color: #ecece8; vertical-alignment: center; }
+    if root.look == 3: Text { x: root.width - 18px - 120px; y: 33px; width: 120px; height: 18px; text: root.sub; font-size: 10px; font-weight: 700; letter-spacing: 1.5px;
+        color: #ff4a3a; horizontal-alignment: right; vertical-alignment: center; }
+    // 24-hour dial: the night dial's navy
+    if root.look == 4: Rectangle { border-radius: 22px; background: #0e1426; drop-shadow-blur: 28px; drop-shadow-offset-y: 14px; drop-shadow-color: #0000008c;
+        Rectangle { border-radius: 22px; background: @radial-gradient(circle, #18213f 0%, #121a32 60%, #0e1426 100%); }
+        Rectangle { border-radius: 22px; border-width: 1px; border-color: #ffffff0f; } }
+    if root.look == 4: Text { x: 16px; y: 8px + (root.ruler ? 40px : 0px); height: 28px; text: root.title; font-family: "Space Grotesk"; font-size: 20px; font-weight: 500;
+        color: #eef1f8; vertical-alignment: center; }
+    if root.look == 4 && root.note != "": Text { x: root.width - 16px - 220px; y: 8px + (root.ruler ? 40px : 0px); width: 220px; height: 28px; text: root.note;
+        font-size: 13px; color: #ffb21e; horizontal-alignment: right; vertical-alignment: center; }
+    @children
+}
+
+// The motion helpers of the looks' menus (closed form in the time since the menu opened / began to close).
+export global MenuMotion {
+    pure public function eo(u: float) -> float { 1 - Math.pow(1 - Math.max(0, Math.min(1, u)), 3) }
+    pure public function ei(u: float) -> float { Math.pow(Math.max(0, Math.min(1, u)), 2) }
+    // a drop from above the screen with the J-edge (tau, T) and its overshoot soft-capped at `cap` px; h = the menu's height
+    pure public function drop(t: float, tau: float, per: float, cap: float, h: float) -> float {
+        (h + 48) * (Jelly.edge(t, tau, per) - 1) > 0 ? Jelly.cap((h + 48) * (Jelly.edge(t, tau, per) - 1), cap) : (h + 48) * (Jelly.edge(t, tau, per) - 1)
+    }
+}
+
+// The alarm editor (spec 35): it comes down under the status bar from the + or a tap on an alarm, in the alarm look's
+// own object and motion; a tap beside it closes it without saving.
+export component AlarmEditor inherits Rectangle {
+    in property <bool> open;
+    in property <int> look;
+    in property <bool> is-new;
+    in-out property <int> h;
+    in-out property <int> m;
+    in property <[bool]> days;
+    in property <string> label;
+    in property <int> sound;
+    in property <[string]> sound-options;
+    in property <bool> ha-sounds;
+    in property <bool> info;
+    in property <float> now-h;
+    width: 480px; height: 480px;
+    // the look shown: kept while the menu leaves
+    property <int> lk: root.look;
+    changed open => { if root.open { root.lk = root.look; } }
+    property <MenuInk> ink: LookInk.alarm(root.lk);
+    property <bool> radio: root.lk == 3;
+    property <length> form-h: (root.radio ? 80px + 12px + 46px + 12px : root.lk == 4 ? 120px + 2px + 40px + 8px : 120px + 12px + 40px + 12px)
+        + 48px + (root.info ? 8px + 60px : 0px) + 10px + 44px + (root.lk == 4 ? 10px : 12px) + 48px;
+    property <string> title: root.lk == 1 || root.lk == 3 ? (root.is-new ? "NEW ALARM" : "EDIT ALARM") : (root.is-new ? "New alarm" : "Edit alarm");
+    property <int> sleep: AlarmClock.until(root.now-h, root.h, root.m);
+    host := MenuHost {
+        open: root.open; kind: 1;
+        need: frame.top + root.form-h + frame.bottom;
+        in-ms: root.lk == 0 ? 140ms : root.lk == 1 ? 600ms : root.lk == 2 ? 520ms : root.lk == 3 ? 400ms : 700ms;
+        out-ms: root.lk == 0 ? 100ms : root.lk == 1 ? 180ms : root.lk == 2 ? 220ms : root.lk == 3 ? 160ms : 120ms;
+        close => { Act.act("alarm.close", ""); }
+        property <float> ti: self.t-in;
+        property <float> to: self.t-out;
+        property <bool> leaving: !root.open;
+        property <float> hh: self.menu-h / 1px;
+        // the look's motion: an offset (twin-bell and radio drop in and leave upwards), the twin-bell's ring shake, the
+        // sunrise's reveal from its lower edge, a fade (plain, 24-hour dial)
+        property <float> dy: root.lk == 1 ? (self.leaving ? -(self.hh + 60) * MenuMotion.ei(self.to / 180) : MenuMotion.drop(self.ti, 80, 260, 4, self.hh))
+            : root.lk == 3 ? (self.leaving ? -(self.hh + 60) * MenuMotion.ei(self.to / 160) : MenuMotion.drop(self.ti, 60, 200, 2, self.hh)) : 0;
+        property <float> dx: root.lk == 1 && !self.leaving && self.ti > 192 && self.ti < 552
+            ? 2.5 * (1 - (self.ti - 192) / 360) * (Math.mod(Math.floor((self.ti - 192) / 30), 2) == 0 ? 1 : -1) : 0;
+        property <float> fade: root.lk == 0 ? (self.leaving ? 1 - self.to / 100 : MenuMotion.eo(self.ti / 140))
+            : root.lk == 4 ? (self.leaving ? 1 - self.to / 120 : MenuMotion.eo(self.ti / 140)) : 1;
+        property <float> reveal: root.lk == 2 ? (self.leaving ? 1 - MenuMotion.ei(self.to / 220) : MenuMotion.eo(self.ti / 420)) : 1;
+        // the radio's LED: dark while it slides in, then 88:88 at 45 % for 80 ms, then the time
+        property <int> led: root.lk != 3 || self.leaving ? 2 : self.ti < 150 ? 0 : self.ti < 230 ? 1 : 2;
+        clipper := Rectangle {
+            x: host.menu-x - 30px; y: host.menu-y + host.menu-h * (1 - host.reveal) * (root.lk == 2 ? 1 : 0);
+            width: host.menu-w + 60px; height: root.lk == 2 ? host.menu-h * host.reveal + 40px : host.menu-h + 40px;
+            clip: root.lk == 2;
+            opacity: host.fade;
+            frame := AlarmFrame {
+                x: 30px + host.dx * 1px; y: host.dy * 1px - host.menu-h * (1 - host.reveal) * (root.lk == 2 ? 1 : 0);
+                width: host.menu-w; height: host.menu-h;
+                look: root.lk; title: root.title; sub: "ALARM SET"; ruler: true;
+                note: AlarmClock.left(root.sleep) + " of sleep";
+                dawn: root.lk == 2 && !host.leaving ? MenuMotion.eo(host.ti / 520) : 1;
+                glow: root.lk == 2 && !host.leaving ? MenuMotion.eo(host.ti / 520) : 1;
+                TouchArea { }
+                // the 24-hour ruler: ticks every hour (taller every 6), the sleep arc from now to the alarm (it follows the drums)
+                if root.lk == 4: ruler := Rectangle {
+                    x: 18px; y: 8px; width: parent.width - 36px; height: 36px;
+                    property <float> w: self.width / 1px;
+                    property <float> a0: root.now-h;
+                    property <float> a1: root.h + root.m / 60;
+                    property <float> span: Math.mod(self.a1 - self.a0 + 24, 24);
+                    property <float> k: host.leaving ? 1 : MenuMotion.eo((host.ti - 260) / 400);
+                    property <float> e: self.a0 + self.span * self.k;
+                    for i in 25: Rectangle {
+                        visible: host.leaving || host.ti >= i * 10;
+                        x: (i / 24 * ruler.w - (Math.mod(i, 6) == 0 ? 1 : 0.75)) * 1px; y: (Math.mod(i, 6) == 0 ? 14px : 18px);
+                        width: Math.mod(i, 6) == 0 ? 2px : 1.5px; height: Math.mod(i, 6) == 0 ? 12px : 8px;
+                        background: Math.mod(i, 6) == 0 ? #eef1f8 : #eef1f873; }
+                    for n in [0, 6, 12, 18]: Text { visible: host.leaving || host.ti >= 200; x: (n / 24 * ruler.w - 12) * 1px; y: 0; width: 24px; height: 12px; text: n;
+                        font-size: 9px; font-weight: 600; color: #9aa3bd; horizontal-alignment: center; vertical-alignment: center; }
+                    if ruler.k > 0.001: Path { x: -2.5px; y: 28.5px - 2.5px; width: parent.width + 5px; height: 5px + 5px; viewbox-width: ruler.w; viewbox-height: 5;
+                        stroke: #ffb21e; stroke-width: 5px; stroke-line-cap: round;
+                        commands: ruler.e <= 24 ? "M " + ruler.a0 / 24 * ruler.w + " 2.5 L " + ruler.e / 24 * ruler.w + " 2.5"
+                            : "M " + ruler.a0 / 24 * ruler.w + " 2.5 L " + ruler.w + " 2.5 M 0 2.5 L " + (ruler.e - 24) / 24 * ruler.w + " 2.5"; }
+                    Rectangle { x: (ruler.a0 / 24 * ruler.w - 4) * 1px; y: 27px; width: 8px; height: 8px; border-radius: 4px; background: #eef1f8; }
+                    if host.leaving || host.ti >= 640: Rectangle { x: (ruler.a1 / 24 * ruler.w - 6) * 1px; y: 25px; width: 12px; height: 12px; border-radius: 6px;
+                        background: #ffb21e; border-width: 2px; border-color: #0e1426; }
+                }
+                Flickable {
+                    x: frame.side; y: frame.top; width: parent.width - 2 * frame.side; height: parent.height - frame.top - frame.bottom;
+                    content-height: root.form-h; interactive: host.scrolls;
+                    AlarmForm { width: parent.width; height: root.form-h; look: root.lk; ink: root.ink; h <=> root.h; m <=> root.m; days: root.days; label: root.label;
+                        sound: root.sound; sound-options: root.sound-options; ha-sounds: root.ha-sounds; info: root.info; is-new: root.is-new; led: host.led; }
+                }
+            }
+        }
+    }
+}
+
+// A row of a look's settings menu: its label above the control.
+export component SetRow inherits VerticalLayout {
+    in property <string> label;
+    in property <MenuInk> ink;
+    in property <color> emboss: transparent;
+    padding-top: 4px; padding-bottom: 4px; spacing: 4px;
+    InkText { text: root.label; ink: root.ink.label; size: root.ink.label-size; weight: root.ink.label-weight; spacing: root.ink.label-spacing;
+        italic: root.ink.italic; glow: root.ink.glow; emboss: root.emboss; }
+    @children
+}
+
+// The page's functions as three checkboxes (at least one stays on: the app keeps it).
+export component FunctionChecks inherits HorizontalLayout {
+    in property <MenuInk> ink;
+    in property <bool> alarm-on;
+    in property <bool> timer-on;
+    in property <bool> watch-on;
+    in property <bool> caps;
+    spacing: 18px; alignment: start;
+    for f[i] in [{ k: "alarm", t: "Alarm", c: "ALARM", on: root.alarm-on }, { k: "timer", t: "Timer", c: "TIMER", on: root.timer-on },
+                 { k: "stopwatch", t: "Stopwatch", c: "STOPWATCH", on: root.watch-on }]: Rectangle {
+        min-height: 40px; width: fl.natural-w + 30px;
+        CheckBox { x: 0; y: (parent.height - 22px) / 2; checked: f.on; tk-knob: root.ink.muted; tk-knob-on: root.ink.on-accent; tk-accent: root.ink.accent;
+            toggled => { Act.act("alarms.functions", f.k); } }
+        fl := InkText { x: 30px; y: (parent.height - self.height) / 2; width: self.natural-w + 2px; text: root.caps ? f.c : f.t; ink: root.ink.text; size: 15px; weight: root.caps ? 700 : 400;
+            spacing: root.caps ? 1px : 0px; glow: root.ink.glow; }
+        TouchArea { clicked => { Act.act("alarms.functions", f.k); } }
+    }
+}
+
+// The alarm tab's settings (spec 35): the page's settings in the alarm look's own menu: functions, colours, the time
+// format (looks with digits: plain, sunrise, clock radio; spec 32.3), the alarm look. A look change closes the menu and
+// opens it again as the new look's menu.
+export component AlarmSettings inherits Rectangle {
+    in-out property <bool> open;
+    in property <int> look;
+    in property <bool> alarm-on;
+    in property <bool> timer-on;
+    in property <bool> watch-on;
+    in property <bool> colourful;
+    width: 480px; height: 480px;
+    property <int> lk: root.look;
+    changed open => { if root.open { root.lk = root.look; } }
+    property <MenuInk> ink: LookInk.alarm(root.lk);
+    property <bool> digital: root.lk == 0 || root.lk == 2 || root.lk == 3;
+    property <bool> caps: root.lk == 1 || root.lk == 3;
+    // a new look: the menu goes, then comes back as the new look's menu
+    property <bool> reopen;
+    Timer { interval: 300ms; running: root.reopen && !root.open; triggered => { root.reopen = false; root.open = true; } }
+    host := MenuHost {
+        open: root.open; kind: 1;
+        need: frame.top + body.preferred-height + frame.bottom;
+        in-ms: root.lk == 0 ? 140ms : root.lk == 1 ? 600ms : root.lk == 2 ? 520ms : root.lk == 3 ? 300ms : 140ms;
+        out-ms: root.lk == 0 ? 100ms : root.lk == 1 ? 180ms : root.lk == 2 ? 220ms : root.lk == 3 ? 160ms : 120ms;
+        close => { root.open = false; }
+        property <float> ti: self.t-in;
+        property <float> to: self.t-out;
+        property <bool> leaving: !root.open;
+        property <float> hh: self.menu-h / 1px;
+        property <float> dy: root.lk == 1 ? (self.leaving ? -(self.hh + 60) * MenuMotion.ei(self.to / 180) : MenuMotion.drop(self.ti, 80, 260, 4, self.hh))
+            : root.lk == 3 ? (self.leaving ? -(self.hh + 60) * MenuMotion.ei(self.to / 160) : MenuMotion.drop(self.ti, 60, 200, 2, self.hh)) : 0;
+        property <float> dx: root.lk == 1 && !self.leaving && self.ti > 192 && self.ti < 552
+            ? 2.5 * (1 - (self.ti - 192) / 360) * (Math.mod(Math.floor((self.ti - 192) / 30), 2) == 0 ? 1 : -1) : 0;
+        property <float> fade: root.lk == 0 ? (self.leaving ? 1 - self.to / 100 : MenuMotion.eo(self.ti / 140))
+            : root.lk == 4 ? (self.leaving ? 1 - self.to / 120 : MenuMotion.eo(self.ti / 140)) : 1;
+        property <float> reveal: root.lk == 2 ? (self.leaving ? 1 - MenuMotion.ei(self.to / 220) : MenuMotion.eo(self.ti / 420)) : 1;
+        Rectangle {
+            x: host.menu-x - 30px; y: host.menu-y + host.menu-h * (1 - host.reveal) * (root.lk == 2 ? 1 : 0);
+            width: host.menu-w + 60px; height: root.lk == 2 ? host.menu-h * host.reveal + 40px : host.menu-h + 40px;
+            clip: root.lk == 2;
+            opacity: host.fade;
+            frame := AlarmFrame {
+                x: 30px + host.dx * 1px; y: host.dy * 1px - host.menu-h * (1 - host.reveal) * (root.lk == 2 ? 1 : 0);
+                width: host.menu-w; height: host.menu-h;
+                look: root.lk; title: root.caps ? "ALARMS & TIMERS" : "Alarms & timers"; sub: "SETUP";
+                dawn: root.lk == 2 && !host.leaving ? MenuMotion.eo(host.ti / 520) : 1;
+                glow: root.lk == 2 && !host.leaving ? MenuMotion.eo(host.ti / 520) : 1;
+                TouchArea { }
+                Flickable {
+                    x: frame.side; y: frame.top; width: parent.width - 2 * frame.side; height: parent.height - frame.top - frame.bottom;
+                    content-height: body.preferred-height; interactive: host.scrolls;
+                    body := VerticalLayout {
+                        width: parent.width;
+                        SetRow { label: root.caps ? "FUNCTIONS" : "Functions"; ink: root.ink;
+                            FunctionChecks { ink: root.ink; alarm-on: root.alarm-on; timer-on: root.timer-on; watch-on: root.watch-on; caps: root.caps; } }
+                        SetRow { label: root.caps ? "COLOURS" : "Colours"; ink: root.ink;
+                            Segmented { options: ["Colourful", "One colour"]; selected: root.colourful ? 0 : 1;
+                                tk-raised: root.ink.raised; tk-text: root.ink.text; tk-pill: root.ink.pill; tk-on-text: root.ink.on-text; tk-accent: root.ink.accent;
+                                picked(i) => { Act.act("alarms.colourful", i == 0 ? "1" : "0"); } } }
+                        if root.digital: SetRow { label: root.caps ? "TIME FORMAT" : "Time format"; ink: root.ink;
+                            Segmented { options: ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
+                                tk-raised: root.ink.raised; tk-text: root.ink.text; tk-pill: root.ink.pill; tk-on-text: root.ink.on-text; tk-accent: root.ink.accent;
+                                picked(i) => { Clock.h24 = i == 0; Act.act("set.h24", i == 0 ? "true" : "false"); } } }
+                        SetRow { label: root.caps ? "ALARM LOOK" : "Alarm look"; ink: root.ink;
+                            Dropdown { options: ["Plain", "Twin-bell", "Sunrise", "Clock radio", "24-hour dial"]; selected: root.lk;
+                                tk-raised: root.ink.raised; tk-line: root.ink.line; tk-text: root.ink.text; tk-muted: root.ink.muted; tk-menu: root.ink.menu;
+                                tk-pressed: root.ink.pressed; tk-accent: root.ink.accent;
+                                picked(i) => { if i != root.lk { Act.act("alarms.look", i); root.open = false; root.reopen = true; } } } }
+                        HorizontalLayout { padding-top: 8px;
+                            Rectangle { horizontal-stretch: 1; }
+                            TextButton { width: 116px; text: "Done"; primary: true; tk-text: root.ink.save; tk-on-text: root.ink.on-save; clicked => { root.open = false; } } }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The ringing screens' Stop and Snooze 9 min (the pill's place is fixed for every look: app.slint takes the taps).
+component RingButtons inherits Rectangle {
+    in property <color> stop-bg;
+    in property <color> stop-ink;
+    in property <color> snooze-bg;
+    in property <color> snooze-ink;
+    in property <color> line: transparent;
+    in property <length> stop-y: 330px;
+    Rectangle { x: 130px; y: root.stop-y; width: 220px; height: 48px; border-radius: 24px; background: root.stop-bg;
+        Text { text: "Stop"; font-size: 20px; font-weight: 700; color: root.stop-ink; horizontal-alignment: center; vertical-alignment: center; } }
+    Rectangle { x: 170px; y: 392px; width: 140px; height: 44px; border-radius: 22px; background: root.snooze-bg; border-width: root.line == transparent ? 0px : 1.5px; border-color: root.line;
+        Text { text: "Snooze 9 min"; font-size: 16px; font-weight: 600; color: root.snooze-ink; horizontal-alignment: center; vertical-alignment: center; } }
+}
+
+// The alarm rings in its look's own way (spec 24.5-24.8); the plain look keeps the brand ringing screen. Stop: a tap
+// anywhere; Snooze 9 min: the pill at x 170-310, y 392-436 (app.slint takes the taps).
+export component AlarmRing inherits Rectangle {
+    in property <int> look;
+    in property <string> time;
+    in property <float> hour;              // the ringing time as hours of the day
+    in property <string> label;
+    in property <float> pulse;
+    in property <color> tint: #FF4A1C;
+    in property <float> now-h;
+    in property <float> sunrise-h: 7;
+    in property <float> sunset-h: 16.5;
+    // the time since it began to ring (the sunrise's sun rises over 20 s)
+    property <duration> t0;
+    init => { root.t0 = animation-tick(); }
+    property <float> el: (animation-tick() - root.t0) / 1ms;
+    property <color> fg: Theme.dark ? #F5F3EE : #101114;
+    background: Theme.background;
+
+    // 1 twin-bell: the clock rings big (it shakes, the bells jitter, the hammer swings: AlarmNow.ringing), sound strokes pulse
+    // beside the bells; under it the time and the label
+    if root.look == 1: Rectangle {
+        Rectangle { background: @radial-gradient(circle, root.tint.with-alpha(0.10 + 0.12 * root.pulse) 0%, root.tint.with-alpha(0) 70%); }
+        TwinBellClock { x: (480px - 196px) / 2; y: 46px; width: 196px; height: 225px; metal: Theme.dark ? #b9b6af : #8d8a84; highlight: false; shadow: true;
+            hours: Math.mod(root.now-h, 12); minutes: Math.mod(root.now-h * 60, 60); seconds: 0; show-seconds: false; }
+        // the sound strokes: three arcs each side, beside the bells, growing out in turn
+        for s[i] in [{ side: -1, k: 0 }, { side: -1, k: 1 }, { side: -1, k: 2 }, { side: 1, k: 0 }, { side: 1, k: 1 }, { side: 1, k: 2 }]: Path {
+            property <float> ph: Math.mod(root.el / 600 + s.k / 3, 1);
+            property <float> r: 18 + 22 * self.ph;
+            property <float> cx: 240 + s.side * 84;
+            x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
+            stroke: root.tint; stroke-width: 3px; stroke-line-cap: round; opacity: (1 - self.ph) * 0.9;
+            commands: "M " + (self.cx + s.side * self.r * 0.5) + " " + (90 - self.r * 0.86) + " A " + self.r + " " + self.r + " 0 0 " + (s.side > 0 ? "1" : "0") + " "
+                + (self.cx + s.side * self.r * 0.5) + " " + (90 + self.r * 0.86);
+        }
+        Text { x: 20px; y: 276px; width: 440px; height: 52px; text: root.time + (root.label != "" ? "  ·  " + root.label : ""); font-size: 18px; font-weight: 700;
+            color: root.fg; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+        RingButtons { stop-y: 334px; stop-bg: root.tint; stop-ink: #ffffff; snooze-bg: root.fg.with-alpha(0.12); snooze-ink: root.fg; }
+    }
+
+    // 2 sunrise: the page fills with the sky; the sun rises over 20 s and the writing turns dark when the sky is bright
+    if root.look == 2: sky := Rectangle {
+        property <float> k: Math.min(1, root.el / 20000);
+        property <bool> bright: !Theme.dark || sky.k > 0.78;
+        property <color> ink: sky.bright ? #101114 : #F5F3EE;
+        pure function c(stage: int, i: int) -> color {
+            Theme.dark
+                ? (stage == 0 ? [#050b1c, #0f1c3c, #22335a][i] : stage == 1 ? [#2a2b5c, #b0517a, #ffa862][i] : [#5f8fcf, #f3b58a, #ffcf86][i])
+                : (stage == 0 ? [#cfd7e2, #dde3ea, #eef0f2][i] : stage == 1 ? [#d9cfe0, #f0d6d8, #fbe2c8][i] : [#cfe2f3, #f7e7cf, #ffd6a0][i])
+        }
+        pure function s3(i: int, k: float) -> color { k < 0.6 ? sky.c(1, i).mix(sky.c(0, i), k / 0.6) : sky.c(2, i).mix(sky.c(1, i), (k - 0.6) / 0.4) }
+        background: @linear-gradient(180deg, sky.s3(0, sky.k) 0%, sky.s3(1, sky.k) 55%, sky.s3(2, sky.k) 100%);
+        property <float> sun: Math.max(0, (sky.k - 0.2) / 0.8);
+        Rectangle { x: 318px - 120px; y: (392 - sky.sun * 150) * 1px - 120px; width: 240px; height: 240px; border-radius: 120px; opacity: Math.min(1, sky.sun * 2);
+            background: @radial-gradient(circle, #ffd27ac0 0%, #ffd27a00 100%); }
+        Rectangle { x: 286px; y: (392 - sky.sun * 150) * 1px - 32px; width: 64px; height: 64px; border-radius: 32px; background: #ffd98a; }
+        Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
+            fill: Theme.dark ? #5a3a4a.mix(#0d1526, sky.k) : #d8b9a4.mix(#c3cad3, sky.k);
+            commands: "M 0 338 C 60 318 120 322 180 334 C 250 348 320 312 400 318 C 440 321 465 330 480 334 L 480 480 L 0 480 Z"; }
+        Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
+            fill: Theme.dark ? #2e1d29.mix(#060a14, sky.k) : #c49c86.mix(#b4bcc6, sky.k);
+            commands: "M 0 362 C 90 352 160 366 240 364 C 330 362 400 350 480 356 L 480 480 L 0 480 Z"; }
+        Text { x: 0; y: 70px; width: 480px; height: 110px; text: root.time; font-family: "Space Grotesk"; font-size: Clock.h24 ? 104px : 84px; font-weight: 500;
+            letter-spacing: -2px; color: sky.ink; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 24px; y: 180px; width: 432px; height: 30px; text: root.label != "" ? root.label : "Good morning"; font-size: 22px; font-weight: 600; color: sky.ink;
+            horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+        if root.label != "": Text { x: 0; y: 214px; width: 480px; height: 24px; text: "Good morning"; font-size: 16px; color: sky.ink.with-alpha(0.75);
+            horizontal-alignment: center; vertical-alignment: center; }
+        RingButtons { stop-y: 330px; stop-bg: sky.bright ? #101114 : #F5F3EE; stop-ink: sky.bright ? #F5F3EE : #101114;
+            snooze-bg: sky.bright ? #10111426 : #F5F3EE2e; snooze-ink: sky.ink; }
+    }
+
+    // 3 clock radio: the display blinks the alarm time (500 ms), the snooze bar turns Signal and pulses, sound rings grow
+    // from the grille; Stop and Snooze under the radio
+    if root.look == 3: radio := Rectangle {
+        property <length> ry: 56px;
+        property <bool> on: Math.mod(Math.floor(root.el / 500), 2) == 0;
+        property <int> hh: Math.floor(root.hour + 0.0001);
+        property <int> mm: Math.mod(Math.round((root.hour - radio.hh) * 60), 60);
+        property <int> sh: Clock.h24 ? radio.hh : (Math.mod(radio.hh, 12) == 0 ? 12 : Math.mod(radio.hh, 12));
+        // sound rings from the grille's centre
+        for r in 3: Rectangle {
+            property <float> ph: Math.mod(root.el / 1500 + r / 3, 1);
+            property <float> rad: 30 + 150 * self.ph;
+            x: (30 + 95 - self.rad) * 1px; y: radio.ry + (123 - self.rad) * 1px; width: self.rad * 2px; height: self.rad * 2px; border-radius: self.rad * 1px;
+            border-width: 2px; border-color: root.tint.with-alpha(0.6 * (1 - self.ph)); }
+        Image { x: 30px; y: radio.ry; width: 420px; height: 236px; source: Theme.dark ? @image-url("timers/radio-dark.png") : @image-url("timers/radio-light.png"); }
+        // the snooze bar in Signal, pulsing
+        Rectangle { x: 30px + 90px; y: radio.ry + 1px; width: 240px; height: 17px; border-top-left-radius: 8px; border-top-right-radius: 8px;
+            background: #FF4A1C.mix(#c8320c, 0.6 + 0.4 * root.pulse);
+            Text { text: "SNOOZE"; font-size: 10px; font-weight: 700; letter-spacing: 3px; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; } }
+        Rectangle { x: 0; y: radio.ry - 98px; width: 480px; height: 480px; opacity: radio.on ? 1 : 0.08;
+            Seg7 { d: radio.sh >= 10 ? Math.floor(radio.sh / 10) : -1; x0: 234; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Seg7 { d: Math.mod(radio.sh, 10); x0: 274; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Seg7 { d: Math.floor(radio.mm / 10); x0: 326; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Seg7 { d: Math.mod(radio.mm, 10); x0: 366; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Rectangle { x: 311px; y: 170px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
+            Rectangle { x: 309px; y: 202px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
+            if !Clock.h24: Rectangle { x: 216px; y: 154px; width: 8px; height: 8px; border-radius: 4px; background: radio.hh >= 12 ? #ff2d1a : #3a1410; }
+            if !Clock.h24: Text { x: 210px; y: 164px; width: 20px; text: "PM"; font-size: 8px; font-weight: 700; color: radio.hh >= 12 ? #ff2d1a : #3a1410; horizontal-alignment: center; }
+        }
+        Text { x: 20px; y: radio.ry + 244px; width: 440px; height: 28px; text: root.label != "" ? root.label : "Good morning"; font-size: 18px; font-weight: 600;
+            color: root.fg; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+        RingButtons { stop-y: 336px; stop-bg: #FF4A1C; stop-ink: #ffffff; snooze-bg: root.fg.with-alpha(0.12); snooze-ink: root.fg; }
+    }
+
+    // 4 24-hour dial: the hand at the alarm, its marker pulsing, the time and "Good morning" in the centre
+    if root.look == 4: dial := Rectangle {
+        pure function ang(h: float) -> angle { (h / 24 * 360 + 180) * 1deg }
+        pure function px(h: float, r: float) -> float { 240 + r * Math.sin(dial.ang(h)) }
+        pure function py(h: float, r: float) -> float { 200 - r * Math.cos(dial.ang(h)) }
+        pure function arc(h1: float, h2: float) -> string {
+            "M " + dial.px(h1, 112) + " " + dial.py(h1, 112) + " A 112 112 0 " + (Math.mod(h2 - h1 + 24, 24) > 12 ? "1" : "0") + " 1 " + dial.px(h2, 112) + " " + dial.py(h2, 112)
+        }
+        property <color> day: Theme.dark ? #1d1e22 : #e6e2d9;
+        property <color> night: Theme.dark ? #0e1424 : #c9c4b8;
+        property <color> faint: root.fg.with-alpha(0.55);
+        Rectangle { x: 240px - 121px; y: 200px - 121px; width: 242px; height: 242px; border-radius: 121px; border-width: 18px; border-color: dial.day; }
+        Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke: dial.night; stroke-width: 18px; commands: dial.arc(root.sunset-h, root.sunrise-h); }
+        for k in 24: Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke-line-cap: round;
+            stroke: Math.mod(k, 6) == 0 ? root.fg : dial.faint; stroke-width: Math.mod(k, 6) == 0 ? 2.4px : 1.2px;
+            commands: "M " + dial.px(k, 99) + " " + dial.py(k, 99) + " L " + dial.px(k, Math.mod(k, 6) == 0 ? 89 : 94) + " " + dial.py(k, Math.mod(k, 6) == 0 ? 89 : 94); }
+        for n in [0, 6, 12, 18]: Text { x: (dial.px(n, 76) - 20) * 1px; y: (dial.py(n, 76) - 10) * 1px; width: 40px; height: 20px; text: n;
+            font-family: "Space Grotesk"; font-size: 15px; font-weight: 500; color: root.fg; horizontal-alignment: center; vertical-alignment: center; }
+        // the hand at the alarm and its marker, pulsing
+        Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke: root.fg; stroke-width: 2.4px; stroke-line-cap: round;
+            commands: "M " + dial.px(root.hour, 16) + " " + dial.py(root.hour, 16) + " L " + dial.px(root.hour, 126) + " " + dial.py(root.hour, 126); }
+        property <float> beat: 1 + 0.5 * Math.abs(Math.sin(1rad * root.el / 1000 * 3.1416));
+        Rectangle { x: (dial.px(root.hour, 112) - 10.5 * dial.beat * 1.6) * 1px; y: (dial.py(root.hour, 112) - 10.5 * dial.beat * 1.6) * 1px;
+            width: 21px * dial.beat * 1.6; height: self.width; border-radius: self.width / 2; background: root.tint.with-alpha(0.25 * (1.5 - dial.beat) * 2); }
+        Rectangle { x: (dial.px(root.hour, 112) - 10.5) * 1px; y: (dial.py(root.hour, 112) - 10.5) * 1px; width: 21px; height: 21px; border-radius: 10.5px; background: root.tint; }
+        Text { x: 150px; y: 154px; width: 180px; height: 44px; text: root.time; font-family: "Space Grotesk"; font-size: Clock.h24 ? 38px : 30px; font-weight: 500;
+            color: root.fg; horizontal-alignment: center; vertical-alignment: center; }
+        Text { x: 150px; y: 198px; width: 180px; height: 22px; text: "Good morning"; font-size: 14px; font-weight: 600; color: dial.faint; horizontal-alignment: center; vertical-alignment: center; }
+        if root.label != "": Text { x: 20px; y: 46px; width: 440px; height: 26px; text: root.label; font-size: 18px; font-weight: 600; color: root.fg;
+            horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap; }
+        RingButtons { stop-y: 336px; stop-bg: root.tint; stop-ink: #ffffff; snooze-bg: root.fg.with-alpha(0.12); snooze-ink: root.fg; }
+    }
+}

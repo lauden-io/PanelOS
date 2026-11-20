@@ -468,6 +468,9 @@ export component AppWindow inherits Window {
     in property <int> timers-focus;
     in property <[AlarmItem]> timers-alarms;
     in property <string> timers-next-alarm;
+    // a snoozed alarm: the time of day it rings again (-1 none); the ringing alarm's time as hours of the day
+    in property <float> timers-snooze-h: -1;
+    in property <float> timers-ring-h: -1;
     // Stopwatch: runs in the UI (every frame while it is on screen); the app starts, stops and reads it.
     in-out property <float> timers-watch-base;
     property <duration> timers-watch-t0;
@@ -1139,6 +1142,7 @@ export component AppWindow inherits Window {
                     edit: root.timers-edit; edit-new: root.timers-edit-new; edit-timer: root.timers-edit-timer; edit-h <=> root.timers-edit-h; edit-m <=> root.timers-edit-m; edit-days: root.timers-edit-days;
                     edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; ha-sounds: root.timers-ha-sounds; edit-keyboard: root.timers-edit-keyboard; kb-layer: root.timers-kb-layer; kb-layout: root.kb-layout;
                     edit-info: root.timers-edit-info; edit-tint: root.timers-edit-tint;
+                    on-screen: i == root.shown-page && !root.screensaver-on; snooze-h: root.timers-snooze-h; ring-h: root.timers-ring-h;
                 }
                 if slot.kind == "thermostat" && slot.variant == 3: FastLane {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
