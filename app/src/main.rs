@@ -206,6 +206,10 @@ pub struct UiState {
     /// Play / pause pressed on the panel: (playing, when, the position then) until the player reports it (at most 3 s),
     /// so the time neither runs on after a pause nor jumps after a play while the player catches up.
     music_hold: Option<(bool, Instant, f32)>,
+    /// Next / previous pressed on the panel (see `apply_music_skip`).
+    music_skip: Option<MusicSkip>,
+    /// The player the cover in `art_url` belongs to (a paused track keeps its cover only on its own player).
+    art_player: String,
     /// Split-flap clock: the digits shown before the last change, and when it changed.
     digits: [String; 4],
     prev_digits: [String; 4],
@@ -439,6 +443,67 @@ fn apply_music_hold(s: &mut UiState, music: &mut HomeMusic) {
     }
 }
 
+/// Next / previous pressed on the panel: for up to 3 s the page keeps the play state it had (a player between two
+/// tracks says paused or buffering for a moment), and once the new track has shown, the old one does not come back
+/// (a player may report the old track again for a moment while it changes).
+struct MusicSkip {
+    at: Instant,
+    /// The track shown when the key was pressed (`track_key`).
+    from: String,
+    playing: bool,
+    /// The newest other track seen since.
+    to: Option<HomeMusic>,
+}
+
+fn track_key(m: &HomeMusic) -> String {
+    format!("{}\u{1f}{}", m.title, m.artist)
+}
+
+/// Applies a running skip hold to the shown music; true when the player reported the old track again and the new
+/// one is shown instead (the cover and the other details then stay as they are too).
+fn apply_music_skip(s: &mut UiState, music: &mut HomeMusic) -> bool {
+    let Some(k) = s.music_skip.as_mut() else { return false };
+    if k.at.elapsed() >= Duration::from_secs(3) {
+        s.music_skip = None;
+        return false;
+    }
+    let mut back = false;
+    match skip_step(&k.from, &track_key(music), k.to.is_some()) {
+        SkipStep::NewTrack => k.to = Some(music.clone()),
+        SkipStep::OldAgain => {
+            if let Some(to) = &k.to {
+                *music = to.clone();
+                back = true;
+            }
+        }
+        SkipStep::Waiting => {}
+    }
+    if k.playing {
+        music.playing = true;
+    }
+    back
+}
+
+#[derive(Debug, PartialEq)]
+enum SkipStep {
+    /// Another track than the one at the press: the newest one seen.
+    NewTrack,
+    /// The track of the press again after a new one had shown: the new one stays.
+    OldAgain,
+    /// Still the track of the press (the player has not changed yet).
+    Waiting,
+}
+
+fn skip_step(from: &str, now: &str, seen_new: bool) -> SkipStep {
+    if now != from {
+        SkipStep::NewTrack
+    } else if seen_new {
+        SkipStep::OldAgain
+    } else {
+        SkipStep::Waiting
+    }
+}
+
 fn media_entity(s: &UiState) -> String {
     // The player picked on the panel (remembered), else the music page's, else the integration's.
     if !s.settings.music_player.is_empty() {
@@ -612,6 +677,7 @@ fn update_clock(ui: &AppWindow) {
         if music.playing && !really_playing(s, &media_entity(s)) {
             music.playing = false;
         }
+        apply_music_skip(s, &mut music);
         if music.playing || ui.get_home_music_pos() != music.pos {
             ui.set_music_pos(music.pos);
             ui.set_home_music_pos(music.pos);
@@ -845,6 +911,13 @@ fn refresh_pages(ui: &AppWindow) {
             music.playing = false;
         }
         apply_music_hold(s, &mut music);
+        let back = apply_music_skip(s, &mut music);
+        // which player shows which track (a mixed-up page can be traced)
+        thread_local!(static SHOWN: RefCell<String> = const { RefCell::new(String::new()) });
+        let shown = format!("{player}: {} · {}", music.title, music.artist);
+        if SHOWN.with(|v| v.replace(shown.clone())) != shown {
+            eprintln!("nspanel-app: music page shows {shown}");
+        }
         ui.set_music_title(music.title.clone());
         ui.set_music_artist(music.artist.clone());
         ui.set_music_playing(music.playing);
@@ -866,11 +939,15 @@ fn refresh_pages(ui: &AppWindow) {
         if let Some(c) = record {
             ui.set_music_record(c);
         }
-        if let Some(p) = s.states.get(&player) {
-            ui.set_music_album(p.attrs.get("media_album_name").and_then(Value::as_str).unwrap_or("").into());
-            ui.set_music_volume(p.attrs.get("volume_level").and_then(Value::as_f64).unwrap_or(0.0) as f32);
-            ui.set_music_shuffle(p.attrs.get("shuffle").and_then(Value::as_bool).unwrap_or(false));
-            ui.set_music_repeat(match p.attrs.get("repeat").and_then(Value::as_str) {
+        // the rest of the page from the same player (nothing of another player stays: a player not known yet shows
+        // none of it)
+        if !back {
+            let p = s.states.get(&player);
+            let attr = |k: &str| p.and_then(|p| p.attrs.get(k));
+            ui.set_music_album(attr("media_album_name").and_then(Value::as_str).unwrap_or("").into());
+            ui.set_music_volume(attr("volume_level").and_then(Value::as_f64).unwrap_or(0.0) as f32);
+            ui.set_music_shuffle(attr("shuffle").and_then(Value::as_bool).unwrap_or(false));
+            ui.set_music_repeat(match attr("repeat").and_then(Value::as_str) {
                 Some("all") => 1,
                 Some("one") => 2,
                 _ => 0,
@@ -883,10 +960,12 @@ fn refresh_pages(ui: &AppWindow) {
                 .then(|| p.attrs.get("entity_picture").and_then(Value::as_str).filter(|u| !u.is_empty()).map(str::to_string))
                 .flatten()
         });
-        // a paused track keeps its cover even if the player drops the picture meanwhile
-        let url = if url.is_none() && shows { s.art_url.clone() } else { url };
+        // a paused track keeps its cover even if the player drops the picture meanwhile (on the same player only);
+        // a skip hold that keeps the new track keeps its cover too
+        let url = if back || (url.is_none() && shows && s.art_player == player) { s.art_url.clone() } else { url };
         let art = if url != s.art_url {
             s.art_url = url.clone();
+            s.art_player = player.clone();
             s.art_tx.clone().map(|tx| (tx, url))
         } else {
             None
@@ -3413,12 +3492,22 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 "music.play" => {
                     call("media_player", "media_play_pause", &entity, json!({}));
                     // the glyph turns at once; the player's next state confirms it, or after 3 s the
-                    // views show its real state again
+                    // views show its real state again. A pause holds the position of this moment (the widget's
+                    // struct keeps the one of its last full refresh: the running time has its own property).
                     let mut m = ui.get_home_music();
                     m.playing = !m.playing;
-                    let held = (m.playing, Instant::now(), m.pos);
-                    with_state(|s| s.music_hold = Some(held));
+                    let pos = with_state(|s| pages::home_music(&s.states, &entity, None, m.accent).pos);
+                    m.pos = pos;
+                    let held = (m.playing, Instant::now(), pos);
+                    with_state(|s| {
+                        s.music_hold = Some(held);
+                        s.music_skip = None;
+                    });
                     ui.set_music_playing(m.playing);
+                    if !m.playing {
+                        ui.set_music_pos(pos);
+                        ui.set_home_music_pos(pos);
+                    }
                     ui.set_home_music(m);
                     let weak = ui.as_weak();
                     slint::Timer::single_shot(Duration::from_secs(3), move || {
@@ -3430,8 +3519,14 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 // the turntable's arm: dropped on its rest pauses, dropped on the record plays
                 "music.pause" => call("media_player", "media_pause", &entity, json!({})),
                 "music.resume" => call("media_player", "media_play", &entity, json!({})),
-                "music.next" => call("media_player", "media_next_track", &entity, json!({})),
-                "music.prev" => call("media_player", "media_previous_track", &entity, json!({})),
+                "music.next" | "music.prev" => {
+                    call("media_player", if what == "music.next" { "media_next_track" } else { "media_previous_track" }, &entity, json!({}));
+                    let playing = ui.get_music_playing();
+                    with_state(|s| {
+                        let from = track_key(&pages::home_music(&s.states, &entity, None, slint::Color::default()));
+                        s.music_skip = Some(MusicSkip { at: Instant::now(), from, playing, to: None });
+                    });
+                }
                 "music.shuffle" => call("media_player", "shuffle_set", &entity, json!({"shuffle": !ui.get_music_shuffle()})),
                 "music.repeat" => {
                     let next = match ui.get_music_repeat() {
@@ -3754,6 +3849,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             show_until: None,
             last_lux_report: Instant::now(),
             music_hold: None,
+            music_skip: None,
+            art_player: String::new(),
             digits: Default::default(),
             prev_digits: Default::default(),
             flip_at: None,
@@ -4321,4 +4418,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = VERSION;
     ui.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod music_skip_tests {
+    use super::{skip_step, SkipStep};
+
+    #[test]
+    fn a_skip_never_flips_back() {
+        // Next pressed on "A": the player still says "A", then "B", then "A" again for a moment, then "B"
+        assert_eq!(skip_step("A", "A", false), SkipStep::Waiting);
+        assert_eq!(skip_step("A", "B", false), SkipStep::NewTrack);
+        assert_eq!(skip_step("A", "A", true), SkipStep::OldAgain);
+        assert_eq!(skip_step("A", "B", true), SkipStep::NewTrack);
+    }
 }
