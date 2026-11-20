@@ -3,6 +3,42 @@
 //! Home Assistant (the Date header of the WebSocket handshake), which also
 //! covers networks without internet access, where NTP never answers.
 
+/// The panel's time format for every clock time it shows (one panel-wide value, the UI's `Clock.h24`): true
+/// 24-hour ("18:45"), false 12-hour ("6:45 PM"). Durations never follow it.
+static H24: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+pub fn set_h24(on: bool) {
+    H24.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub fn h24() -> bool {
+    H24.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// A clock time (hour 0-23, minute) in the panel's time format: "18:45" or "6:45 PM".
+pub fn hm(h: u32, m: u32) -> String {
+    hm_in(h, m, h24())
+}
+
+fn hm_in(h: u32, m: u32, h24: bool) -> String {
+    if h24 {
+        format!("{:02}:{:02}", h % 24, m % 60)
+    } else {
+        let h12 = match h % 12 { 0 => 12, x => x };
+        format!("{h12}:{:02} {}", m % 60, if h % 24 < 12 { "AM" } else { "PM" })
+    }
+}
+
+/// The local time of day of a unix time in the panel's time format ("18:45" / "6:45 PM").
+pub fn local_hm(t: i64) -> String {
+    let s = crate::pages::local_format(t, "%H %M");
+    let mut it = s.split(' ').filter_map(|x| x.parse::<u32>().ok());
+    match (it.next(), it.next()) {
+        (Some(h), Some(m)) => hm(h, m),
+        _ => crate::pages::local_format(t, "%H:%M"),
+    }
+}
+
 /// 2026-01-01: anything later means the clock has been set.
 const VALID_AFTER: u64 = 1_767_225_600;
 
@@ -62,6 +98,15 @@ fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn time_formats() {
+        assert_eq!(hm_in(18, 45, true), "18:45");
+        assert_eq!(hm_in(6, 5, true), "06:05");
+        assert_eq!(hm_in(18, 45, false), "6:45 PM");
+        assert_eq!(hm_in(0, 0, false), "12:00 AM");
+        assert_eq!(hm_in(12, 30, false), "12:30 PM");
+    }
 
     #[test]
     fn http_dates() {
