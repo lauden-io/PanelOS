@@ -332,8 +332,14 @@ function synthBase(scene) {
   const [g2, d2] = grad([[0, "#ffd45a"], [1, "#ff3d9a"]]);
   let s = `${d1}${d2}<rect width="120" height="120" fill="url(#${g1})"/>`;
   if (scene === 3) {
-    s += [[12, 14], [30, 30], [52, 10], [88, 20], [104, 40], [70, 34], [18, 50], [96, 8]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.9" fill="#fff"/>`).join("");
-    s += `<circle cx="82" cy="40" r="14" fill="url(#${g2})"/><ellipse cx="82" cy="40" rx="24" ry="5" fill="none" stroke="#ff8fd0" stroke-width="1.6"/>`;
+    // space: a nebula, the ringed planet over cyan wireframe mountains, a violet grid
+    const [g3, d3] = grad([[0, "#ffa8e2"], [0.5, "#ff6cc8"], [1, "#6a34d4"]]);
+    s = `${d1}${d3}<rect width="120" height="120" fill="url(#${g1})"/><rect width="120" height="76" fill="#0b0634" opacity=".55"/>`;
+    s += `<ellipse cx="30" cy="30" rx="36" ry="11" fill="#ff4fd8" opacity=".22" transform="rotate(12 30 30)"/><ellipse cx="88" cy="20" rx="30" ry="9" fill="#4a7bff" opacity=".2"/>`;
+    s += [[12, 14], [30, 40], [52, 10], [88, 30], [104, 44], [70, 6], [18, 52], [96, 8], [40, 22], [112, 18]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.9" fill="#fff"/>`).join("");
+    s += `<g transform="rotate(-11 60 64)"><ellipse cx="60" cy="64" rx="27" ry="8" fill="none" stroke="#ffe2f7" stroke-width="1.4"/></g><circle cx="60" cy="64" r="17" fill="url(#${g3})"/>`;
+    s += `<g transform="rotate(-11 60 64)"><path d="M33 64 A27 8 0 0 0 87 64" fill="none" stroke="#ffe2f7" stroke-width="1.6"/></g>`;
+    s += `<path d="M0 62 L14 56 L26 60 L40 66 L52 74 L60 76 L70 73 L84 70 L96 64 L108 66 L120 63 V76 H0Z" fill="#110730" stroke="#29f3ff" stroke-width="1"/>`;
   } else {
     s += `<circle cx="60" cy="58" r="22" fill="url(#${g2})"/>`;
     s += [56, 62, 67, 71].map((y, i) => `<rect x="36" y="${y}" width="48" height="${1 + i * 0.6}" fill="#4b0f63"/>`).join("");
@@ -341,7 +347,7 @@ function synthBase(scene) {
   if (scene === 0) s += `<path d="M0 75 L22 52 L38 66 L60 44 L80 64 L98 50 L120 72 V76 H0Z" fill="#240a40" stroke="#ff2bd6" stroke-width="1"/>`;
   if (scene === 1) s += `<path d="M0 76 V60 H10 V48 H20 V62 H28 V40 H40 V58 H48 V50 H60 V66 H66 V36 H78 V60 H86 V52 H98 V64 H108 V56 H120 V76Z" fill="#1a0633"/>` + [[14, 52], [32, 46], [34, 52], [70, 42], [72, 50], [90, 56], [112, 60]].map(([x, y]) => `<rect x="${x}" y="${y}" width="2" height="2" fill="#4ff0ff"/>`).join("");
   if (scene === 2) s += `<rect x="0" y="70" width="120" height="6" fill="#ff6fb5" opacity=".5"/><path d="M96 76 Q98 56 92 40" stroke="#14001f" stroke-width="3" fill="none"/><path d="M92 40 q-14 -2 -20 6 M92 40 q12 -6 22 0 M92 40 q-6 -10 -16 -10 M92 40 q4 -10 14 -10" stroke="#14001f" stroke-width="3" fill="none"/>`;
-  s += `<g stroke="#ff2bd6" stroke-width="0.8" opacity=".75">${[78, 84, 92, 102, 116].map((y) => `<line x1="0" y1="${y}" x2="120" y2="${y}"/>`).join("")}${[-60, -20, 20, 60, 100, 140, 180].map((x) => `<line x1="60" y1="76" x2="${x}" y2="120"/>`).join("")}</g>`;
+  s += `<g stroke="${scene === 3 ? "#b967ff" : "#ff2bd6"}" stroke-width="0.8" opacity=".75">${[78, 84, 92, 102, 116].map((y) => `<line x1="0" y1="${y}" x2="120" y2="${y}"/>`).join("")}${[-60, -20, 20, 60, 100, 140, 180].map((x) => `<line x1="60" y1="76" x2="${x}" y2="120"/>`).join("")}</g>`;
   return s;
 }
 

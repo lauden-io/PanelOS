@@ -348,9 +348,11 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     if ui.get_home_fl_grid() != g {
         ui.set_home_fl_grid(g);
     }
-    // only on a change: a set every second redrew every page (the scenes live on pages out of sight too)
-    if (ui.get_home_fl_star() - mix).abs() > 0.004 {
-        ui.set_home_fl_star(mix);
+    // the shooting stars: at night, and at any time in space; only on a change (a set every second redrew every page,
+    // the scenes live on pages out of sight too)
+    let star = if scene == 3 { 1.0 } else { mix };
+    if (ui.get_home_fl_star() - star).abs() > 0.004 {
+        ui.set_home_fl_star(star);
     }
     // The scene clock, the palms and the cars only while a scene is on screen: the scene time comes from the
     // animation clock, and every read of it asks for a frame (a read every second redrew every page once a
