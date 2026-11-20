@@ -300,16 +300,117 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         ui.set_cam_items(m);
     }
     ui.set_cam_sel(sel as i32);
-    // the picture: whole (letterboxed) or filling the screen; the start view from the page's look
-    let fit = crate::page_option(s, "camera", "fit").and_then(|v| v.as_str().map(|f| f == "whole")).unwrap_or(false);
-    ui.set_cam_fit(fit as i32);
+    // the picture: whole (over its blurred copy) or filling the screen (the default), taken when it changes in the
+    // integration (the page's settings set it on the panel at once)
+    thread_local!(static FIT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) });
+    let fit = crate::page_option(s, "camera", "fit").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+    if FIT.with(|f| f.replace(Some(fit.clone()))).as_ref() != Some(&fit) {
+        ui.set_cam_fit(fit_index(&fit));
+    }
     // the start view ("one" / "all"), taken when it changes in the integration (the chip switches it on the panel)
     thread_local!(static VIEW: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
     let view = crate::page_option(s, "camera", "view").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
     if VIEW.with(|v| v.replace(view.clone())) != view && !view.is_empty() {
         ui.set_cam_view(if view == "all" && entities.len() > 1 { 1 } else { 0 });
     }
+    door_replies_state(ui, s);
     doorbell(ui, s);
+}
+
+/// The picture's setting as the page draws it: 0 the whole picture, 1 filling the screen (the default).
+fn fit_index(fit: &str) -> i32 {
+    if fit == "whole" { 0 } else { 1 }
+}
+
+/// The replies at the door when the integration has none set (the page's `replies` option).
+const DEFAULT_REPLIES: [&str; 4] =
+    ["We're coming, one moment", "Please leave it at the door", "We can't come to the door right now", "Who is it?"];
+/// The reply card never scrolls: at most this many lines.
+const MAX_REPLIES: usize = 4;
+
+/// The replies offered at the door: the page's own (blank ones left out, at most four), else the defaults.
+fn door_replies(option: Option<&serde_json::Value>) -> Vec<String> {
+    match option.and_then(serde_json::Value::as_array) {
+        Some(list) => list
+            .iter()
+            .filter_map(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .take(MAX_REPLIES)
+            .map(str::to_string)
+            .collect(),
+        None => DEFAULT_REPLIES.iter().map(|t| t.to_string()).collect(),
+    }
+}
+
+/// The `tts.speak` call that says a reply on the speaker at the door: the text-to-speech engine and the call's data.
+/// `tts` is the integration's `tts` (the panel assistant's engine, its language and voice); `language` is the page's
+/// own choice ("" = the assistant's language, then also its voice). None without an engine, a speaker or a text.
+fn speak_request(tts: Option<&serde_json::Value>, speaker: &str, message: &str, language: &str) -> Option<(String, serde_json::Value)> {
+    let get = |key: &str| tts.and_then(|t| t.get(key)).and_then(serde_json::Value::as_str).unwrap_or("");
+    let engine = get("engine");
+    let message = message.trim();
+    if engine.is_empty() || speaker.is_empty() || message.is_empty() {
+        return None;
+    }
+    let mut data = serde_json::json!({ "media_player_entity_id": speaker, "message": message, "cache": true });
+    let own = get("language");
+    let language = if language.is_empty() { own } else { language };
+    if !language.is_empty() {
+        data["language"] = serde_json::json!(language);
+        // the assistant's voice belongs to its language
+        if language == own && !get("voice").is_empty() {
+            data["options"] = serde_json::json!({ "voice": get("voice") });
+        }
+    }
+    Some((engine.to_string(), data))
+}
+
+fn door_speaker(s: &crate::UiState) -> String {
+    crate::page_option(s, "camera", "speaker").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default()
+}
+
+fn tts_config(s: &crate::UiState) -> Option<serde_json::Value> {
+    s.panel_config.as_ref().and_then(|c| c.get("tts")).cloned()
+}
+
+/// The microphone in the visitor window and its replies: shown when the page has a speaker at the door, replies and
+/// Home Assistant a text-to-speech engine.
+fn door_replies_state(ui: &AppWindow, s: &crate::UiState) {
+    let speaker = door_speaker(s);
+    let replies = if speaker.is_empty() { Vec::new() } else { door_replies(crate::page_option(s, "camera", "replies").as_ref()) };
+    let engine = tts_config(s).is_some_and(|t| t.get("engine").and_then(serde_json::Value::as_str).is_some_and(|e| !e.is_empty()));
+    let can_talk = !speaker.is_empty() && !replies.is_empty() && engine;
+    if ui.get_cam_can_talk() != can_talk {
+        ui.set_cam_can_talk(can_talk);
+    }
+    if !can_talk && ui.get_cam_replies() {
+        ui.set_cam_replies(false);
+    }
+    let rows: Vec<slint::SharedString> = replies.into_iter().map(Into::into).collect();
+    if let Some(m) = crate::pages::update_rows(&ui.get_cam_reply_list(), rows) {
+        ui.set_cam_reply_list(m);
+    }
+}
+
+/// A reply tapped at the door: Home Assistant's `tts.speak` of that line on the speaker at the door, in the page's
+/// language. The visitor window stays a minute longer (a conversation may follow).
+fn speak_reply(ui: &AppWindow, index: usize) {
+    let Some(line) = slint::Model::row_data(&ui.get_cam_reply_list(), index) else { return };
+    let (speaker, language, tts) = with_state(|s| {
+        let language = crate::page_option(s, "camera", "language").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        (door_speaker(s), language, tts_config(s))
+    });
+    match speak_request(tts.as_ref(), &speaker, &line, &language) {
+        Some((engine, data)) => {
+            eprintln!("nspanel-app: door reply {index} on {speaker} ({engine})");
+            crate::call("tts", "speak", &engine, data);
+            if RING_AT.with(|r| r.get()).is_some() {
+                RING_AT.with(|r| r.set(Some(std::time::Instant::now())));
+            }
+        }
+        None => eprintln!("nspanel-app: door reply {index}: no speaker or text-to-speech engine"),
+    }
 }
 
 thread_local! {
@@ -348,9 +449,11 @@ fn doorbell(ui: &AppWindow, s: &crate::UiState) {
         .unwrap_or("Camera")
         .to_string();
     ui.set_cam_ring_title("Someone is at the door".into());
-    ui.set_cam_ring_sub(format!("{name} · {}", crate::pages::local_format(crate::pages::now(), "%H:%M")).into());
+    ui.set_cam_ring_sub(format!("{name} · {}", crate::clock::local_hm(crate::pages::now())).into());
     ui.set_cam_can_open(crate::page_option(s, "camera", "lock").and_then(|v| v.as_str().map(|l| !l.is_empty())).unwrap_or(false));
-    ui.set_cam_can_talk(false);
+    // the page's settings close; the replies start closed
+    ui.set_cam_settings(false);
+    ui.set_cam_replies(false);
     ui.set_cam_view(0);
     ui.set_cam_ring(true);
     if crate::dnd_allows(s, "ring") {
@@ -374,7 +477,17 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
     match what {
         "cam.ring-close" => {
             RING_AT.with(|r| r.set(None));
+            ui.set_cam_replies(false);
             ui.set_cam_ring(false);
+        }
+        // the microphone in the visitor window: the replies open or close
+        "cam.talk" => ui.set_cam_replies(!ui.get_cam_replies() && ui.get_cam_ring() && ui.get_cam_can_talk()),
+        "cam.replies" => ui.set_cam_replies(value == "1" && ui.get_cam_ring() && ui.get_cam_can_talk()),
+        "cam.reply" => speak_reply(ui, n.max(0) as usize),
+        // the page's settings: the picture changes at once, the integration keeps it
+        "cam.fit" => {
+            ui.set_cam_fit(fit_index(value));
+            crate::page_set(ui, "camera", None, serde_json::json!({ "fit": value }));
         }
         "cam.open" => {
             let lock = with_state(|s| crate::page_option(s, "camera", "lock").and_then(|v| v.as_str().map(str::to_string)));
@@ -384,6 +497,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 crate::call(domain, service, &lock, serde_json::json!({}));
             }
             RING_AT.with(|r| r.set(None));
+            ui.set_cam_replies(false);
             ui.set_cam_ring(false);
         }
         "cam.view" => ui.set_cam_view(n),
@@ -394,4 +508,62 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         _ => eprintln!("nspanel-app: act {what} {value} (not handled)"),
     }
     with_state(|s| refresh(ui, s));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn fit_defaults_to_filling_the_screen() {
+        assert_eq!(fit_index("whole"), 0);
+        assert_eq!(fit_index("fill"), 1);
+        assert_eq!(fit_index(""), 1);
+    }
+
+    #[test]
+    fn replies_default_when_none_are_set() {
+        assert_eq!(door_replies(None), DEFAULT_REPLIES.to_vec());
+        assert_eq!(door_replies(Some(&json!("not a list"))), DEFAULT_REPLIES.to_vec());
+    }
+
+    #[test]
+    fn replies_skip_blanks_and_keep_four() {
+        let set = json!([" One ", "", "  ", "Two", 3, "Three", "Four", "Five"]);
+        assert_eq!(door_replies(Some(&set)), vec!["One", "Two", "Three", "Four"]);
+        assert!(door_replies(Some(&json!([]))).is_empty());
+    }
+
+    #[test]
+    fn speak_needs_an_engine_a_speaker_and_a_text() {
+        let tts = json!({ "engine": "tts.cloud", "language": "en-US", "voice": "JennyNeural" });
+        assert!(speak_request(None, "media_player.door", "Hi", "").is_none());
+        assert!(speak_request(Some(&json!({ "engine": "" })), "media_player.door", "Hi", "").is_none());
+        assert!(speak_request(Some(&tts), "", "Hi", "").is_none());
+        assert!(speak_request(Some(&tts), "media_player.door", "  ", "").is_none());
+    }
+
+    #[test]
+    fn speak_in_the_assistants_language_and_voice() {
+        let tts = json!({ "engine": "tts.cloud", "language": "en-US", "voice": "JennyNeural" });
+        let (engine, data) = speak_request(Some(&tts), "media_player.door", " Who is it? ", "").unwrap();
+        assert_eq!(engine, "tts.cloud");
+        assert_eq!(
+            data,
+            json!({ "media_player_entity_id": "media_player.door", "message": "Who is it?", "cache": true,
+                    "language": "en-US", "options": { "voice": "JennyNeural" } })
+        );
+    }
+
+    #[test]
+    fn speak_in_another_language_without_the_assistants_voice() {
+        let tts = json!({ "engine": "tts.cloud", "language": "en-US", "voice": "JennyNeural" });
+        let (_, data) = speak_request(Some(&tts), "media_player.door", "Hallo", "de-DE").unwrap();
+        assert_eq!(data["language"], "de-DE");
+        assert!(data.get("options").is_none());
+        // the engine's own language when the assistant has none
+        let (_, data) = speak_request(Some(&json!({ "engine": "tts.piper" })), "media_player.door", "Hi", "").unwrap();
+        assert!(data.get("language").is_none() && data.get("options").is_none());
+    }
 }

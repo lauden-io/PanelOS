@@ -144,7 +144,7 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         "skip_resources": list(getattr(getattr(entry, "runtime_data", None), "skip", [])),
         "zoom": max(50, min(150, int(options.get(CONF_ZOOM, 100)))),
         "loading_screen": bool(options.get(CONF_LOADING_SCREEN, True)),
-        "pages": shown_pages(options.get(CONF_PAGES, DEFAULT_PAGES)),
+        "pages": _door_speakers(entry, shown_pages(options.get(CONF_PAGES, DEFAULT_PAGES))),
         "screensaver": screensaver_config(options.get(CONF_SCREENSAVER)),
         "dnd": dnd_config(options.get(CONF_DND)),
         "popups": popups_config(options.get(CONF_POPUPS)),
@@ -164,8 +164,83 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         # the speech recognition of the panel's assistant: what is said while a timer rings is checked with it for a
         # stop word (never sent to the assistant)
         "stt": _stt(entry),
+        # the text-to-speech of the panel's assistant: the cameras page's replies at the door are spoken with it
+        "tts": _tts(entry),
         **{key: float(options.get(key, default)) for key, (default, *_rest) in REPORTING.items()},
     }
+
+
+def door_speaker(hass: HomeAssistant, cameras: list[str]) -> str:
+    """The speaker at the door a cameras page starts with: the media player on a camera's own device (UniFi Protect,
+    for one, has a camera's speaker as a media player of its device), the first camera's that has one; "" for none."""
+    entities = er.async_get(hass)
+    for camera in cameras:
+        entity = entities.async_get(camera)
+        if entity is None or not entity.device_id:
+            continue
+        for e in er.async_entries_for_device(entities, entity.device_id):
+            if e.domain == "media_player":
+                return e.entity_id
+    return ""
+
+
+def _door_speakers(entry: ConfigEntry, pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The cameras pages without a chosen speaker at the door get the one on their camera's device ("None" is kept as
+    the empty text)."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return pages
+    for page in pages:
+        if page["kind"] == "camera" and not isinstance(page["options"].get("speaker"), str):
+            page["options"]["speaker"] = door_speaker(panel.hass, page["entities"])
+    return pages
+
+
+def _assist_pipeline(entry: ConfigEntry) -> Any:
+    """The pipeline of the panel's assistant (its satellite's Assistant select), else the preferred one; None without."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return None
+    hass = panel.hass
+    try:
+        from homeassistant.components.assist_pipeline import async_get_pipeline, async_get_pipelines
+    except ImportError:
+        return None
+    pipeline_id = None
+    voice = panel._voice_entry()
+    if voice is not None:
+        for e in er.async_entries_for_config_entry(er.async_get(hass), voice.entry_id):
+            if e.domain == "select" and e.unique_id.endswith("-pipeline"):
+                state = hass.states.get(e.entity_id)
+                if state is not None:
+                    pipeline_id = next((p.id for p in async_get_pipelines(hass) if p.name == state.state), None)
+                break
+    try:
+        return async_get_pipeline(hass, pipeline_id)
+    except Exception:  # noqa: BLE001 - no pipelines (assist_pipeline not set up)
+        return None
+
+
+def _tts(entry: ConfigEntry) -> dict[str, str]:
+    """The text-to-speech engine (an entity), language and voice of the panel's assistant; without one there, Home
+    Assistant's default engine in its own language. {} when Home Assistant has none."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return {}
+    hass = panel.hass
+    pipeline = _assist_pipeline(entry)
+    engine = getattr(pipeline, "tts_engine", None) or ""
+    if engine.startswith("tts.") and hass.states.get(engine) is not None:
+        return {"engine": engine, "language": pipeline.tts_language or "", "voice": pipeline.tts_voice or ""}
+    try:
+        from homeassistant.components.tts import async_default_engine
+
+        engine = async_default_engine(hass) or ""
+    except Exception:  # noqa: BLE001 - text-to-speech not set up
+        engine = ""
+    if not engine.startswith("tts."):
+        engine = next((s.entity_id for s in hass.states.async_all("tts")), "")
+    return {"engine": engine, "language": "", "voice": ""} if engine else {}
 
 
 def _room(entry: ConfigEntry) -> str:

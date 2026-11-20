@@ -1163,6 +1163,7 @@ export component AppWindow inherits Window {
                     ring: root.cam-ring; ring-frame: root.cam-ring-frame; ring-bg: root.cam-ring-bg; ring-title: root.cam-ring-title; ring-sub: root.cam-ring-sub;
                     ring-state: root.cam-ring-state; can-open: root.cam-can-open; can-talk: root.cam-can-talk; hold: root.cam-hold; pulse: root.cam-pulse;
                     replies: root.cam-replies; reply-list: root.cam-reply-list;
+                    on-screen: i == root.page && !root.screensaver-on;
                 }
                 if slot.kind == "calendar": CalendarPage {
                     live: home-slot.on-view;
@@ -1265,7 +1266,7 @@ export component AppWindow inherits Window {
     property <bool> sheet-open: root.quick-sheet || root.thermo-sheet || root.thermo-picker || root.thermo-settings || root.music-picker
         || root.music-settings || root.cal-detail || root.cal-settings || root.cal-day-sheet || root.cal-edit || root.timers-quick
         || root.timers-sheet >= 0 || root.timers-settings || root.timers-edit || root.timers-edit-keyboard || root.todo-picker
-        || root.todo-adding || root.cam-settings || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker
+        || root.todo-adding || root.cam-settings || root.cam-replies || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker
         || root.home-settings >= 0;
     // a sheet opening while a page drag runs (the pager stops taking swipes): the drag snaps back, never left halfway
     changed sheet-open => {
