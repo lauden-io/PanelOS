@@ -41,7 +41,7 @@ The app itself speaks no TLS (its HTTP client is built without it), so it can on
 - **Limits:** plaintext frames up to 256 KB, Noise frames up to 64 KB, at most three connections, an idle connection that is not the main session closes after 60 s. A malformed message ends only its own connection, never the API.
 - **Voice:** a run streams the microphones for at most 30 s whatever the events say; Home Assistant's "continue the conversation" only counts while the panel's own run is going on.
 - **Audio from URLs** (answers, announcements) is fetched only from Home Assistant's host, without redirects, up to 16 MB, at 8–48 kHz, 1–2 channels and 3 minutes; one announcement at a time.
-- **The media player** (Home Assistant, and Music Assistant through it, plays a URL on the panel; alarms with music) streams the URL Home Assistant sends, normally its media proxy. It follows up to two redirects and does not check the host (`app/src/media.rs`).
+- **The media player** (Home Assistant, and Music Assistant through it, plays a URL on the panel; alarms with music) streams the URL Home Assistant sends, normally its media proxy. It follows up to two redirects and does not check the host (`app/src/media.rs`). This is on purpose and not a gap: only Home Assistant can send the command, over the encrypted API, and the URL is normally Home Assistant's own proxy that turns the source into the WAV stream the panel announces; no login token goes with the request, and the panel only plays what it gets as sound. Whoever can make Home Assistant play a URL on the panel controls Home Assistant anyway.
 
 ## Speech while a timer or an alarm rings
 
