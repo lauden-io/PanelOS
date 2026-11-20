@@ -1,0 +1,867 @@
+// The timers tab's menus that belong to the look (spec 34): a new timer and the page's settings, each as an object of
+// the timer look: plain = the brand card, kitchen = a recipe card held to the fridge by a magnet, hourglass = a parchment
+// scroll between two wooden rods, synthwave = the arcade screen, flip = a split-flap board. MenuHost (widgets.slint)
+// places a menu, dims the page and gives the motion clocks; the frames here draw the object and its motion.
+// Also the time drums (the agreed alarm editor's), the flap card drums and the time whose changed digits roll (M8).
+import { Theme, Act } from "theme.slint";
+import { Icon, RollDigit, Segmented, Dropdown, CheckBox, TextButton } from "widgets.slint";
+import { ArcadeScreen, ArcadeBlocks, ArcadeBlock, Arcade } from "arcade.slint";
+
+// A look's menu colours and type (the 28.x controls' tokens and the menu's own texts).
+export struct MenuSkin {
+    surf: color, raised: color, pressed: color, line: color, text: color, muted: color, faint: color, on-text: color,
+    menu: color, track: color, knob: color, accent: color, primary: color, primary-text: color,
+    title-family: string, title-size: length, title-weight: int, title-color: color, title-spacing: length,
+    label-family: string, label-size: length, label-weight: int, label-color: color, label-spacing: length, label-caps: bool,
+    body-family: string, body-size: length, body-weight: int,
+    drum-family: string, drum-size: length, drum-weight: int, drum-color: color,
+    side-size: length, side-weight: int, side-color: color,
+    band: color, band-line: color, band-radius: length,
+    unit-size: length, unit-weight: int, unit-color: color,
+    field: color, field-rule: color, field-radius: length, field-size: length, field-weight: int, field-hint: color, field-ink: color,
+    glide: bool,
+}
+
+// The timer looks: 0 plain, 1 kitchen, 2 hourglass, 3 synthwave, 4 flip.
+export global TimerLooks {
+    out property <[string]> names: ["Plain", "Kitchen", "Hourglass", "Synthwave", "Flip"];
+    // the lead icon of each look (the quick shade's page row): a timer, a steaming pot, an hourglass, a sunset, flip cards
+    out property <[string]> icons: ["\u{F051B}", "\u{F0326}", "\u{F051F}", "\u{F059A}", "\u{F17F2}"];
+    // the synthwave scenes' tube colours (sunset, city, beach, stars)
+    out property <[color]> tubes: [#ff2bd6, #00e5ff, #00f0c8, #d24bff];
+    out property <[string]> scenes: ["Surprise me", "Sunset", "City", "Beach", "Stars"];
+    // where a menu's body starts in each look's frame (under its title), its side padding and the frame under it (the
+    // arcade's body starts under its title, measured)
+    pure public function pad-x(look: int) -> length { return look == 1 ? 18px : look == 2 ? 32px : 16px; }
+    pure public function body-y(look: int) -> length { return look == 1 ? 80px : look == 2 ? 68px : look == 4 ? 56px : 50px; }
+    pure public function pad-b(look: int) -> length { return look == 1 ? 12px : look == 2 ? 28px : look == 3 ? 10px : look == 4 ? 12px : 6px; }
+    // each look's menu motion: in and out (ms)
+    pure public function in-ms(look: int) -> duration {
+        return look == 1 ? 420ms : look == 2 ? 620ms : look == 3 ? 360ms : look == 4 ? 360ms : 140ms;
+    }
+    pure public function out-ms(look: int) -> duration {
+        return look == 1 ? 180ms : look == 2 ? 240ms : look == 3 ? 200ms : look == 4 ? 200ms : 100ms;
+    }
+    pure public function skin(look: int) -> MenuSkin {
+        return look == 1 ? {
+            surf: #fbf6e9, raised: #2a4fa014, pressed: #2a4fa029, line: #2a4fa047, text: #2a3a68, muted: #5d6788, faint: #2a4fa08c,
+            on-text: #fbf6e9, menu: #fbf6e9, track: #2a4fa02e, knob: #2a4fa0, accent: #2a4fa0, primary: #ff3d6e, primary-text: #ffffff,
+            title-family: "Caveat", title-size: 32px, title-weight: 700, title-color: #2a4fa0, title-spacing: 0px,
+            label-family: "Caveat", label-size: 23px, label-weight: 700, label-color: #2a3a68, label-spacing: 0px, label-caps: false,
+            body-family: "Caveat", body-size: 23px, body-weight: 700,
+            drum-family: "Caveat", drum-size: 46px, drum-weight: 700, drum-color: #2a4fa0,
+            side-size: 27px, side-weight: 600, side-color: #2a3a6859,
+            band: #ffd60059, band-line: transparent, band-radius: 4px,
+            unit-size: 22px, unit-weight: 700, unit-color: #5d6788,
+            field: transparent, field-rule: #2a4fa073, field-radius: 0px, field-size: 24px, field-weight: 700, field-hint: #8b93ad, field-ink: #2a4fa0,
+            glide: true,
+        } : look == 2 ? {
+            surf: #f1e3c2, raised: #5a3c191a, pressed: #5a3c192e, line: #5a3c194d, text: #3b2a18, muted: #6e5a40, faint: #5a3c198c,
+            on-text: #f6ead0, menu: #f3e6c8, track: #5a3c1933, knob: #3b2a18, accent: #3b2a18, primary: #3b2a18, primary-text: #f6ead0,
+            title-family: "", title-size: 14px, title-weight: 600, title-color: #5a3d1e, title-spacing: 3px,
+            label-family: "", label-size: 11px, label-weight: 600, label-color: #6e5a40, label-spacing: 2px, label-caps: true,
+            body-family: "", body-size: 15px, body-weight: 400,
+            drum-family: "", drum-size: 38px, drum-weight: 600, drum-color: #3b2a18,
+            side-size: 24px, side-weight: 500, side-color: #3b2a1859,
+            band: #5a3c191a, band-line: #5a3c1940, band-radius: 6px,
+            unit-size: 16px, unit-weight: 400, unit-color: #6e5a40,
+            field: #3b2a1812, field-rule: transparent, field-radius: 14px, field-size: 16px, field-weight: 400, field-hint: #6e5a40, field-ink: #3b2a18,
+            glide: true,
+        } : look == 3 ? {
+            surf: transparent, raised: #ffffff17, pressed: #ffffff29, line: #ffffff40, text: #ffffff, muted: #ffffffb8, faint: #ffffff73,
+            on-text: #ffffff, menu: #14062a, track: #ffffff2e, knob: #ffffff, accent: #d24bff, primary: #d24bff, primary-text: #14062a,
+            title-family: "Press Start 2P", title-size: 15px, title-weight: 400, title-color: #ffffff, title-spacing: 1px,
+            label-family: "Press Start 2P", label-size: 9px, label-weight: 400, label-color: #ffffffd1, label-spacing: 0.4px, label-caps: true,
+            body-family: "Press Start 2P", body-size: 9px, body-weight: 400,
+            drum-family: "Press Start 2P", drum-size: 26px, drum-weight: 400, drum-color: #ffffff,
+            side-size: 14px, side-weight: 400, side-color: #ffffff66,
+            band: transparent, band-line: #d24bff, band-radius: 2px,
+            unit-size: 9px, unit-weight: 400, unit-color: #ffffffb3,
+            field: #ffffff14, field-rule: transparent, field-radius: 2px, field-size: 10px, field-weight: 400, field-hint: #ffffff99, field-ink: #ffffff,
+            glide: false,
+        } : look == 4 ? {
+            surf: #1c1d20, raised: #2a2b2f, pressed: #34363b, line: #ffffff1a, text: #f2f2f0, muted: #a0a0a6, faint: #76767c,
+            on-text: #1c1d20, menu: #26272b, track: #ffffff29, knob: #76767c, accent: #FF4A1C, primary: #f2f2f0, primary-text: #1c1d20,
+            title-family: "", title-size: 17px, title-weight: 700, title-color: #f2f2f0, title-spacing: 0px,
+            label-family: "", label-size: 11px, label-weight: 700, label-color: #a0a0a6, label-spacing: 1.5px, label-caps: true,
+            body-family: "", body-size: 15px, body-weight: 400,
+            drum-family: "", drum-size: 60px, drum-weight: 700, drum-color: #f2f2f0,
+            side-size: 24px, side-weight: 500, side-color: #f2f2f059,
+            band: transparent, band-line: transparent, band-radius: 0px,
+            unit-size: 16px, unit-weight: 400, unit-color: #a0a0a6,
+            field: #f2f2f012, field-rule: transparent, field-radius: 14px, field-size: 16px, field-weight: 400, field-hint: #a0a0a6, field-ink: #f2f2f0,
+            glide: true,
+        } : {
+            surf: Theme.surface, raised: Theme.surface-raised, pressed: Theme.surface-pressed, line: Theme.outline, text: Theme.text,
+            muted: Theme.muted, faint: Theme.faint, on-text: Theme.background, menu: Theme.surface-raised,
+            track: Theme.text.with-alpha(Theme.dark ? 0.14 : 0.12), knob: Theme.faint, accent: Theme.accent, primary: Theme.text, primary-text: Theme.background,
+            title-family: "Space Grotesk", title-size: 20px, title-weight: 500, title-color: Theme.text, title-spacing: 0px,
+            label-family: "", label-size: 14px, label-weight: 500, label-color: Theme.muted, label-spacing: 0px, label-caps: false,
+            body-family: "", body-size: 15px, body-weight: 400,
+            drum-family: "", drum-size: 38px, drum-weight: 600, drum-color: Theme.text,
+            side-size: 24px, side-weight: 500, side-color: Theme.text.with-alpha(0.35),
+            band: Theme.text.with-alpha(0.07), band-line: transparent, band-radius: 14px,
+            unit-size: 16px, unit-weight: 400, unit-color: Theme.muted,
+            field: Theme.text.with-alpha(0.07), field-rule: transparent, field-radius: 14px, field-size: 16px, field-weight: 400, field-hint: Theme.muted,
+            field-ink: Theme.text,
+            glide: true,
+        };
+    }
+}
+
+// A timer's time ("4:05", "1:02:09") whose changed digits roll up like an odometer (M8, 180 ms); more time (+1 min)
+// bumps it to 1.06 and back in 200 ms (M17) unless `quiet` (the page entrance counts it up).
+export component RollTime inherits HorizontalLayout {
+    in property <float> t;                    // seconds
+    in property <length> size: 30px;
+    in property <int> weight: 600;
+    in property <color> color: #ffffff;
+    in property <bool> quiet;
+    in property <TextHorizontalAlignment> align: center;
+    alignment: root.align == TextHorizontalAlignment.left ? LayoutAlignment.start : root.align == TextHorizontalAlignment.right ? LayoutAlignment.end : LayoutAlignment.center;
+    spacing: 0;
+    property <int> c: Math.max(0, Math.ceil(root.t));
+    property <bool> long: root.c >= 3600;
+    property <int> lead: root.long ? Math.floor(root.c / 3600) : Math.floor(root.c / 60);
+    property <int> mid: root.long ? Math.mod(Math.floor(root.c / 60), 60) : Math.mod(root.c, 60);
+    property <int> sec: Math.mod(root.c, 60);
+    // M17
+    property <float> last;
+    property <duration> b0;
+    property <bool> bumping;
+    init => { root.last = root.t; }
+    changed t => { if !root.quiet && root.t > root.last + 5 { root.b0 = animation-tick(); root.bumping = true; } root.last = root.t; }
+    Timer { interval: 220ms; running: root.bumping; triggered => { root.bumping = false; } }
+    property <float> bp: root.bumping ? clamp((animation-tick() - root.b0) / 200ms, 0, 1) : 1;
+    property <length> fs: root.size * (1 + 0.06 * Math.sin(180deg * root.bp));
+    if root.lead >= 100: RollDigit { d: Math.mod(Math.floor(root.lead / 100), 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+    if root.lead >= 10: RollDigit { d: Math.mod(Math.floor(root.lead / 10), 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+    RollDigit { d: Math.mod(root.lead, 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+    Text { text: ":"; font-size: root.fs; font-weight: root.weight; color: root.color; vertical-alignment: center; }
+    RollDigit { d: Math.floor(root.mid / 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+    RollDigit { d: Math.mod(root.mid, 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+    if root.long: Text { text: ":"; font-size: root.fs; font-weight: root.weight; color: root.color; vertical-alignment: center; }
+    if root.long: RollDigit { d: Math.floor(root.sec / 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+    if root.long: RollDigit { d: Math.mod(root.sec, 10); font-size: root.fs; font-weight: root.weight; color: root.color; k: 0; }
+}
+
+// One time drum (the agreed alarm editor's, 8.9 / 34.0): three rows of 40 px, the middle one the value; a drag moves a
+// row per 40 px and the drum follows the finger, snapping home in 180 ms (ease-out); a tap on the upper / lower row
+// steps once and the rows glide one row in 180 ms. `glide` off (the arcade): whole-row steps, nothing slides.
+export component TimeDrum inherits Rectangle {
+    in-out property <int> value;
+    in property <int> count: 60;
+    in property <bool> two-digits;
+    in property <MenuSkin> sk;
+    in property <color> glow;                // the arcade value's glow (transparent: none)
+    width: 96px; height: 120px;
+    clip: true;
+    property <int> base;
+    property <bool> dragged;
+    property <length> drag-off;
+    property <bool> gliding;
+    property <duration> g0;
+    property <length> g-from;
+    Timer { interval: 200ms; running: root.gliding; triggered => { root.gliding = false; } }
+    property <float> gu: root.gliding ? clamp((animation-tick() - root.g0) / 180ms, 0, 1) : 1;
+    property <length> off: root.drag-off + (root.gliding ? root.g-from * Math.pow(1 - root.gu, 3) : 0px);
+    function glide-from(d: length) {
+        if root.sk.glide {
+            root.g-from = d;
+            root.g0 = animation-tick();
+            root.gliding = true;
+        }
+    }
+    function step(k: int) {
+        root.value = Math.mod(root.value + k + root.count, root.count);
+        root.glide-from(-40px * k);
+    }
+    pure function fmt(v: int) -> string { return root.two-digits && v < 10 ? "0" + v : "" + v; }
+    for r in [-2, -1, 0, 1, 2]: row := Rectangle {
+        y: 40px * (r + 1) - root.off; height: 40px;
+        property <int> v: Math.mod(root.value + r + root.count * 4, root.count);
+        if r == 0 && root.glow.alpha > 0: Rectangle {
+            for o in [{ x: -2, y: 0 }, { x: 2, y: 0 }, { x: 0, y: -2 }, { x: 0, y: 2 }]: Text {
+                x: o.x * 1px; y: o.y * 1px; width: parent.width; height: parent.height; text: root.fmt(row.v);
+                font-family: root.sk.drum-family; font-size: root.sk.drum-size; font-weight: root.sk.drum-weight; color: root.glow.with-alpha(0.35);
+                horizontal-alignment: center; vertical-alignment: center;
+            }
+        }
+        Text {
+            text: root.fmt(row.v);
+            font-family: root.sk.drum-family; font-size: r == 0 ? root.sk.drum-size : root.sk.side-size;
+            font-weight: r == 0 ? root.sk.drum-weight : root.sk.side-weight; color: r == 0 ? root.sk.drum-color : root.sk.side-color;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+    }
+    TouchArea {
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down {
+                root.base = root.value;
+                root.dragged = false;
+                root.gliding = false;
+                root.drag-off = 0px;
+            } else if ev.kind == PointerEventKind.up && root.dragged {
+                let d = root.drag-off;
+                root.drag-off = 0px;
+                root.glide-from(d);
+            }
+        }
+        moved => {
+            let d = self.pressed-y - self.mouse-y;
+            if Math.abs(d) > 6px { root.dragged = true; }
+            if root.dragged {
+                let k = Math.round(d / 40px);
+                root.value = Math.mod(root.base + k + root.count * 40, root.count);
+                root.drag-off = root.sk.glide ? d - k * 40px : 0px;
+            }
+        }
+        clicked => {
+            if !root.dragged {
+                if self.mouse-y < 40px { root.step(-1); } else if self.mouse-y > 80px { root.step(1); }
+            }
+        }
+    }
+}
+
+// One split-flap digit card of the flip look's drums (54 x 84, Noto 700 60 drawn from the flip look's digit pictures,
+// as its FlapCard). A change flips it: `dir` 1 (adds) the old upper half folds down to the middle (darkening to 45 %),
+// then the new lower half unfolds from it; -1 (takes) the old lower half folds up, then the new upper half unfolds.
+// `run-intro` (the menu opens): it shows 0 and, `intro-delay` later, flaps down through the digits to its own, 60 ms a flap.
+export component FlapDigit inherits Rectangle {
+    in property <int> digit;
+    in property <int> dir: 1;
+    in property <duration> dur: 140ms;
+    in property <duration> intro-delay: 140ms;
+    in property <bool> run-intro;
+    in property <color> card: #0f1012;
+    in property <color> ink: #f2f2f0;
+    width: 54px; height: 84px; border-radius: 6px; background: root.card;
+    property <[image]> glyphs: [@image-url("digits/700/0.png"), @image-url("digits/700/1.png"), @image-url("digits/700/2.png"), @image-url("digits/700/3.png"), @image-url("digits/700/4.png"), @image-url("digits/700/5.png"), @image-url("digits/700/6.png"), @image-url("digits/700/7.png"), @image-url("digits/700/8.png"), @image-url("digits/700/9.png")];
+    property <int> shown;
+    property <int> old;
+    property <int> fdir: 1;
+    property <bool> flipping;
+    property <duration> f0;
+    property <duration> fdur: root.dur;
+    property <bool> intro;
+    init => { root.shown = root.digit; root.old = root.digit; if root.run-intro { root.begin-intro(); } }
+    changed run-intro => { if root.run-intro { root.begin-intro(); } }
+    function begin-intro() {
+        if root.digit > 0 {
+            root.flipping = false;
+            root.shown = 0;
+            root.old = 0;
+            root.intro = true;
+            root.intro-wait = true;
+        }
+    }
+    function flip(to: int, d: int, length: duration) {
+        root.old = root.shown;
+        root.shown = to;
+        root.fdir = d;
+        root.fdur = length;
+        root.f0 = animation-tick();
+        root.flipping = root.old != root.shown;
+    }
+    changed digit => { if !root.intro { root.flip(root.digit, root.dir, root.dur); } }
+    // the intro: the first flap after its delay, then one every 60 ms up to the digit
+    property <bool> intro-wait;
+    Timer { interval: Math.max(1ms, root.intro-delay); running: root.intro-wait; triggered => { root.intro-wait = false; root.intro-step(); } }
+    function intro-step() {
+        if root.shown < root.digit { root.flip(root.shown + 1, 1, 60ms); } else { root.intro = false; root.flip(root.digit, root.dir, root.dur); }
+    }
+    Timer { interval: 60ms; running: root.intro && !root.intro-wait; triggered => { root.intro-step(); } }
+    Timer { interval: root.fdur + 20ms; running: root.flipping; triggered => { root.flipping = false; } }
+    property <float> fp: root.flipping ? clamp((animation-tick() - root.f0) / root.fdur, 0, 1) : 1;
+    property <float> p1: Math.min(1, root.fp * 2);
+    property <float> p2: Math.max(0, root.fp * 2 - 1);
+    property <bool> moving: root.fp < 1 && root.old != root.shown;
+    property <length> half: root.height / 2;
+    clip: true;
+    // the fixed halves: the new digit where the leaf has uncovered it, the old one where the new leaf has not come yet
+    Image { y: 0; width: root.width; height: root.half; image-fit: fill; colorize: root.ink;
+        source: root.glyphs[root.moving && root.fdir < 0 ? root.old : root.shown]; source-clip-y: 0; source-clip-height: 150; }
+    Image { y: root.half; width: root.width; height: root.half; image-fit: fill; colorize: root.ink;
+        source: root.glyphs[root.moving && root.fdir > 0 ? root.old : root.shown]; source-clip-y: 150; source-clip-height: 150; }
+    // down: the old upper half folding to the middle, then the new lower half unfolding
+    if root.moving && root.fdir > 0 && root.p1 < 1: Rectangle {
+        y: root.half * root.p1; height: root.half * (1 - root.p1); background: root.card;
+        Image { width: parent.width; height: parent.height; image-fit: fill; colorize: root.ink.mix(#000000, 1 - 0.55 * root.p1);
+            source: root.glyphs[root.old]; source-clip-y: 0; source-clip-height: 150; }
+    }
+    if root.moving && root.fdir > 0 && root.p2 > 0: Rectangle {
+        y: root.half; height: root.half * root.p2; background: root.card;
+        Image { width: parent.width; height: parent.height; image-fit: fill; colorize: root.ink.mix(#000000, 0.6 + 0.4 * root.p2);
+            source: root.glyphs[root.shown]; source-clip-y: 150; source-clip-height: 150; }
+    }
+    // up: the old lower half folding to the middle, then the new upper half unfolding
+    if root.moving && root.fdir < 0 && root.p1 < 1: Rectangle {
+        y: root.half; height: root.half * (1 - root.p1); background: root.card;
+        Image { width: parent.width; height: parent.height; image-fit: fill; colorize: root.ink.mix(#000000, 1 - 0.55 * root.p1);
+            source: root.glyphs[root.old]; source-clip-y: 150; source-clip-height: 150; }
+    }
+    if root.moving && root.fdir < 0 && root.p2 > 0: Rectangle {
+        y: root.half * (1 - root.p2); height: root.half * root.p2; background: root.card;
+        Image { width: parent.width; height: parent.height; image-fit: fill; colorize: root.ink.mix(#000000, 0.6 + 0.4 * root.p2);
+            source: root.glyphs[root.shown]; source-clip-y: 0; source-clip-height: 150; }
+    }
+    // the split
+    Rectangle { y: root.half - 0.5px; height: 1px; background: #000000d9; }
+}
+
+// A pair of flap digits as a drum (34.0): a tap on the lower half adds one (the cards flip down), on the upper half takes
+// one (they flip up), wrapping; only the changed digits flip. It opens on 00 and flaps down to its value (the cards 30 ms
+// apart).
+export component FlapDrum inherits Rectangle {
+    in-out property <int> value;
+    in property <int> count: 60;
+    in property <duration> intro-at: 140ms;
+    in property <bool> run-intro;
+    width: 113px; height: 84px;
+    property <int> dir: 1;
+    FlapDigit { x: 0; digit: Math.floor(root.value / 10); dir: root.dir; intro-delay: root.intro-at; run-intro: root.run-intro; }
+    FlapDigit { x: 59px; digit: Math.mod(root.value, 10); dir: root.dir; intro-delay: root.intro-at + 30ms; run-intro: root.run-intro; }
+    TouchArea {
+        clicked => {
+            let add = self.mouse-y >= self.height / 2;
+            root.dir = add ? 1 : -1;
+            root.value = Math.mod(root.value + (add ? 1 : -1) + root.count, root.count);
+        }
+    }
+}
+
+// The flap tiles of the flip look's title: 20 x 30, #0f1012, Noto 700 17, a split in the middle; a space is a blank tile.
+export component FlapTitle inherits Rectangle {
+    in property <[string]> letters;
+    in property <color> ink: #f2f2f0;
+    property <int> n: root.letters.length;
+    property <length> w: root.n * 23px - 3px;
+    height: 30px;
+    for l[i] in root.letters: Rectangle {
+        x: (root.width - root.w) / 2 + i * 23px; width: 20px; height: 30px; border-radius: 3px; background: #0f1012;
+        Rectangle { y: 0; height: 1px; background: #ffffff0d; }
+        Text { text: l; font-size: 17px; font-weight: 700; color: root.ink; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { y: 14.5px; height: 1px; background: #000000bf; }
+    }
+}
+
+// The frame of a timers menu in the plain, kitchen, hourglass and flip looks and its motion (MenuHost's clocks; synthwave's
+// menus are the arcade screen). The caller sizes it (the host's menu box) and lays its body (the children) out from
+// TimerLooks.pad-x / body-y, in the frame's own coordinates; the body moves, clips and fades with the object.
+export component LookFrame inherits Rectangle {
+    in property <int> look;
+    in property <MenuSkin> sk;
+    in property <string> title;
+    in property <[string]> flap-letters;      // the flip look's title on tiles
+    in property <color> tube: #d24bff;
+    in property <float> t-in: 1000;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <length> grow-x: root.width / 2;     // the plain card grows from here (0.96 -> 1)
+    in property <length> grow-y: 0px;
+    pure function eo(u: float) -> float { return 1 - Math.pow(1 - clamp(u, 0, 1), 3); }
+    pure function ei(u: float) -> float { return Math.pow(clamp(u, 0, 1), 3); }
+    // ---- plain: the brand card, 140 ms from 0.96 with a fade; it fades out in 100 ms
+    property <float> plain-k: root.leaving ? 1 - clamp(root.t-out / 100, 0, 1) : root.eo(root.t-in / 140);
+    // ---- kitchen: the card falls from above (accelerating, 170 ms), bounces 3 px back (120 ms), the magnet pops
+    // 14 -> 18 -> 16 px; it leaves upwards in 180 ms (ease-in)
+    property <length> kit-y: root.leaving ? -(root.height + 108px) * root.ei(root.t-out / 180)
+        : root.t-in < 170 ? -(root.height + 48px) * (1 - (root.t-in / 170) * (root.t-in / 170))
+        : root.t-in < 290 ? -3px * Math.sin(180deg * (root.t-in - 170) / 120) : 0px;
+    property <length> magnet-r: root.leaving ? 16px : root.t-in < 170 ? 14px : root.t-in < 250 ? 14px + 4px * (root.t-in - 170) / 80
+        : root.t-in < 330 ? 18px - 2px * (root.t-in - 250) / 80 : 16px;
+    // ---- hourglass: the top rod shows; after 80 ms the lower rod rolls down and the paper unrolls (360 ms, ease-out); the
+    // rod swings back 3 px and settles (180 ms); it rolls up in 240 ms (ease-in), then fades
+    property <length> paper-h: root.height - 28px;
+    property <length> scroll-shown: Math.max(0px, root.leaving ? root.paper-h * (1 - root.ei(root.t-out / 240))
+        : root.paper-h * (root.t-in < 80 ? 0 : root.eo((root.t-in - 80) / 360)) - (root.t-in > 440 ? 3px * Math.sin(180deg * Math.min(1, (root.t-in - 440) / 180)) : 0px));
+    property <float> scroll-fade: root.leaving && root.t-out > 200 ? Math.max(0, 1 - (root.t-out - 200) / 40) : 1;
+    // ---- flip: the upper half shows (80 ms), the lower half folds down from the middle like a big flap (shaded, ease-in,
+    // 180 ms), a 2 px knock on its stop (80 ms); it closes upward in 200 ms
+    property <length> flap-shown: root.leaving ? root.height * (1 - root.ei(root.t-out / 200))
+        : root.t-in < 80 ? root.height / 2 * root.eo(root.t-in / 80) : root.t-in < 260 ? root.height / 2 * (1 + root.ei((root.t-in - 80) / 180)) : root.height;
+    property <float> flap-shade: !root.leaving && root.t-in >= 80 && root.t-in < 260 ? 0.55 * (1 - root.ei((root.t-in - 80) / 180)) : 0;
+    property <length> flap-knock: !root.leaving && root.t-in >= 260 && root.t-in < 340 ? 2px * Math.sin(180deg * (root.t-in - 260) / 80) : 0px;
+    // the box the body shows in (frame coordinates) and how far the body is shifted
+    property <length> bx: root.look == 2 ? 12px : 0px;
+    property <length> by: root.look == 2 ? 14px : root.look == 4 ? root.flap-knock : root.look == 1 ? root.kit-y : 0px;
+    property <length> bw: root.look == 2 ? root.width - 24px : root.width;
+    property <length> bh: root.look == 2 ? root.scroll-shown : root.look == 4 ? Math.max(0px, root.flap-shown) : root.height;
+    property <length> sy: root.look == 1 ? root.kit-y : root.look == 4 ? root.flap-knock : 0px;
+    property <bool> clips: root.look == 2 || root.look == 4;
+    property <float> body-k: root.look == 0 ? root.plain-k : root.look == 2 ? root.scroll-fade : 1;
+
+    // ---------------- under the body
+    // 0 plain: the card (surface, 1 px line, radius 14, a shadow) and its title
+    if root.look == 0: Rectangle {
+        opacity: root.plain-k;
+        transform-scale: 0.96 + 0.04 * root.plain-k;
+        transform-origin: { x: root.grow-x, y: root.grow-y };
+        Rectangle { border-radius: 14px; background: root.sk.surf; border-width: 1px; border-color: root.sk.line;
+            drop-shadow-blur: 32px; drop-shadow-offset-y: 12px; drop-shadow-color: #00000073; }
+        Text { x: 16px; y: 6px + 10px; width: root.width - 32px; height: 28px; text: root.title; font-family: root.sk.title-family; font-size: root.sk.title-size;
+            font-weight: root.sk.title-weight; color: root.sk.title-color; vertical-alignment: center; }
+        TouchArea { }
+    }
+    // 1 kitchen: cream card, the red header rule, blue ruled lines every 32 px
+    if root.look == 1: Rectangle {
+        y: root.kit-y;
+        Rectangle { border-radius: 6px; background: root.sk.surf; drop-shadow-blur: 30px; drop-shadow-offset-y: 16px; drop-shadow-color: #00000073; }
+        for k in Math.floor((root.height - 6px) / 32px): Rectangle { x: 0; y: 31px + k * 32px; width: root.width; height: 1px; background: #5078c833; }
+        Rectangle { x: 0; y: 80px; width: root.width; height: 2px; background: #d63c5099; }
+        Text { x: 18px; y: 14px + 26px; width: root.width - 36px; height: 40px; text: root.title; font-family: root.sk.title-family;
+            font-size: root.sk.title-size; font-weight: root.sk.title-weight; color: root.sk.title-color; vertical-alignment: bottom; }
+        TouchArea { }
+    }
+    // 2 hourglass: the paper, unrolled down to the lower rod
+    if root.look == 2: Rectangle {
+        opacity: root.scroll-fade;
+        Rectangle {
+            x: 12px; y: 14px; width: root.width - 24px; height: root.scroll-shown; clip: true;
+            Rectangle {
+                y: 0; height: root.paper-h;
+                background: @radial-gradient(circle, #f7ecd3 0%, #f7ecd3 45%, #e4cf9f 100%);
+                // the soft inner burn
+                Rectangle { border-width: 6px; border-color: #78501e1f; }
+                Rectangle { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; border-width: 8px; border-color: #78501e0f; }
+                // the title between two stars, over a rule
+                HorizontalLayout {
+                    x: 0; y: 14px + 4px; width: parent.width; height: 22px; alignment: center; spacing: 10px;
+                    Text { text: "✦"; font-family: "DejaVu Sans"; font-size: 11px; color: #a0703f; vertical-alignment: center; }
+                    Text { text: root.title.to-uppercase(); font-size: root.sk.title-size; font-weight: root.sk.title-weight; letter-spacing: root.sk.title-spacing;
+                        color: root.sk.title-color; vertical-alignment: center; }
+                    Text { text: "✦"; font-family: "DejaVu Sans"; font-size: 11px; color: #a0703f; vertical-alignment: center; }
+                }
+                Rectangle { x: 20px; y: 14px + 34px; width: parent.width - 40px; height: 1px; background: #5a3c1959; }
+                TouchArea { }
+            }
+        }
+        // the paper's shadow on the page
+        Rectangle { x: 14px; y: 14px + root.scroll-shown; width: root.width - 28px; height: 6px; background: #0000002e; }
+    }
+    // 4 flip: the split-flap board and its title on tiles
+    if root.look == 4: Rectangle {
+        y: root.flap-knock; height: Math.max(0px, root.flap-shown); clip: true;
+        Rectangle {
+            y: 0; height: root.height;
+            Rectangle { border-radius: 14px; background: #212226; drop-shadow-blur: 34px; drop-shadow-offset-y: 16px; drop-shadow-color: #0000008c; }
+            Rectangle { x: 12px; y: 1px; width: parent.width - 24px; height: 1px; background: #ffffff0f; }
+            FlapTitle { x: 16px; y: 14px; width: root.width - 32px; letters: root.flap-letters; }
+            TouchArea { }
+        }
+    }
+
+    // ---------------- the body
+    Rectangle {
+        x: root.bx; y: root.by; width: root.bw; height: root.bh; clip: root.clips;
+        opacity: root.body-k;
+        Rectangle {
+            x: -root.bx; y: -root.by + root.sy; width: root.width; height: root.height;
+            transform-scale: root.look == 0 ? 0.96 + 0.04 * root.plain-k : 1;
+            transform-origin: { x: root.grow-x, y: root.grow-y };
+            @children
+        }
+    }
+
+    // ---------------- over the body
+    // the hourglass's rods with their knobs
+    if root.look == 2: Rectangle {
+        opacity: root.scroll-fade;
+        for r in [0, 1]: Rectangle {
+            x: 0; y: r == 0 ? 0px : 14px + root.scroll-shown; width: root.width; height: 14px;
+            Rectangle { border-radius: 7px; background: @linear-gradient(180deg, #a8763f 0%, #6b4a2b 55%, #3e2a17 100%);
+                drop-shadow-blur: 6px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000073; }
+            Rectangle { x: 6px; y: 1px; width: parent.width - 12px; height: 1px; background: #ffdcaa59; }
+            for k in [0, 1]: Rectangle { x: k == 0 ? -4px : parent.width - 8px; y: -3px; width: 12px; height: 20px; border-radius: 6px;
+                background: @linear-gradient(90deg, #4f3420 0%, #9a6a3c 50%, #4f3420 100%); }
+        }
+    }
+    // the recipe card's magnet: pink, round, with a highlight, at the top centre
+    if root.look == 1: Rectangle {
+        x: (root.width - 2 * root.magnet-r) / 2; y: root.kit-y + 22px - root.magnet-r; width: 2 * root.magnet-r; height: self.width; border-radius: root.magnet-r;
+        background: #b81f48;
+        drop-shadow-blur: 6px; drop-shadow-offset-y: 3px; drop-shadow-color: #00000073;
+        // the dome: a lighter disc towards the top left, and its highlight
+        Rectangle { x: 1px; y: 1px; width: parent.width - 3px; height: self.width; border-radius: self.width / 2; background: #ff3d6e; }
+        Rectangle { x: parent.width * 0.16; y: parent.height * 0.12; width: parent.width * 0.52; height: self.width; border-radius: self.width / 2; background: #ff6a8e; }
+        Rectangle { x: parent.width * 0.26; y: parent.height * 0.18; width: parent.width * 0.24; height: parent.height * 0.18; border-radius: self.height / 2;
+            background: #ffd0dccc; }
+    }
+    // the board's lower half turning down: a black shade that lifts as it turns
+    if root.look == 4 && root.flap-shade > 0.004: Rectangle {
+        x: 0; y: root.flap-knock + root.height / 2; width: root.width; height: Math.max(0px, root.flap-shown - root.height / 2);
+        background: #000000; opacity: root.flap-shade;
+    }
+}
+
+// A label of a menu row in the look's type (caps where the look prints them).
+component RowLabel inherits Text {
+    in property <MenuSkin> sk;
+    in property <string> label;
+    text: root.sk.label-caps ? root.label.to-uppercase() : root.label;
+    font-family: root.sk.label-family; font-size: root.sk.label-size; font-weight: root.sk.label-weight;
+    letter-spacing: root.sk.label-spacing; color: root.sk.label-color;
+    wrap: word-wrap;
+}
+
+// An arcade block that lights on its own (the functions: several may be lit, spec 34.4): a word in the pixel font, lit as
+// an inverse block in the tube colour with a glow; a tap blinks it into its new state (five 40 ms frames).
+export component ArcToggle inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <color> tube: #d24bff;
+    in property <length> font-size: 9px;
+    callback clicked;
+    min-width: 40px;
+    preferred-width: Math.max(40px, Arcade.text-w(root.text.character-count, root.font-size) + 16px);
+    height: 44px;
+    property <bool> blinking;
+    property <duration> b0;
+    changed on => { root.b0 = animation-tick(); root.blinking = true; }
+    Timer { interval: 200ms; running: root.blinking; triggered => { root.blinking = false; } }
+    property <int> bf: root.blinking ? Math.floor((animation-tick() - root.b0) / 40ms) : 0;
+    property <bool> lit: root.blinking ? (Math.mod(root.bf, 2) == 0 ? root.on : !root.on) : root.on;
+    if root.lit: Rectangle { x: -2px; y: -2px; width: parent.width + 4px; height: parent.height + 4px; border-radius: 4px; border-width: 2px;
+        border-color: root.tube.with-alpha(0.30); }
+    if root.lit: Rectangle { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; border-radius: 6px; border-width: 2px;
+        border-color: root.tube.with-alpha(0.12); }
+    Rectangle { border-radius: 2px; background: root.lit ? root.tube : transparent; }
+    Text {
+        x: 7px; width: parent.width - 14px; height: parent.height;
+        text: root.text.to-uppercase(); font-family: Arcade.font; font-size: root.font-size; letter-spacing: 0.4px;
+        horizontal-alignment: center; vertical-alignment: center; color: root.lit ? Arcade.ink : #ffffffbf;
+    }
+    TouchArea { clicked => { root.clicked(); } }
+}
+
+// A square arcade key outlined 2 px in white 70 % with a white glyph (the timer's cancel, spec 34.0): 48 x 44, radius 2; a
+// press lights it in the tube colour for two 40 ms frames, then `clicked` fires (as the arcade's blocks).
+export component ArcKey inherits Rectangle {
+    in property <string> icon;
+    in property <color> tube: #d24bff;
+    in property <length> icon-size: 20px;
+    callback clicked;
+    width: 48px; height: 44px;
+    property <int> frame: -1;
+    Timer { interval: 40ms; running: root.frame >= 0; triggered => {
+        root.frame += 1;
+        if root.frame >= 2 { root.frame = -1; root.clicked(); }
+    } }
+    property <bool> lit: root.frame >= 0;
+    if root.lit: Rectangle { x: -2px; y: -2px; width: parent.width + 4px; height: parent.height + 4px; border-radius: 4px; border-width: 2px;
+        border-color: root.tube.with-alpha(0.4); }
+    Rectangle { border-radius: 2px; background: root.lit ? root.tube.mix(#ffffff, 0.8) : transparent;
+        border-width: root.lit ? 0px : 2px; border-color: #ffffffb3; }
+    Icon { width: parent.width; height: parent.height; text: root.icon; font-size: root.icon-size; color: root.lit ? Arcade.ink : #ffffff; }
+    TouchArea { clicked => { if root.frame < 0 { root.frame = 0; } } }
+}
+
+// The look's primary button (Start / Done): 28.7 primary in the look's colours; on the arcade a lit block.
+component LookButton inherits Rectangle {
+    in property <int> look;
+    in property <MenuSkin> sk;
+    in property <string> text;
+    in property <color> tube;
+    callback clicked;
+    width: root.look == 3 ? ab.preferred-width : 120px;
+    height: root.look == 3 ? 44px : 48px;
+    if root.look != 3: TextButton { width: parent.width; height: 48px; text: root.text; primary: true;
+        tk-text: root.sk.primary; tk-on-text: root.sk.primary-text; tk-raised: root.sk.raised; tk-pressed: root.sk.pressed;
+        clicked => { root.clicked(); } }
+    ab := ArcadeBlock { visible: root.look == 3; width: self.preferred-width; text: root.text.to-uppercase(); fill: 1; tube: root.tube; font-size: 10px;
+        clicked => { root.clicked(); } }
+}
+
+// The new timer's body: the drums (or the flip look's flap cards), the label line, Start; from its own top left.
+component NewTimerBody inherits Rectangle {
+    in property <int> look;
+    in property <MenuSkin> s;
+    in property <color> tube;
+    in-out property <int> hours;
+    in-out property <int> minutes;
+    in property <string> label-text;
+    in property <string> label-family;
+    in property <bool> has-label;
+    in property <bool> opened;
+    in property <length> label-h;
+    callback start();
+    callback edit-label();
+    property <bool> flaps: root.look == 4;
+    property <length> drums-h: root.flaps ? 84px : 120px;
+    property <length> y-drums: 4px;
+    property <length> y-label: root.y-drums + root.drums-h + 12px;
+    property <length> y-done: root.y-label + root.label-h + 10px;
+    // the drums: hours "h", minutes "min"; the band behind the value
+    Rectangle {
+        x: 0; y: root.y-drums; width: root.width; height: root.drums-h;
+        property <length> dw: root.flaps ? 113px : 96px;
+        property <length> uw: root.flaps ? 34px : 40px;
+        property <length> gap: root.flaps ? 8px : 4px;
+        property <length> total: 2 * self.dw + 2 * self.uw + 3 * self.gap;
+        property <length> x0: (self.width - self.total) / 2;
+        if !root.flaps: Rectangle { x: 40px; y: 40px; width: parent.width - 80px; height: 40px; border-radius: root.s.band-radius; background: root.s.band;
+            border-width: root.s.band-line.alpha > 0 && root.s.band.alpha < 0.01 ? 2px : root.s.band-line.alpha > 0 ? 1px : 0px; border-color: root.s.band-line;
+            drop-shadow-blur: root.look == 3 ? 10px : 0px; drop-shadow-color: root.tube.with-alpha(0.6); }
+        if !root.flaps: TimeDrum { x: parent.x0; value <=> root.hours; count: 24; sk: root.s; glow: root.look == 3 ? root.tube : transparent; }
+        if !root.flaps: TimeDrum { x: parent.x0 + parent.dw + parent.uw + 2 * parent.gap; value <=> root.minutes; count: 60; two-digits: true; sk: root.s;
+            glow: root.look == 3 ? root.tube : transparent; }
+        if root.flaps: FlapDrum { x: parent.x0; value <=> root.hours; count: 24; run-intro: root.opened; }
+        if root.flaps: FlapDrum { x: parent.x0 + parent.dw + parent.uw + 2 * parent.gap; value <=> root.minutes; count: 60; intro-at: 200ms; run-intro: root.opened; }
+        for u[i] in ["h", "min"]: Text {
+            x: parent.x0 + parent.dw + parent.gap + i * (parent.dw + parent.uw + 2 * parent.gap) + 4px; width: parent.uw; height: parent.height;
+            text: root.look == 3 ? u.to-uppercase() : u; font-family: root.look == 3 ? "Press Start 2P" : root.look == 1 ? "Caveat" : "";
+            font-size: root.s.unit-size; font-weight: root.s.unit-weight; color: root.s.unit-color; vertical-alignment: center;
+        }
+    }
+    // the label: a field (a pen line on the recipe card, a block on the arcade); a tap opens the keyboard
+    Rectangle {
+        x: 0; y: root.y-label; width: root.width; height: root.label-h;
+        border-radius: root.s.field-radius; background: lta.pressed ? root.s.pressed : root.s.field;
+        if root.s.field-rule.alpha > 0: Rectangle { y: parent.height - 2px; height: 2px; background: root.s.field-rule; }
+        Icon { x: 14px; y: 0; width: 22px; height: parent.height; text: "\u{F04FC}"; font-size: 19px; color: root.s.field-hint; }
+        Text { x: 46px; y: 9px; width: parent.width - 50px; height: parent.height - 18px; text: root.label-text; font-family: root.label-family;
+            font-size: root.s.field-size; font-weight: root.s.field-weight; wrap: word-wrap; vertical-alignment: center;
+            color: root.has-label ? root.s.field-ink : root.s.field-hint; }
+        lta := TouchArea { clicked => { root.edit-label(); } }
+    }
+    // Start
+    LookButton {
+        x: root.width - self.width; y: root.y-done;
+        look: root.look; sk: root.s; text: "Start"; tube: root.tube;
+        clicked => { root.start(); }
+    }
+}
+
+// The new timer (34, 34.7): the drums (hours 0–23, minutes 0–59), a label line that opens the keyboard, Start; the flip
+// look's drums are flap cards. In the look's frame (the arcade screen for synthwave); `need` is its height.
+export component NewTimerMenu inherits Rectangle {
+    in property <int> look;
+    in property <color> tube: #d24bff;
+    in property <float> t-in: 1000;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in-out property <int> hours;
+    in-out property <int> minutes;
+    in property <string> label;
+    in property <bool> opened;                // the menu opens: the flap drums run from 00 to their values
+    property <bool> arcade: root.look == 3;
+    property <MenuSkin> sk: TimerLooks.skin(root.look);
+    // the arcade's drums and band in the scene's tube colour
+    property <MenuSkin> skt: { surf: root.sk.surf, raised: root.sk.raised, pressed: root.sk.pressed, line: root.sk.line, text: root.sk.text,
+        muted: root.sk.muted, faint: root.sk.faint, on-text: root.sk.on-text, menu: root.sk.menu, track: root.sk.track, knob: root.sk.knob,
+        accent: root.tube, primary: root.tube, primary-text: root.sk.primary-text,
+        title-family: root.sk.title-family, title-size: root.sk.title-size, title-weight: root.sk.title-weight, title-color: root.sk.title-color,
+        title-spacing: root.sk.title-spacing, label-family: root.sk.label-family, label-size: root.sk.label-size, label-weight: root.sk.label-weight,
+        label-color: root.sk.label-color, label-spacing: root.sk.label-spacing, label-caps: root.sk.label-caps, body-family: root.sk.body-family,
+        body-size: root.sk.body-size, body-weight: root.sk.body-weight, drum-family: root.sk.drum-family, drum-size: root.sk.drum-size,
+        drum-weight: root.sk.drum-weight, drum-color: root.sk.drum-color, side-size: root.sk.side-size, side-weight: root.sk.side-weight,
+        side-color: root.sk.side-color, band: root.sk.band, band-line: root.tube, band-radius: root.sk.band-radius, unit-size: root.sk.unit-size,
+        unit-weight: root.sk.unit-weight, unit-color: root.sk.unit-color, field: root.sk.field, field-rule: root.sk.field-rule,
+        field-radius: root.sk.field-radius, field-size: root.sk.field-size, field-weight: root.sk.field-weight, field-hint: root.sk.field-hint,
+        field-ink: root.sk.field-ink, glide: root.sk.glide };
+    property <MenuSkin> s: root.arcade ? root.skt : root.sk;
+    property <length> pad-x: TimerLooks.pad-x(root.look);
+    property <length> inner-w: root.width - 2 * root.pad-x;
+    // the label line grows with the label (up to 60 characters wrap)
+    property <string> label-family: root.arcade ? "Press Start 2P" : root.s.body-family;
+    lt := Text { visible: false; width: root.inner-w - 50px; text: root.label != "" ? (root.arcade ? root.label.to-uppercase() : root.label) : "Label";
+        font-family: root.label-family; font-size: root.s.field-size; font-weight: root.s.field-weight; wrap: word-wrap; }
+    property <length> label-h: Math.max(44px, lt.preferred-height + 18px);
+    at := Text { visible: false; width: root.width - 32px; text: "NEW TIMER"; font-family: "Press Start 2P"; font-size: 15px; letter-spacing: 1px; wrap: word-wrap; }
+    property <length> body-y: root.arcade ? 28px + at.preferred-height : TimerLooks.body-y(root.look);
+    property <length> body-h: 4px + (root.look == 4 ? 84px : 120px) + 12px + root.label-h + 10px + 48px + 4px;
+    out property <length> need: root.body-y + root.body-h + TimerLooks.pad-b(root.look);
+    callback start();
+    callback edit-label();
+    if !root.arcade: LookFrame {
+        width: root.width; height: root.height;
+        look: root.look; sk: root.s; tube: root.tube; title: "New timer"; flap-letters: ["N", "E", "W", " ", "T", "I", "M", "E", "R"];
+        t-in: root.t-in; t-out: root.t-out; leaving: root.leaving;
+        grow-x: root.width / 2; grow-y: 0px;
+        NewTimerBody {
+            x: root.pad-x; y: root.body-y; width: root.inner-w; height: root.body-h;
+            look: root.look; s: root.s; tube: root.tube; hours <=> root.hours; minutes <=> root.minutes; opened: root.opened;
+            label-text: lt.text; label-family: root.label-family; has-label: root.label != ""; label-h: root.label-h;
+            start => { root.start(); }
+            edit-label => { root.edit-label(); }
+        }
+    }
+    if root.arcade: ArcadeScreen {
+        width: root.width; height: root.height;
+        tube: root.tube; title: "NEW TIMER"; t-in: root.t-in; t-out: root.t-out; leaving: root.leaving;
+        TouchArea { }
+        NewTimerBody {
+            x: 0; y: 0; width: root.inner-w; height: root.body-h;
+            look: root.look; s: root.s; tube: root.tube; hours <=> root.hours; minutes <=> root.minutes; opened: root.opened;
+            label-text: lt.text; label-family: root.label-family; has-label: root.label != ""; label-h: root.label-h;
+            start => { root.start(); }
+            edit-label => { root.edit-label(); }
+        }
+    }
+}
+
+// "Colourful ●●●●●" / "One colour ●" (28.4 segmented with the colours' dots after the words).
+component ColourSeg inherits Rectangle {
+    in property <bool> colourful;
+    in property <MenuSkin> sk;
+    callback picked(int);
+    property <string> pad5: "\u{2003}\u{2003}\u{2003}\u{2003}";
+    property <string> pad1: "\u{2003}";
+    m0 := Text { visible: false; text: "Colourful" + root.pad5; font-size: 15px; font-weight: 500; }
+    w0 := Text { visible: false; text: "Colourful"; font-size: 15px; font-weight: 500; }
+    m1 := Text { visible: false; text: "One colour" + root.pad1; font-size: 15px; font-weight: 500; }
+    w1 := Text { visible: false; text: "One colour"; font-size: 15px; font-weight: 500; }
+    property <length> seg: (root.width - 4px) / 2;
+    height: 40px;
+    Segmented {
+        width: root.width; options: ["Colourful" + root.pad5, "One colour" + root.pad1]; selected: root.colourful ? 0 : 1;
+        tk-raised: root.sk.raised; tk-text: root.sk.text; tk-on-text: root.sk.on-text; tk-accent: root.sk.accent;
+        picked(i) => { root.picked(i); }
+    }
+    for c[i] in [#ff3d6e, #ffb21e, #22d3a6, #3d9bff, #a76bff]: Rectangle {
+        x: 2px + root.seg / 2 - m0.preferred-width / 2 + w0.preferred-width + 6px + i * 11px; y: 16px; width: 8px; height: 8px; border-radius: 4px;
+        background: c; opacity: root.colourful ? 1 : 0.45;
+    }
+    Rectangle {
+        x: 2px + root.seg * 1.5 - m1.preferred-width / 2 + w1.preferred-width + 6px; y: 16px; width: 8px; height: 8px; border-radius: 4px;
+        background: Theme.accent; opacity: root.colourful ? 0.45 : 1;
+    }
+}
+
+// The settings' body: the rows (from its own top, scrolling inside `view-h` when they do not fit) and Done under them.
+component SettingsBody inherits Rectangle {
+    in property <int> look;
+    in property <MenuSkin> sk;
+    in property <color> tube;
+    in property <length> lh;
+    in property <length> body-h;
+    in property <length> view-h;
+    in property <bool> alarm-on;
+    in property <bool> timer-on;
+    in property <bool> watch-on;
+    in property <bool> colourful;
+    in property <int> scene-choice;
+    callback function-toggled(string);
+    callback colourful-picked(bool);
+    callback look-picked(int);
+    callback scene-picked(int);
+    callback done();
+    property <bool> arcade: root.look == 3;
+    property <length> row-gap: 12px;
+    property <length> y-fn: 4px;
+    property <length> y-col: root.y-fn + root.lh + 4px + 44px + root.row-gap;
+    property <length> y-look: root.y-col + root.lh + 4px + (root.arcade ? 44px : 40px) + root.row-gap;
+    property <length> y-scene: root.y-look + root.lh + 4px + (root.arcade ? 44px : 48px) + root.row-gap;
+    Flickable {
+        x: 0; y: 0; width: root.width; height: root.view-h;
+        content-height: root.body-h;
+        interactive: root.body-h > root.view-h;
+        // functions
+        RowLabel { y: root.y-fn; width: root.width; sk: root.sk; label: "Functions"; }
+        if !root.arcade: HorizontalLayout {
+            y: root.y-fn + root.lh + 4px; height: 44px; spacing: 18px; alignment: start;
+            for f[i] in [{ k: "alarm", t: "Alarm", on: root.alarm-on }, { k: "timer", t: "Timer", on: root.timer-on }, { k: "stopwatch", t: "Stopwatch", on: root.watch-on }]:
+                HorizontalLayout {
+                    spacing: 8px;
+                    VerticalLayout { alignment: center;
+                        CheckBox { checked: f.on; tk-accent: root.sk.accent; tk-knob: root.sk.faint; tk-knob-on: root.look == 0 || root.look == 4 ? #F5F3EE : root.sk.surf;
+                            toggled => { root.function-toggled(f.k); } } }
+                    Text { text: f.t; font-family: root.sk.body-family; font-size: root.sk.body-size; font-weight: root.sk.body-weight; color: root.sk.text;
+                        vertical-alignment: center;
+                        TouchArea { clicked => { root.function-toggled(f.k); } } }
+                }
+        }
+        if root.arcade: HorizontalLayout {
+            y: root.y-fn + root.lh + 4px; height: 44px; spacing: 8px; alignment: start;
+            for f[i] in [{ k: "alarm", t: "Alarm", on: root.alarm-on }, { k: "timer", t: "Timer", on: root.timer-on }, { k: "stopwatch", t: "Stopwatch", on: root.watch-on }]:
+                ArcToggle { text: f.t; on: f.on; tube: root.tube; clicked => { root.function-toggled(f.k); } }
+        }
+        // colours
+        RowLabel { y: root.y-col; width: root.width; sk: root.sk; label: "Colours"; }
+        if !root.arcade: ColourSeg { y: root.y-col + root.lh + 4px; width: root.width; colourful: root.colourful; sk: root.sk;
+            picked(i) => { root.colourful-picked(i == 0); } }
+        if root.arcade: ArcadeBlocks { y: root.y-col + root.lh + 4px; width: root.width; tube: root.tube;
+            options: ["COLOURFUL", "ONE COLOUR"]; selected: root.colourful ? 0 : 1; picked(i) => { root.colourful-picked(i == 0); } }
+        // the timer look (on the arcade it changes after the block's blink)
+        RowLabel { y: root.y-look; width: root.width; sk: root.sk; label: "Timer look"; }
+        if !root.arcade: Dropdown { y: root.y-look + root.lh + 4px; width: root.width; options: TimerLooks.names; selected: root.look;
+            tk-raised: root.sk.raised; tk-line: root.sk.line; tk-text: root.sk.text; tk-muted: root.sk.muted; tk-menu: root.sk.menu;
+            tk-pressed: root.sk.pressed; tk-accent: root.sk.accent;
+            picked(i) => { root.look-picked(i); } }
+        if root.arcade: ArcadeBlocks { y: root.y-look + root.lh + 4px; width: root.width; tube: root.tube;
+            options: ["PLAIN", "KITCHEN", "HOURGLASS", "SYNTHWAVE", "FLIP"]; selected: root.look; settled(i) => { root.look-picked(i); } }
+        // the scene (synthwave), applied after the blink
+        if root.arcade: RowLabel { y: root.y-scene; width: root.width; sk: root.sk; label: "Scene"; }
+        if root.arcade: ArcadeBlocks { y: root.y-scene + root.lh + 4px; width: root.width; tube: root.tube;
+            options: ["SURPRISE ME", "SUNSET", "CITY", "BEACH", "STARS"]; selected: root.scene-choice + 1; settled(i) => { root.scene-picked(i - 1); } }
+    }
+    LookButton {
+        x: root.width - self.width; y: root.view-h + 4px;
+        look: root.look; sk: root.sk; text: "Done"; tube: root.tube;
+        clicked => { root.done(); }
+    }
+}
+
+// The timers page's settings on the timers tab (34): functions (alarm, timer, stopwatch), colours, the timer look and, for
+// synthwave, its scene; Done. On the arcade screen every choice is a block.
+export component TimerSettingsMenu inherits Rectangle {
+    in property <int> look;
+    in property <color> tube: #d24bff;
+    in property <float> t-in: 1000;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <bool> alarm-on;
+    in property <bool> timer-on;
+    in property <bool> watch-on;
+    in property <bool> colourful;
+    in property <int> scene-choice;            // -1 surprise me, 0..3 a fixed scene
+    callback function-toggled(string);
+    callback colourful-picked(bool);
+    callback look-picked(int);
+    callback scene-picked(int);
+    callback done();
+    property <MenuSkin> sk: TimerLooks.skin(root.look);
+    property <bool> arcade: root.look == 3;
+    property <length> pad-x: TimerLooks.pad-x(root.look);
+    property <length> inner-w: root.width - 2 * root.pad-x;
+    lab := RowLabel { visible: false; width: root.inner-w; sk: root.sk; label: "Timer look"; }
+    property <length> lh: root.arcade ? 14px : lab.preferred-height;
+    // the rows: on the arcade four block rows (each fits on one line), else three rows of controls
+    property <length> body-h: root.arcade ? 4px + 4 * (root.lh + 4px + 44px) + 3 * 12px + 10px : 4px + 3 * (root.lh + 4px) + 44px + 40px + 48px + 2 * 12px + 10px;
+    at := Text { visible: false; width: root.width - 32px; text: "SETTINGS"; font-family: "Press Start 2P"; font-size: 15px; letter-spacing: 1px; wrap: word-wrap; }
+    property <length> body-y: root.arcade ? 28px + at.preferred-height : TimerLooks.body-y(root.look);
+    out property <length> need: root.body-y + root.body-h + 48px + 4px + TimerLooks.pad-b(root.look);
+    property <length> view-h: Math.min(root.body-h, root.height - root.body-y - 48px - 4px - TimerLooks.pad-b(root.look));
+    if !root.arcade: LookFrame {
+        width: root.width; height: root.height;
+        look: root.look; sk: root.sk; tube: root.tube; title: root.look == 4 ? "Settings" : "Alarms & timers";
+        flap-letters: ["S", "E", "T", "T", "I", "N", "G", "S"];
+        t-in: root.t-in; t-out: root.t-out; leaving: root.leaving;
+        SettingsBody {
+            x: root.pad-x; y: root.body-y; width: root.inner-w; height: root.view-h + 52px;
+            look: root.look; sk: root.sk; tube: root.tube; lh: root.lh; body-h: root.body-h; view-h: root.view-h;
+            alarm-on: root.alarm-on; timer-on: root.timer-on; watch-on: root.watch-on; colourful: root.colourful; scene-choice: root.scene-choice;
+            function-toggled(k) => { root.function-toggled(k); }
+            colourful-picked(c) => { root.colourful-picked(c); }
+            look-picked(i) => { root.look-picked(i); }
+            scene-picked(i) => { root.scene-picked(i); }
+            done => { root.done(); }
+        }
+    }
+    if root.arcade: ArcadeScreen {
+        width: root.width; height: root.height;
+        tube: root.tube; title: "SETTINGS"; t-in: root.t-in; t-out: root.t-out; leaving: root.leaving;
+        TouchArea { }
+        SettingsBody {
+            x: 0; y: 0; width: root.inner-w; height: root.view-h + 52px;
+            look: root.look; sk: root.sk; tube: root.tube; lh: root.lh; body-h: root.body-h; view-h: root.view-h;
+            alarm-on: root.alarm-on; timer-on: root.timer-on; watch-on: root.watch-on; colourful: root.colourful; scene-choice: root.scene-choice;
+            function-toggled(k) => { root.function-toggled(k); }
+            colourful-picked(c) => { root.colourful-picked(c); }
+            look-picked(i) => { root.look-picked(i); }
+            scene-picked(i) => { root.scene-picked(i); }
+            done => { root.done(); }
+        }
+    }
+}
