@@ -472,6 +472,8 @@ export component AppWindow inherits Window {
     public function watch-start() { root.timers-watch-t0 = animation-tick(); root.timers-watch-running = true; }
     public function watch-stop() { root.timers-watch-base = root.timers-watch; root.timers-watch-running = false; }
     in property <bool> timers-quick;
+    // the timers grids' cells: the four timers that end soonest (indexes into timers-list)
+    in property <[int]> timers-grid;
     in property <int> timers-sheet: -1;
     in-out property <bool> timers-watch-running;
     in property <[float]> timers-laps;
@@ -1076,6 +1078,7 @@ export component AppWindow inherits Window {
                     edit: root.timers-edit; edit-new: root.timers-edit-new; edit-timer: root.timers-edit-timer; edit-h <=> root.timers-edit-h; edit-m <=> root.timers-edit-m; edit-days: root.timers-edit-days;
                     edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; ha-sounds: root.timers-ha-sounds; edit-keyboard: root.timers-edit-keyboard; kb-layer: root.timers-kb-layer; kb-layout: root.kb-layout;
                     edit-info: root.timers-edit-info; edit-tint: root.timers-edit-tint;
+                    on-screen: root.page == i && !root.screensaver-on; cells: root.timers-grid;
                 }
                 if slot.kind == "thermostat" && slot.variant == 3: FastLane {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;

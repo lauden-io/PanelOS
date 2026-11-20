@@ -287,7 +287,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 "symbols" => ui.set_timers_kb_layer(if layer >= 2 { 0 } else { 2 }),
                 "layout" => ui.set_kb_layout(1 - ui.get_kb_layout().clamp(0, 1)),
                 k => {
-                    if label.chars().count() < 32 {
+                    // a timer's label up to 60 characters, an alarm's up to 32 (the keyboard view shows the count and
+                    // shakes the field at the limit)
+                    if label.chars().count() < crate::pages::label_limit(ui.get_timers_edit_timer()) {
                         label.push_str(k);
                     }
                     // one capital, then small letters again

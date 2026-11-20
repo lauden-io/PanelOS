@@ -1,0 +1,224 @@
+// The arcade screen (spec 33.4): the neon and synthwave looks' menus are a little arcade screen in the scene's
+// colour, and every choice on it is an arcade block. Everything here moves in whole 40 ms frames: no springs, no
+// easing between frames, no squash.
+import { Icon } from "widgets.slint";
+
+// The arcade's fixed colours and its frame clock.
+export global Arcade {
+    // text on a lit block, and the dropdown lists' ground
+    out property <color> ink: #14062a;
+    // the arcade colours of rows that each have their own (rooms, players …)
+    out property <[color]> row-colours: [#ff4fd8, #ffd23f, #2bffc6, #22d8ff, #c27bff, #ff7a3d, #7dff6a, #ff5c8a];
+    // the frame (40 ms) a time in ms falls in
+    pure public function frame(ms: float) -> int { return Math.floor(ms / 40); }
+}
+
+// The screen: glass with scanlines, a 2 px tube in the scene's colour (mixed with 28 % white) with an outer and an
+// inner glow, radius 16, and a chrome title in Press Start 2P. The caller sizes it and lays its body out under the
+// title (`pad-x`, `body-y`); the motion comes from MenuHost's 40 ms clocks:
+// - on: a white line lights across the middle (90 ms), the screen opens to its full height (160 ms) under a flash that
+//   fades from 55 %; the picture flickers in (hidden until 170 ms, off again 190–210 ms);
+// - off: it collapses to a line (110 ms), then to a dot that fades (90 ms).
+export component ArcadeScreen inherits Rectangle {
+    in property <color> tube: #d24bff;
+    in property <string> title;
+    in property <float> t-in: 400;           // ms since it opened (whole frames: MenuHost.t-in-40)
+    in property <float> t-out;               // ms since it began to close (MenuHost.t-out-40)
+    in property <bool> leaving;
+    in property <bool> foot;                 // "CREDIT 99 · © PANELOS" at the bottom
+    // 0 the whole screen with its body (the children); 1 only what lies under the body (glass, glow, title); 2 only what
+    // lies over it (scanlines, tube, flash): a caller that draws its body itself puts it between a 1 and a 2 and clips
+    // it to the screen's box while it moves (`box-*`, `moving`, `pic`, `fade`)
+    in property <int> layers: 0;
+    out property <length> pad-x: 18px;       // the tube (2 px) and the side padding (16 px)
+    out property <length> title-h: tt.preferred-height;
+    out property <length> body-y: 2px + 16px + root.title-h + 12px;
+    out property <length> foot-h: root.foot ? 26px : 0px;
+    pure function eo(u: float) -> float { return 1 - Math.pow(1 - clamp(u, 0, 1), 3); }
+    pure function ei(u: float) -> float { return Math.pow(clamp(u, 0, 1), 3); }
+    property <float> ti: root.t-in;
+    property <float> to: root.t-out;
+    property <length> cw: root.leaving ? (root.to < 110 ? root.width : Math.max(4px, root.width * (1 - root.ei((root.to - 110) / 90))))
+        : (root.ti < 90 ? Math.max(4px, root.width * root.eo(root.ti / 90)) : root.width);
+    property <length> ch: root.leaving ? (root.to < 110 ? Math.max(2px, root.height * (1 - root.ei(root.to / 110))) : 2px)
+        : (root.ti < 90 ? 2px : Math.max(2px, root.height * root.eo((root.ti - 90) / 160)));
+    property <float> flash: root.leaving ? (root.to < 110 ? 0 : 0.8) : (root.ti < 90 ? 1 : 0.55 * (1 - clamp((root.ti - 90) / 170, 0, 1)));
+    out property <bool> pic: root.leaving ? root.to < 110 : (root.ti >= 170 && !(root.ti >= 190 && root.ti < 210));
+    out property <float> fade: root.leaving && root.to >= 110 ? 1 - root.ei((root.to - 110) / 90) : 1;
+    out property <bool> moving: root.cw < root.width || root.ch < root.height;
+    out property <length> box-x: (root.width - root.cw) / 2;
+    out property <length> box-y: (root.height - root.ch) / 2;
+    out property <length> box-w: root.cw;
+    out property <length> box-h: root.ch;
+    clipper := Rectangle {
+        x: root.box-x; y: root.box-y; width: root.cw; height: root.ch;
+        clip: root.moving;
+        opacity: root.fade;
+        Rectangle {
+            x: -clipper.x; y: -clipper.y; width: root.width; height: root.height;
+            if root.layers != 2: Rectangle {
+                // the outer glow of the tube
+                Rectangle { x: -6px; y: -6px; width: parent.width + 12px; height: parent.height + 12px; border-radius: 22px; border-width: 3px;
+                    border-color: root.tube.with-alpha(0.10); }
+                Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 19px; border-width: 3px;
+                    border-color: root.tube.with-alpha(0.24); }
+                // the glass
+                Rectangle { border-radius: 16px; background: #10052af2; }
+                // the inner glow
+                Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; border-radius: 14px; border-width: 4px;
+                    border-color: root.tube.with-alpha(0.16); }
+                Rectangle { x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px; border-radius: 10px; border-width: 5px;
+                    border-color: root.tube.with-alpha(0.06); }
+            }
+            // the picture
+            Rectangle {
+                visible: root.pic && root.layers != 2;
+                // the chrome title: white -> ice blue -> the scene's colour -> pale pink, with a glow
+                for o in [{ x: -1.5, y: 0 }, { x: 1.5, y: 0 }, { x: 0, y: -1.5 }, { x: 0, y: 1.5 }]: Text {
+                    x: root.pad-x + o.x * 1px; y: 2px + 16px + o.y * 1px; width: root.width - 2 * root.pad-x;
+                    text: root.title.to-uppercase(); font-family: "Press Start 2P"; font-size: 15px; letter-spacing: 1px; wrap: word-wrap;
+                    horizontal-alignment: center; color: root.tube.with-alpha(0.38);
+                }
+                tt := Text {
+                    x: root.pad-x; y: 2px + 16px; width: root.width - 2 * root.pad-x;
+                    text: root.title.to-uppercase(); font-family: "Press Start 2P"; font-size: 15px; letter-spacing: 1px; wrap: word-wrap;
+                    horizontal-alignment: center;
+                    color: @linear-gradient(180deg, #ffffff 0%, #c4f1ff 42%, root.tube 54%, #ffe0f6 100%);
+                }
+                Rectangle { visible: root.layers == 0; @children }
+                if root.foot: Text { x: root.pad-x; y: root.height - 22px; text: "CREDIT 99"; font-family: "Press Start 2P"; font-size: 8px; color: #ffffff80; }
+                if root.foot: Text { x: root.pad-x; y: root.height - 22px; width: root.width - 2 * root.pad-x; text: "© PANELOS"; font-family: "Press Start 2P";
+                    font-size: 8px; color: #ffffff80; horizontal-alignment: right; }
+            }
+            if root.layers != 1: Rectangle {
+                // scanlines over everything: 1 px of 26 % black every 3 px (a picture at the screen's size)
+                Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; clip: true;
+                    Image { x: 0; y: 0; width: 448px; height: 420px; source: @image-url("menu/scanlines.png"); } }
+                // the tube
+                Rectangle { border-radius: 16px; border-width: 2px; border-color: root.tube.mix(#ffffff, 0.72); }
+                // the power-on line and flash
+                if root.flash > 0.004: Rectangle { border-radius: root.ch > 20px ? 16px : 1px; background: #ffffff; opacity: root.flash; }
+            }
+        }
+    }
+}
+
+// An arcade block (spec 33.4): a word in Press Start 2P caps on the screen.
+// - a choice: white 75 % at rest; the current one an inverse block (the tube colour, dark text, a glow); a new current one
+//   lights and blinks twice (on, off, on, off, on: five frames); a tap on the current one lights it at 55 % for two frames;
+// - `toggle`: a block that lights on its own (several may be lit); a tap blinks it into its new state;
+// - `control`: a button block, the tube colour at 28 % at rest; a press lights it in the tube colour for two frames.
+// At least 40 x 44 px (touch), 7 px side padding (control blocks 10 px), radius 2.
+export component ArcBlock inherits Rectangle {
+    in property <string> text;
+    in property <bool> on;
+    in property <color> tube: #d24bff;
+    in property <bool> toggle;
+    in property <bool> control;
+    in property <length> font-size: 9px;
+    callback clicked;
+    property <length> side: root.control ? 10px : 7px;
+    min-width: 40px;
+    preferred-width: Math.max(40px, tx.preferred-width + 2 * root.side);
+    height: 44px;
+    border-radius: 2px;
+    // the blink into a new state: five frames from the change
+    property <bool> blinking;
+    property <duration> b0;
+    changed on => {
+        if root.on || root.toggle {
+            root.b0 = animation-tick();
+            root.blinking = true;
+        } else {
+            root.blinking = false;
+        }
+    }
+    Timer { interval: 200ms; running: root.blinking; triggered => { root.blinking = false; } }
+    property <int> bf: root.blinking ? Math.floor((animation-tick() - root.b0) / 40ms) : 0;
+    property <bool> lit: root.blinking ? (Math.mod(root.bf, 2) == 0 ? root.on : !root.on) : root.on;
+    // the press light: two frames from the touch
+    property <bool> zapping;
+    property <duration> z0;
+    Timer { interval: 80ms; running: root.zapping; triggered => { root.zapping = false; } }
+    // a tap on the lit choice lights it at 55 %; a control lights fully
+    property <bool> zap-full: root.zapping && root.control;
+    property <bool> zap-half: root.zapping && !root.control && root.on && !root.blinking;
+    background: root.zap-full || (root.lit && !root.zap-half) ? root.tube : root.zap-half ? root.tube.with-alpha(0.55)
+        : root.control ? root.tube.with-alpha(0.28) : transparent;
+    drop-shadow-blur: root.zap-full || (root.lit && !root.zap-half) ? 10px : 0px;
+    drop-shadow-color: root.tube;
+    tx := Text {
+        x: root.side; width: parent.width - 2 * root.side; height: parent.height;
+        text: root.text.to-uppercase(); font-family: "Press Start 2P"; font-size: root.font-size; letter-spacing: 0.4px;
+        horizontal-alignment: center; vertical-alignment: center;
+        color: root.zap-full || (root.lit && !root.zap-half) ? Arcade.ink : root.control || root.zap-half ? #ffffff : #ffffffbf;
+    }
+    TouchArea {
+        pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.z0 = animation-tick(); root.zapping = true; } }
+        clicked => { root.clicked(); }
+    }
+}
+
+// A square arcade key (the timer's pause / go on and cancel, spec 34.0): 48 x 44, radius 2; `fill` a lit key in its
+// colour with a glow and a dark glyph, else outlined 2 px in white 70 % with a white glyph. A press lights it in the tube
+// colour for two frames.
+export component ArcKey inherits Rectangle {
+    in property <string> icon;
+    in property <color> fill;               // transparent: outlined
+    in property <color> tube: #d24bff;
+    in property <length> icon-size: 22px;
+    callback clicked;
+    width: 48px; height: 44px; border-radius: 2px;
+    property <bool> zapping;
+    Timer { interval: 80ms; running: root.zapping; triggered => { root.zapping = false; } }
+    property <bool> solid: root.fill.alpha > 0;
+    background: root.zapping ? root.tube : root.fill;
+    drop-shadow-blur: root.solid || root.zapping ? 10px : 0px;
+    drop-shadow-color: root.zapping ? root.tube : root.fill;
+    if !root.solid && !root.zapping: Rectangle { border-radius: 2px; border-width: 2px; border-color: #ffffffb3; }
+    Icon { width: parent.width; height: parent.height; text: root.icon; font-size: root.icon-size;
+        color: root.solid || root.zapping ? Arcade.ink : #ffffff; }
+    TouchArea {
+        pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.zapping = true; } }
+        clicked => { root.clicked(); }
+    }
+}
+
+// A row of single-choice arcade blocks (the arcade OPTIONS screen, spec 33.4): the blocks 2 px apart, wrapping onto a
+// second line instead of cutting (up to six choices). Press Start 2P is monospaced, so a block's width follows from its
+// letters.
+export component ArcPick inherits Rectangle {
+    in property <[string]> options;
+    in property <int> selected;
+    in property <color> tube: #d24bff;
+    in property <length> font-size: 9px;
+    in property <bool> right;               // the blocks to the right (a row with its label beside it)
+    callback picked(int);
+    m1 := Text { visible: false; text: "M"; font-family: "Press Start 2P"; font-size: root.font-size; letter-spacing: 0.4px; }
+    m2 := Text { visible: false; text: "MM"; font-family: "Press Start 2P"; font-size: root.font-size; letter-spacing: 0.4px; }
+    property <length> adv: m2.preferred-width - m1.preferred-width;
+    property <length> lead: m1.preferred-width - root.adv;
+    property <int> n: root.options.length;
+    pure function bw(i: int) -> length {
+        return i < root.n ? Math.max(40px, Math.ceil((root.options[i].character-count * root.adv + root.lead) / 1px) * 1px + 16px) : 0px;
+    }
+    // the left edge of block i on one line
+    pure function px(i: int) -> length {
+        return (i > 0 ? root.bw(0) + 2px : 0px) + (i > 1 ? root.bw(1) + 2px : 0px) + (i > 2 ? root.bw(2) + 2px : 0px)
+            + (i > 3 ? root.bw(3) + 2px : 0px) + (i > 4 ? root.bw(4) + 2px : 0px);
+    }
+    pure function over(i: int) -> bool { return i < root.n && root.px(i) + root.bw(i) > root.width; }
+    // the first block that goes onto the second line
+    property <int> brk: root.over(1) ? 1 : root.over(2) ? 2 : root.over(3) ? 3 : root.over(4) ? 4 : root.over(5) ? 5 : root.n;
+    property <length> line1: root.brk > 0 ? root.px(root.brk - 1) + root.bw(root.brk - 1) : 0px;
+    property <length> line2: root.brk < root.n ? root.px(root.n - 1) + root.bw(root.n - 1) - root.px(root.brk) : 0px;
+    out property <length> need-h: root.brk < root.n ? 90px : 44px;
+    height: root.need-h;
+    for o[i] in root.options: ArcBlock {
+        x: (root.right ? root.width - (i < root.brk ? root.line1 : root.line2) : 0px) + (i < root.brk ? root.px(i) : root.px(i) - root.px(root.brk));
+        y: i < root.brk ? 0px : 46px;
+        width: root.bw(i);
+        text: o; on: i == root.selected; tube: root.tube; font-size: root.font-size;
+        clicked => { root.picked(i); }
+    }
+}

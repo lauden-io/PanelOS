@@ -594,6 +594,11 @@ fn update_clock(ui: &AppWindow) {
             if let Some(m) = pages::update_rows(&ui.get_timers_list(), pages::timer_items(&s.timers, accent(s), ui.get_timers_colourful())) {
                 ui.set_timers_list(m);
             }
+            // the plain and synthwave grids: the four that end soonest (34.7)
+            let grid = pages::timer_grid(&s.timers);
+            if slint::Model::iter(&ui.get_timers_grid()).collect::<Vec<i32>>() != grid {
+                ui.set_timers_grid(ModelRc::new(VecModel::from(grid)));
+            }
         }
         // Timers the panel runs itself ring here when they reach zero.
         let done: Vec<String> =
@@ -969,6 +974,7 @@ fn refresh_pages(ui: &AppWindow) {
         if let Some(c) = page_option(s, "timers", "colourful").and_then(|v| v.as_bool()) {
             ui.set_timers_colourful(c);
         }
+        ui.set_timers_sw_choice(page_option(s, "timers", "scene").and_then(|v| v.as_i64()).map_or(-2, |n| n.clamp(-1, 3) as i32));
         // the clock page: its parts, letters, width, wandering speed and colour (the integration's page options)
         {
             let co = |k: &str| page_option(s, "clock", k);
@@ -1138,6 +1144,8 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_quick(false);
     ui.set_timers_sheet(-1);
     ui.set_timers_settings(false);
+    ui.set_timers_edit(false);
+    ui.set_timers_edit_keyboard(false);
     ui.set_todo_picker(false);
     ui.set_cam_settings(false);
     ui.set_info_settings(false);
@@ -1153,6 +1161,7 @@ thread_local! {
 /// Goes to a page by itself (a timer rings, Home Assistant asks for a view) and remembers where it came from, so
 /// `end_visit` can go back there.
 fn visit_page(ui: &AppWindow, kind: &str) {
+    close_page_sheets(ui);
     let from = ui.get_page();
     let known = VISIT.with(|v| v.get());
     if !go_to_page(ui, kind) {
@@ -1184,6 +1193,7 @@ fn open_temporary_page(ui: &AppWindow, kind: &str) {
     if with_state(|s| s.temp_page.is_some()) {
         return;
     }
+    close_page_sheets(ui);
     let pages = ui.get_pages();
     let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
     let at = (ui.get_page().max(0) as usize + 1).min(vec.row_count());
@@ -1539,6 +1549,41 @@ fn start_local_timer(ui: &AppWindow, secs: u32, name: String) {
     ui.set_timers_mode(1);
 }
 
+/// The timers page's functions (alarm, timer, stopwatch) with one of them switched over; None when it would leave none
+/// (at least one stays).
+fn toggle_function(on: [bool; 3], which: &str) -> Option<[bool; 3]> {
+    let i = match which {
+        "alarm" => 0,
+        "timer" => 1,
+        "stopwatch" => 2,
+        _ => return None,
+    };
+    let mut next = on;
+    next[i] = !next[i];
+    next.iter().any(|v| *v).then_some(next)
+}
+
+/// One of the timers page's options set on the panel: kept in the panel's copy of its settings at once (the page shows
+/// it before Home Assistant sends the settings back) and sent to the integration.
+fn timers_option(ui: &AppWindow, key: &str, value: Value) {
+    with_state(|s| {
+        if let Some(page) = s.panel_config.as_mut().and_then(|c| c.get_mut("pages")).and_then(Value::as_array_mut)
+            .and_then(|pages| pages.iter_mut().find(|p| p.get("kind").and_then(Value::as_str) == Some("timers")))
+        {
+            set_option(page, key, value.clone());
+        }
+    });
+    page_set(ui, "timers", None, json!({ key: value }));
+}
+
+/// A page's option in its settings object (made when it has none).
+fn set_option(page: &mut Value, key: &str, value: Value) {
+    if !page.get("options").is_some_and(Value::is_object) {
+        page["options"] = json!({});
+    }
+    page["options"][key] = value;
+}
+
 /// Taps on the timers page (`timers.*`, `watch.*`).
 fn timers_act(ui: &AppWindow, what: &str, value: &str) {
     let n: i64 = value.parse().unwrap_or(0);
@@ -1576,6 +1621,31 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
             start_timer(ui, secs, name);
         }
         "timers.start" => start_timer(ui, n.clamp(1, 24 * 3600) as u32, String::new()),
+        // the page's settings in the look's menu (the quick shade's page row), and what they set: shown at once, kept by
+        // the integration
+        "timers.settings" => ui.set_timers_settings(value == "open"),
+        "timers.look" => page_set(ui, "timers", Some(n.clamp(0, 4) as i32), Value::Null),
+        "timers.colourful" => {
+            ui.set_timers_colourful(value == "1");
+            timers_option(ui, "colourful", json!(value == "1"));
+        }
+        "timers.scene" => {
+            ui.set_timers_sw_choice(n.clamp(-1, 3) as i32);
+            timers_option(ui, "scene", json!(n.clamp(-1, 3)));
+        }
+        "timers.function" => {
+            let on = [ui.get_timers_alarm_on(), ui.get_timers_timer_on(), ui.get_timers_watch_on()];
+            let Some(next) = toggle_function(on, value) else { return };
+            ui.set_timers_alarm_on(next[0]);
+            ui.set_timers_timer_on(next[1]);
+            ui.set_timers_watch_on(next[2]);
+            let mode = ui.get_timers_mode().clamp(0, 2) as usize;
+            if !next[mode] {
+                ui.set_timers_mode(if next[1] { 1 } else if next[0] { 0 } else { 2 });
+            }
+            let names: Vec<&str> = [(next[1], "timer"), (next[0], "alarm"), (next[2], "stopwatch")].iter().filter(|(on, _)| *on).map(|(_, k)| *k).collect();
+            timers_option(ui, "functions", json!(names));
+        }
         "timers.toggle" | "timers.add" | "timers.cancel" => with_state(|s| {
             let Some(id) = id_at(s) else { return };
             match what {
@@ -2725,6 +2795,7 @@ fn start_screensaver(ui: &AppWindow, s: &mut UiState) {
     ui.set_set_view(0);
     ui.set_strip_on(false);
     info::pop(ui, None);
+    close_page_sheets(ui);
     saver_clock(ui, s);
     ui.set_screensaver_on(true);
 }
@@ -3327,7 +3398,12 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             if !go_to_page(ui, "timers") {
                 open_temporary_page(ui, "timers");
             }
-            ui.set_timers_sheet(value.parse::<i32>().unwrap_or(-1));
+            let i = value.parse::<i32>().unwrap_or(-1);
+            if matches!(ui.get_timers_theme(), 0 | 3) && slint::Model::row_count(&ui.get_timers_list()) >= 2 {
+                ui.set_timers_sheet(i);
+            } else if i >= 0 {
+                ui.set_timers_focus(i);
+            }
         }
         "strip.close" => ui.set_strip_on(false),
         "status.fold" | "strip.open" | "info.crit-silence" => alerts::act(ui, what),
@@ -4321,4 +4397,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = VERSION;
     ui.run()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod timers_settings_tests {
+    use super::{set_option, toggle_function};
+    use serde_json::json;
+
+    #[test]
+    fn a_function_toggles_but_one_stays() {
+        assert_eq!(toggle_function([true, true, true], "alarm"), Some([false, true, true]));
+        assert_eq!(toggle_function([false, true, false], "stopwatch"), Some([false, true, true]));
+        assert_eq!(toggle_function([false, true, false], "timer"), None);
+        assert_eq!(toggle_function([true, true, true], "radio"), None);
+    }
+
+    #[test]
+    fn an_option_lands_in_the_page() {
+        let mut page = json!({ "kind": "timers" });
+        set_option(&mut page, "scene", json!(2));
+        assert_eq!(page["options"]["scene"], json!(2));
+        set_option(&mut page, "colourful", json!(false));
+        assert_eq!(page["options"], json!({ "scene": 2, "colourful": false }));
+    }
 }
