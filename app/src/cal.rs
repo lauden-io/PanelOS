@@ -5,6 +5,7 @@
 //! calendars shown), the page settings, a day's list, an event's details and
 //! its edit form (written back with `calendar/event/update` and `/delete`).
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -25,7 +26,10 @@ struct Ev {
     start: i64,
     end: i64,
     all_day: bool,
+    /// The calendar's place among the page's calendars (its colour, its pen); set for the page the event is shown on.
     cal: usize,
+    /// The calendar entity it comes from.
+    entity: String,
     note: String,
     place: String,
     /// Home Assistant's event id and the occurrence of a recurring one (empty when none).
@@ -36,7 +40,7 @@ struct Ev {
 impl Ev {
     /// The id the views carry, to find the event again (an edit, a delete).
     fn id(&self) -> String {
-        format!("{}|{}|{}|{}", self.cal, self.uid, self.rid, self.start)
+        format!("{}|{}|{}|{}", self.entity, self.uid, self.rid, self.start)
     }
 }
 
@@ -59,21 +63,44 @@ fn tint(i: usize) -> Color {
 }
 
 thread_local! {
+    /// The events of every calendar the calendar pages show.
     static EVENTS: std::cell::RefCell<Vec<Ev>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The days behind the month grid's and the wall calendar's cells and the week's columns (a tap opens that day's list).
-    static DAYS: std::cell::RefCell<std::collections::HashMap<&'static str, Vec<i64>>> = std::cell::RefCell::new(std::collections::HashMap::new());
-    /// The events behind the departure board's rows and the tear-off page's lines, with their "when" line (a tap opens them).
-    static ROWS: std::cell::RefCell<std::collections::HashMap<&'static str, Vec<(CalEvent, String)>>> = std::cell::RefCell::new(std::collections::HashMap::new());
-    /// Back / forward from today in the view's steps.
-    static SHIFT: std::cell::Cell<i64> = const { std::cell::Cell::new(0) };
-    /// The integration's own start view as last seen (None until the page first had its settings).
-    static START: std::cell::Cell<Option<Option<i64>>> = const { std::cell::Cell::new(None) };
-    /// Calendars hidden on the panel, set here and not yet back from the integration.
-    static HIDE_PENDING: std::cell::RefCell<Option<Vec<String>>> = const { std::cell::RefCell::new(None) };
+    /// Each page's days behind the month grid's and the wall calendar's cells and the week's columns (a tap opens that
+    /// day's list), by the page's row (`PageSlot.n`).
+    static DAYS: std::cell::RefCell<HashMap<(usize, &'static str), Vec<i64>>> = std::cell::RefCell::new(HashMap::new());
+    /// Each page's events behind the departure board's rows and the tear-off page's lines, with their "when" line (a
+    /// tap opens them).
+    static ROWS: std::cell::RefCell<HashMap<(usize, &'static str), Vec<(CalEvent, String)>>> = std::cell::RefCell::new(HashMap::new());
+    /// Each page's back / forward from today in its view's steps.
+    static SHIFT: std::cell::RefCell<HashMap<usize, i64>> = std::cell::RefCell::new(HashMap::new());
+    /// Each page's own start view in the integration as last seen (none until the page first had its settings).
+    static START: std::cell::RefCell<HashMap<usize, Option<i64>>> = std::cell::RefCell::new(HashMap::new());
+    /// Each page's calendars hidden on the panel, set here and not yet back from the integration.
+    static HIDE_PENDING: std::cell::RefCell<HashMap<usize, Vec<String>>> = std::cell::RefCell::new(HashMap::new());
+    /// What each page's views were made from last (they are made again only when it changes).
+    static LAST: std::cell::RefCell<HashMap<usize, u64>> = std::cell::RefCell::new(HashMap::new());
     /// The event being edited.
     static EDIT: std::cell::RefCell<Option<Edit>> = const { std::cell::RefCell::new(None) };
     /// A delete waiting for its undo strip to run out: the event's id, its calendar entity, uid and occurrence.
     static DELETING: std::cell::RefCell<Option<(String, String, String, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+fn shift_of(n: usize) -> i64 {
+    SHIFT.with(|o| o.borrow().get(&n).copied().unwrap_or(0))
+}
+
+fn set_shift(n: usize, v: i64) -> i64 {
+    SHIFT.with(|o| o.borrow_mut().insert(n, v).unwrap_or(0))
+}
+
+/// The events of a page's calendars, each with its calendar's place among the page's (its colour).
+fn page_events(entities: &[String]) -> Vec<Ev> {
+    EVENTS.with(|e| {
+        e.borrow()
+            .iter()
+            .filter_map(|ev| entities.iter().position(|c| *c == ev.entity).map(|cal| Ev { cal, ..ev.clone() }))
+            .collect()
+    })
 }
 
 /// The edit form's event (the times live in the UI: `cal-edit-start-min` / `-end-min`, minutes from `day0`).
@@ -229,6 +256,7 @@ fn fetch(url: &str, auth: &Arc<crate::auth::Auth>, calendars: &[String]) -> Vec<
                 end,
                 all_day,
                 cal: i,
+                entity: cal.clone(),
                 note: text("description"),
                 place: text("location"),
                 uid: text("uid"),
@@ -561,14 +589,14 @@ fn short(title: &str) -> String {
 }
 
 /// The wall calendar: this month's grid, each day's events written in pen by the app (one ink per
-/// calendar, today circled in red).
-fn wall(ui: &AppWindow, events: &[Ev], t: i64, written: Option<&[usize]>) {
+/// calendar, today circled in red); the days behind its cells kept for page `n`.
+fn wall(n: usize, events: &[Ev], t: i64, written: Option<&[usize]>) -> Vec<WallCell> {
     let today = midnight(t);
     let first = date_epoch(&local_format(t, "%Y-%m-01")).unwrap_or(today);
     let grid0 = day_after(first, -weekday(first));
     let month = local_format(t, "%m");
-    DAYS.with(|d| d.borrow_mut().insert("wall", (0..42).map(|k| day_after(grid0, k)).collect()));
-    let rows: Vec<WallCell> = (0..42)
+    DAYS.with(|d| d.borrow_mut().insert((n, "wall"), (0..42).map(|k| day_after(grid0, k)).collect()));
+    (0..42)
         .map(|k| {
             let day0 = day_after(grid0, k);
             let day1 = day_after(day0, 1);
@@ -592,28 +620,21 @@ fn wall(ui: &AppWindow, events: &[Ev], t: i64, written: Option<&[usize]>) {
                 },
             }
         })
-        .collect();
-    if let Some(m) = crate::pages::update_rows(&ui.get_cal_wall_cells(), rows) {
-        ui.set_cal_wall_cells(m);
-    }
-    ui.set_cal_wall_month(local_format(t, "%B").to_uppercase().into());
-    if ui.get_cal_wall_photo().size().width == 0 {
-        ui.set_cal_wall_photo(crate::quick::picture("cal/wall-photo.jpg"));
-    }
+        .collect()
 }
 
-/// Which calendars the page shows (by entity order): the integration's choice, or the one just made on the panel
+/// Which calendars page `n` shows (by entity order): the integration's choice, or the one just made on the panel
 /// until the integration has it. At least one is always shown.
-fn shown(s: &crate::UiState, entities: &[String]) -> Vec<bool> {
-    let set: Vec<String> = crate::page_option(s, "calendar", "hidden_calendars")
-        .and_then(|v| v.as_array().cloned())
+fn shown(page: &Value, entities: &[String], n: usize) -> Vec<bool> {
+    let set: Vec<String> = crate::pages::option_of(page, "hidden_calendars")
+        .and_then(Value::as_array)
         .map(|a| a.iter().filter_map(Value::as_str).map(str::to_string).collect())
         .unwrap_or_default();
     let hidden = HIDE_PENDING.with(|p| {
-        let pending = p.borrow().clone();
-        match pending {
+        let mut p = p.borrow_mut();
+        match p.get(&n).cloned() {
             Some(want) if want == set => {
-                *p.borrow_mut() = None;
+                p.remove(&n);
                 set.clone()
             }
             Some(want) => want,
@@ -645,121 +666,180 @@ fn flap_cells(text: &str, n: usize) -> Vec<SharedString> {
     cells.into_iter().map(SharedString::from).collect()
 }
 
-/// The picker's rows: changed in place (a gate flips, a box is ticked) unless the calendars themselves changed.
-fn set_items(ui: &AppWindow, items: Vec<CalItem>) {
-    let cur = ui.get_cal_cals();
+/// The picker's rows: changed in place (a gate flips, a box is ticked) unless the calendars themselves changed; the
+/// new model when they did.
+fn set_items(cur: &ModelRc<CalItem>, items: Vec<CalItem>) -> Option<ModelRc<CalItem>> {
     let same = |a: &CalItem, b: &CalItem| a.name == b.name && a.on == b.on && a.last == b.last && a.tint == b.tint;
-    if slint::Model::row_count(&cur) == items.len() {
-        if let Some(vec) = slint::Model::as_any(&cur).downcast_ref::<VecModel<CalItem>>() {
+    if slint::Model::row_count(cur) == items.len() {
+        if let Some(vec) = slint::Model::as_any(cur).downcast_ref::<VecModel<CalItem>>() {
             for (i, it) in items.into_iter().enumerate() {
                 if !slint::Model::row_data(vec, i).is_some_and(|c| same(&c, &it)) {
                     slint::Model::set_row_data(vec, i, it);
                 }
             }
-            return;
+            return None;
         }
     }
-    ui.set_cal_cals(ModelRc::new(VecModel::from(items)));
+    Some(ModelRc::new(VecModel::from(items)))
 }
 
+/// Every calendar page, each from its own calendars, the ones it shows, its view and its look.
 pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
-    let pages = ui.get_pages();
-    let Some(slot) =
-        (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i)).find(|p| p.kind == "calendar")
-    else {
+    let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "calendar").into_iter().map(|(_, p)| p.clone()).collect::<Vec<_>>();
+    // every calendar of every calendar page is read
+    let mut wanted: Vec<String> = Vec::new();
+    for p in &pages {
+        for e in crate::pages::entities_of(p) {
+            if !wanted.contains(&e) {
+                wanted.push(e);
+            }
+        }
+    }
+    *WANTED.lock().unwrap() = wanted.clone();
+    if wanted.is_empty() {
+        crate::pages::keep_insts(&ui.get_cal_inst(), pages.len());
         return;
-    };
-    let entities = crate::page_entities(s, "calendar");
-    *WANTED.lock().unwrap() = entities.clone();
+    }
+    ensure_started(ui, s);
+    let t = now();
+    // what every calendar page shows alike: the clocks and dates of the looks, their own lines
+    ui.set_cal_board_clock_cells(ModelRc::new(VecModel::from(flap_cells(&board_hm(t), if crate::clock::h24() { 5 } else { 6 }))));
+    let year = local_format(t, "%Y");
+    ui.set_cal_wall_year(year.clone().into());
+    let leap = year.parse::<i64>().is_ok_and(|y| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
+    ui.set_cal_desk_line(format!("DESK CALENDAR {year} \u{b7} {} PAGES", if leap { 366 } else { 365 }).into());
+    ui.set_cal_now_min(((t - midnight(t)) / 60) as i32);
+    if crate::page_looks(ui, "calendar").contains(&3) {
+        ui.set_cal_wall_month(local_format(t, "%B").to_uppercase().into());
+        if ui.get_cal_wall_photo().size().width == 0 {
+            ui.set_cal_wall_photo(crate::quick::picture("cal/wall-photo.jpg"));
+        }
+    }
+    // (once a minute, and when the time format changes)
+    let minute = t / 60 * 2 + crate::clock::h24() as i64;
+    thread_local!(static SHARED: std::cell::Cell<i64> = const { std::cell::Cell::new(-1) });
+    if SHARED.with(|m| m.replace(minute)) != minute {
+        ui.set_cal_month_names(ModelRc::new(VecModel::from(
+            ["M", "T", "W", "T", "F", "S", "S"].iter().map(|d| SharedString::from(*d)).collect::<Vec<_>>(),
+        )));
+        ui.set_cal_board_clock(board_hm(t).into());
+        ui.set_cal_board_date(local_format(t, "%a %-d %b").to_uppercase().into());
+        // the board's crawl: four lines (never shorter than its strip)
+        let crawl: Vec<String> = (0..4).map(|i| texts::kept("cal.board.tickers", i)).collect();
+        ui.set_cal_board_ticker(crawl.join("   \u{2022}   ").into());
+        ui.set_cal_board_empty(texts::kept("cal.board.empty", 0).into());
+        ui.set_cal_empty_title(texts::kept("cal.empty.titles", 0).into());
+        ui.set_cal_empty_sub(texts::kept("cal.empty.subs", 0).into());
+        ui.set_cal_tear_month(local_format(t, "%B %Y").to_uppercase().into());
+        ui.set_cal_tear_day(local_format(t, "%-d").parse().unwrap_or(1));
+        ui.set_cal_tear_weekday(local_format(t, "%A").to_uppercase().into());
+        ui.set_cal_tear_sunday(weekday(t) == 6);
+        ui.set_cal_tear_info(format!("week {} \u{b7} day {}", local_format(t, "%V").trim_start_matches('0'), local_format(t, "%j").trim_start_matches('0')).into());
+        ui.set_cal_tear_line(texts::kept("cal.tear.lines", 0).into());
+    }
+    for (n, page) in pages.iter().enumerate() {
+        refresh_page(ui, s, n, page);
+    }
+    crate::pages::keep_insts(&ui.get_cal_inst(), pages.len());
+}
+
+/// One calendar page (row `n` of the kind's data).
+fn refresh_page(ui: &AppWindow, s: &crate::UiState, n: usize, page: &Value) {
+    let entities = crate::pages::entities_of(page);
     if entities.is_empty() {
         return;
     }
+    let look = crate::pages::variant_of(page);
     let c = cals(s, &entities);
-    let on = shown(s, &entities);
+    let on = shown(page, &entities, n);
     // the top-right chip names what the page shows: its calendar, or how many
     let chip = chip_text(&c.names, &on);
-    if ui.get_cal_chip().as_str() != chip {
-        ui.set_cal_chip(chip.into());
-    }
     // the chip's picker: every calendar of the page in its colour (the wall calendar's ink too), shown or not
     let n_on = on.iter().filter(|&&o| o).count();
     let items: Vec<CalItem> = c
         .names
         .iter()
         .enumerate()
-        .map(|(i, n)| CalItem {
-            name: n.clone().into(),
+        .map(|(i, nm)| CalItem {
+            name: nm.clone().into(),
             tint: tint(i),
             ink: rgb(INK_RGB[i % INK_RGB.len()]),
-            code: code(n).into(),
+            code: code(nm).into(),
             on: on[i],
             last: on[i] && n_on == 1,
-            cells: ModelRc::new(VecModel::from(flap_cells(&code(n), 2).into_iter().chain(flap_cells(n, 9)).collect::<Vec<_>>())),
+            cells: ModelRc::new(VecModel::from(flap_cells(&code(nm), 2).into_iter().chain(flap_cells(nm, 9)).collect::<Vec<_>>())),
         })
         .collect();
-    set_items(ui, items);
-    ui.set_cal_board_clock_cells(ModelRc::new(VecModel::from(flap_cells(&board_hm(now()), if crate::clock::h24() { 5 } else { 6 }))));
-    ensure_started(ui, s);
-    ui.set_cal_look(slot.variant);
-    let t = now();
-    let today = midnight(t);
-    let deleting = DELETING.with(|d| d.borrow().as_ref().map(|x| x.0.clone()));
-    let events: Vec<Ev> = EVENTS.with(|e| {
-        e.borrow().iter().filter(|e| on.get(e.cal).copied().unwrap_or(false) && deleting.as_deref() != Some(e.id().as_str())).cloned().collect()
-    });
-    let on_day = |day0: i64| -> Vec<&Ev> {
-        let day1 = day_after(day0, 1);
-        events.iter().filter(|e| e.start < day1 && e.end > day0).collect()
-    };
     // the start view is the last one used (kept by the integration); an own start view set there wins when it
     // changes; applied once, so a view picked on the panel is never undone by its own echo
-    let own = crate::page_option(s, "calendar", "view").and_then(|v| v.as_i64()).filter(|v| (0..=4).contains(v));
-    let last = crate::page_option(s, "calendar", "last_view").and_then(|v| v.as_i64()).filter(|v| (0..=4).contains(v));
-    match START.with(|v| v.replace(Some(own))) {
+    let own = crate::pages::option_of(page, "view").and_then(|v| v.as_i64()).filter(|v| (0..=4).contains(v));
+    let last = crate::pages::option_of(page, "last_view").and_then(|v| v.as_i64()).filter(|v| (0..=4).contains(v));
+    let mut view = crate::pages::inst(&ui.get_cal_inst(), n).view;
+    match START.with(|v| v.borrow_mut().insert(n, own)) {
         None => {
-            ui.set_cal_view(own.or(last).unwrap_or(0) as i32);
-            SHIFT.with(|o| o.set(0));
+            view = own.or(last).unwrap_or(0) as i32;
+            set_shift(n, 0);
         }
         Some(prev) if prev != own => {
             if let Some(v) = own {
-                ui.set_cal_view(v as i32);
-                SHIFT.with(|o| o.set(0));
+                view = v as i32;
+                set_shift(n, 0);
             }
         }
         _ => {}
     }
-    let view = ui.get_cal_view();
+    crate::pages::with_inst(ui.get_cal_inst(), |m| ui.set_cal_inst(m), n, |d| {
+        if d.chip.as_str() != chip {
+            d.chip = chip.clone().into();
+        }
+        if let Some(m) = set_items(&d.cals, items) {
+            d.cals = m;
+        }
+        d.view = view;
+    });
+    let t = now();
+    let today = midnight(t);
+    let deleting = DELETING.with(|d| d.borrow().as_ref().map(|x| x.0.clone()));
+    let events: Vec<Ev> =
+        page_events(&entities).into_iter().filter(|e| on.get(e.cal).copied().unwrap_or(false) && deleting.as_deref() != Some(e.id().as_str())).collect();
+    let on_day = |day0: i64| -> Vec<&Ev> {
+        let day1 = day_after(day0, 1);
+        events.iter().filter(|e| e.start < day1 && e.end > day0).collect()
+    };
     // back / forward: days in the day view, weeks in the week and 3-day views, months in the month view
-    let shift = SHIFT.with(|o| o.get());
-    let year = local_format(t, "%Y");
-    ui.set_cal_wall_year(year.clone().into());
-    let leap = year.parse::<i64>().is_ok_and(|y| (y % 4 == 0 && y % 100 != 0) || y % 400 == 0);
-    ui.set_cal_desk_line(format!("DESK CALENDAR {year} · {} PAGES", if leap { 366 } else { 365 }).into());
+    let shift = shift_of(n);
     // the wall calendar's pen notes come in one by one: its cells follow them
-    if crate::page_looks(ui, "calendar").contains(&3) {
+    let wall_cells = (look == 3).then(|| {
         // the calendars written on the wall (daily routines would fill every cell): set in the integration, else all
-        let written: Option<Vec<usize>> = crate::page_option(s, "calendar", "wall_calendars")
-            .and_then(|v| v.as_array().cloned())
+        let written: Option<Vec<usize>> = crate::pages::option_of(page, "wall_calendars")
+            .and_then(Value::as_array)
             .map(|a| a.iter().filter_map(Value::as_str).filter_map(|id| entities.iter().position(|e| e == id)).collect());
-        wall(ui, &events, t, written.as_deref());
+        wall(n, &events, t, written.as_deref())
+    });
+    if let Some(rows) = wall_cells {
+        crate::pages::with_inst(ui.get_cal_inst(), |m| ui.set_cal_inst(m), n, |d| {
+            if let Some(m) = crate::pages::update_rows(&d.wall_cells, rows) {
+                d.wall_cells = m;
+            }
+        });
     }
     // New models rebuild the page: only when the events, the minute, the view, the shown calendars or the time
     // format changed.
-    thread_local!(static LAST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
     let key = events.iter().fold((t / 60) as u64 ^ ((view as u64) << 56) ^ ((shift as u64) << 40) ^ ((crate::clock::h24() as u64) << 63), |k, e| {
         k.wrapping_mul(31).wrapping_add(e.start as u64 ^ (e.end as u64).rotate_left(17) ^ e.title.len() as u64)
-    }) ^ c.names.iter().fold(0u64, |k, n| k.wrapping_mul(131).wrapping_add(n.len() as u64 ^ n.bytes().map(u64::from).sum::<u64>()))
+    }) ^ c.names.iter().fold(0u64, |k, nm| k.wrapping_mul(131).wrapping_add(nm.len() as u64 ^ nm.bytes().map(u64::from).sum::<u64>()))
         ^ (crate::clock::h24() as u64) << 62
-        ^ on.iter().fold(7u64, |k, &o| k.wrapping_mul(3).wrapping_add(o as u64)) << 20;
-    if LAST.with(|l| l.replace(key)) == key {
+        ^ on.iter().fold(7u64, |k, &o| k.wrapping_mul(3).wrapping_add(o as u64)) << 20
+        ^ (look as u64) << 8;
+    if LAST.with(|l| l.borrow_mut().insert(n, key)) == Some(key) {
         return;
     }
     // agenda: the next 14 days that have events
     let mut agenda = Vec::new();
-    for d in 0..14 {
-        let day0 = day_after(today, d);
-        let list: Vec<CalEvent> = on_day(day0).iter().filter(|e| d > 0 || e.end > t).map(|e| event(e, &c, day0, t)).collect();
-        if list.is_empty() && d > 0 {
+    for dd in 0..14 {
+        let day0 = day_after(today, dd);
+        let list: Vec<CalEvent> = on_day(day0).iter().filter(|e| dd > 0 || e.end > t).map(|e| event(e, &c, day0, t)).collect();
+        if list.is_empty() && dd > 0 {
             continue;
         }
         agenda.push(CalDay {
@@ -768,21 +848,12 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             events: ModelRc::new(VecModel::from(list)),
         });
     }
-    if agenda.len() <= 1 && agenda.first().is_some_and(|d| slint::Model::row_count(&d.events) == 0) {
-        ui.set_cal_empty_title(texts::kept("cal.empty.titles", 0).into());
-        ui.set_cal_empty_sub(texts::kept("cal.empty.subs", 0).into());
-    }
-    ui.set_cal_agenda(ModelRc::new(VecModel::from(agenda)));
     // day: today on a timeline
     let dayv = day_after(today, if view == 1 { shift } else { 0 });
     let mut timed: Vec<CalEvent> = on_day(dayv).iter().filter(|e| !e.all_day).map(|e| event(e, &c, dayv, t)).collect();
     lanes(&mut timed);
     let allday: Vec<CalEvent> = on_day(dayv).iter().filter(|e| e.all_day).map(|e| event(e, &c, dayv, t)).collect();
-    ui.set_cal_day_free(if timed.is_empty() && allday.is_empty() { texts::kept("cal.free", 0).into() } else { SharedString::new() });
-    ui.set_cal_day_events(ModelRc::new(VecModel::from(timed)));
-    ui.set_cal_day_allday(ModelRc::new(VecModel::from(allday)));
-    ui.set_cal_day_today(dayv == today);
-    ui.set_cal_now_min(((t - today) / 60) as i32);
+    let day_free: SharedString = if timed.is_empty() && allday.is_empty() { texts::kept("cal.free", 0).into() } else { SharedString::new() };
     // week: Monday to Sunday of this week; 3 days: today and the next two (back / forward three days at a time)
     let (col0, columns) = grid_days(today, weekday(t), view, shift);
     let monday = day_after(today, -weekday(t) + if view == 2 { 7 * shift } else { 0 });
@@ -790,12 +861,12 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     let mut week_allday = Vec::new();
     let mut nums = Vec::new();
     let mut wnames = Vec::new();
-    for d in 0..columns {
-        let day0 = day_after(col0, d);
+    for dd in 0..columns {
+        let day0 = day_after(col0, dd);
         nums.push(local_format(day0, "%-d").parse::<i32>().unwrap_or(0));
         wnames.push(SharedString::from(local_format(day0, "%a").to_uppercase()));
         let column = |mut ev: CalEvent| {
-            ev.day = d as i32;
+            ev.day = dd as i32;
             ev
         };
         let mut timed: Vec<CalEvent> = on_day(day0).iter().filter(|e| !e.all_day).map(|e| column(event(e, &c, day0, t))).collect();
@@ -803,20 +874,15 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         week_events.extend(timed);
         week_allday.extend(on_day(day0).iter().filter(|e| e.all_day).map(|e| column(event(e, &c, day0, t))));
     }
-    DAYS.with(|d| d.borrow_mut().insert("week", (0..columns).map(|k| day_after(col0, k)).collect()));
-    ui.set_cal_week_names(ModelRc::new(VecModel::from(wnames)));
-    ui.set_cal_week_nums(ModelRc::new(VecModel::from(nums)));
+    DAYS.with(|d| d.borrow_mut().insert((n, "week"), (0..columns).map(|k| day_after(col0, k)).collect()));
     let today_column = (today - col0 + 43200).div_euclid(86400);
-    ui.set_cal_week_today(if (0..columns).contains(&today_column) { today_column as i32 } else { -1 });
-    ui.set_cal_week_events(ModelRc::new(VecModel::from(week_events)));
-    ui.set_cal_week_allday(ModelRc::new(VecModel::from(week_allday)));
     // month: six weeks from the Monday on or before the first
     let months = local_format(t, "%Y").parse::<i64>().unwrap_or(2026) * 12 + local_format(t, "%m").parse::<i64>().unwrap_or(1) - 1
         + if view == 3 { shift } else { 0 };
     let first = date_epoch(&format!("{:04}-{:02}-01", months.div_euclid(12), months.rem_euclid(12) + 1)).unwrap_or(today);
     let grid0 = day_after(first, -weekday(first));
     let month = local_format(first, "%m");
-    DAYS.with(|d| d.borrow_mut().insert("month", (0..42).map(|k| day_after(grid0, k)).collect()));
+    DAYS.with(|d| d.borrow_mut().insert((n, "month"), (0..42).map(|k| day_after(grid0, k)).collect()));
     let cells: Vec<CalCell> = (0..42)
         .map(|k| {
             let day0 = day_after(grid0, k);
@@ -831,36 +897,32 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             }
         })
         .collect();
-    ui.set_cal_month_names(ModelRc::new(VecModel::from(
-        ["M", "T", "W", "T", "F", "S", "S"].iter().map(|d| SharedString::from(*d)).collect::<Vec<_>>(),
-    )));
-    ui.set_cal_month_cells(ModelRc::new(VecModel::from(cells)));
     // departure board: today's and the coming events, one row each (fields cut to their cells; the event field
     // gives a cell to the 12-hour time)
     let what_cells = if crate::clock::h24() { 16 } else { 15 };
-    let cell = |s: &str, n: usize| -> String { s.to_uppercase().chars().filter(|c| !c.is_control()).take(n).collect() };
+    let cell = |s: &str, k: usize| -> String { s.to_uppercase().chars().filter(|c| !c.is_control()).take(k).collect() };
     let mut board: Vec<CalBoard> = Vec::new();
     let mut board_ev: Vec<(CalEvent, String)> = Vec::new();
-    for d in 0..7 {
-        let day0 = day_after(today, d);
+    for dd in 0..7 {
+        let day0 = day_after(today, dd);
         for e in on_day(day0) {
             if board.len() >= 6 {
                 break;
             }
-            if e.start < day0 && d > 0 {
+            if e.start < day0 && dd > 0 {
                 continue;
             }
             let (status, state) = if e.end <= t {
                 ("DEPARTED".to_string(), 2)
             } else if e.start <= t {
                 ("BOARDING".to_string(), 1)
-            } else if d == 0 {
+            } else if dd == 0 {
                 ("ON TIME".to_string(), 0)
             } else {
                 (local_format(day0, "%a %-d").to_uppercase(), 3)
             };
             let ev = event(e, &c, day0, t);
-            board_ev.push((ev.clone(), format!("{} · {}", day_label(day0, today), ev.time)));
+            board_ev.push((ev.clone(), format!("{} \u{b7} {}", day_label(day0, today), ev.time)));
             board.push(CalBoard {
                 time: if e.all_day { "--:--".into() } else { board_hm(e.start).into() },
                 what: cell(&e.title, what_cells).into(),
@@ -870,26 +932,12 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             });
         }
     }
-    ROWS.with(|r| r.borrow_mut().insert("board", board_ev));
-    ui.set_cal_board_rows(ModelRc::new(VecModel::from(board)));
-    ui.set_cal_board_clock(board_hm(t).into());
-    ui.set_cal_board_date(local_format(t, "%a %-d %b").to_uppercase().into());
-    // the board's crawl: four lines (never shorter than its strip)
-    let crawl: Vec<String> = (0..4).map(|i| texts::kept("cal.board.tickers", i)).collect();
-    ui.set_cal_board_ticker(crawl.join("   \u{2022}   ").into());
-    ui.set_cal_board_empty(texts::kept("cal.board.empty", 0).into());
+    ROWS.with(|r| r.borrow_mut().insert((n, "board"), board_ev));
     // tear-off: today's page
     let todays: Vec<CalEvent> = on_day(today).iter().map(|e| event(e, &c, today, t)).collect();
-    let shown = todays.len().min(3);
-    ROWS.with(|r| r.borrow_mut().insert("tear", todays.iter().take(shown).map(|e| (e.clone(), format!("Today · {}", e.time))).collect()));
-    ui.set_cal_tear_month(local_format(t, "%B %Y").to_uppercase().into());
-    ui.set_cal_tear_day(local_format(t, "%-d").parse().unwrap_or(1));
-    ui.set_cal_tear_weekday(local_format(t, "%A").to_uppercase().into());
-    ui.set_cal_tear_sunday(weekday(t) == 6);
-    ui.set_cal_tear_info(format!("week {} · day {}", local_format(t, "%V").trim_start_matches('0'), local_format(t, "%j").trim_start_matches('0')).into());
-    ui.set_cal_tear_more(if todays.len() > shown { format!("+{} more", todays.len() - shown).into() } else { SharedString::new() });
-    ui.set_cal_tear_events(ModelRc::new(VecModel::from(todays.into_iter().take(shown).collect::<Vec<_>>())));
-    ui.set_cal_tear_line(texts::kept("cal.tear.lines", 0).into());
+    let shown_n = todays.len().min(3);
+    ROWS.with(|r| r.borrow_mut().insert((n, "tear"), todays.iter().take(shown_n).map(|e| (e.clone(), format!("Today \u{b7} {}", e.time))).collect()));
+    let tear_more: SharedString = if todays.len() > shown_n { format!("+{} more", todays.len() - shown_n).into() } else { SharedString::new() };
     let (title, sub) = match view {
         1 => (
             match shift {
@@ -907,22 +955,38 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
                 -1 => "Last week".into(),
                 _ => format!("Week {}", local_format(monday, "%V").trim_start_matches('0')),
             },
-            format!("{}–{} · week {}", local_format(monday, "%-d"), local_format(day_after(monday, 6), "%-d %B"), local_format(monday, "%V").trim_start_matches('0')),
+            format!("{}\u{2013}{} \u{b7} week {}", local_format(monday, "%-d"), local_format(day_after(monday, 6), "%-d %B"), local_format(monday, "%V").trim_start_matches('0')),
         ),
         4 => {
             let last = day_after(col0, columns - 1);
             let span = if local_format(col0, "%m") == local_format(last, "%m") {
-                format!("{}–{}", local_format(col0, "%-d"), local_format(last, "%-d %B"))
+                format!("{}\u{2013}{}", local_format(col0, "%-d"), local_format(last, "%-d %B"))
             } else {
-                format!("{} – {}", local_format(col0, "%-d %B"), local_format(last, "%-d %B"))
+                format!("{} \u{2013} {}", local_format(col0, "%-d %B"), local_format(last, "%-d %B"))
             };
-            (span, format!("{}–{} · week {}", local_format(col0, "%a"), local_format(last, "%a"), local_format(col0, "%V").trim_start_matches('0')))
+            (span, format!("{}\u{2013}{} \u{b7} week {}", local_format(col0, "%a"), local_format(last, "%a"), local_format(col0, "%V").trim_start_matches('0')))
         }
         3 => (local_format(first, "%B"), local_format(first, "%Y")),
         _ => ("Coming up".into(), local_format(t, "%A, %-d %B")),
     };
-    ui.set_cal_title(title.into());
-    ui.set_cal_sub(sub.into());
+    crate::pages::with_inst(ui.get_cal_inst(), |m| ui.set_cal_inst(m), n, |d| {
+        d.agenda = ModelRc::new(VecModel::from(agenda));
+        d.day_free = day_free;
+        d.day_events = ModelRc::new(VecModel::from(timed));
+        d.day_allday = ModelRc::new(VecModel::from(allday));
+        d.day_today = dayv == today;
+        d.week_names = ModelRc::new(VecModel::from(wnames));
+        d.week_nums = ModelRc::new(VecModel::from(nums));
+        d.week_today = if (0..columns).contains(&today_column) { today_column as i32 } else { -1 };
+        d.week_events = ModelRc::new(VecModel::from(week_events));
+        d.week_allday = ModelRc::new(VecModel::from(week_allday));
+        d.month_cells = ModelRc::new(VecModel::from(cells));
+        d.board_rows = ModelRc::new(VecModel::from(board));
+        d.tear_more = tear_more;
+        d.tear_events = ModelRc::new(VecModel::from(todays.into_iter().take(shown_n).collect::<Vec<_>>()));
+        d.title = title.into();
+        d.sub = sub.into();
+    });
 }
 
 /// The days of the plain look's time grid: the first day's midnight and how many columns. The week view shows
@@ -939,7 +1003,10 @@ fn grid_days(today: i64, today_weekday: i64, view: i32, shift: i64) -> (i64, i64
 fn days_list(s: &crate::UiState, day0: i64, days: i64, caps: bool, skip_empty: bool) -> Vec<CalDay> {
     let entities = crate::page_entities(s, "calendar");
     let c = cals(s, &entities);
-    let on = shown(s, &entities);
+    let n = crate::acting_n("calendar");
+    let page = crate::pages::kind_pages(s.panel_config.as_ref(), "calendar").get(n).map(|(_, p)| (*p).clone()).unwrap_or(Value::Null);
+    let on = shown(&page, &entities, n);
+    let all = page_events(&entities);
     let deleting = DELETING.with(|d| d.borrow().as_ref().map(|x| x.0.clone()));
     let t = now();
     let today = midnight(t);
@@ -947,13 +1014,11 @@ fn days_list(s: &crate::UiState, day0: i64, days: i64, caps: bool, skip_empty: b
     for k in 0..days {
         let d0 = day_after(day0, k);
         let d1 = day_after(d0, 1);
-        let list: Vec<CalEvent> = EVENTS.with(|e| {
-            e.borrow()
-                .iter()
-                .filter(|e| e.start < d1 && e.end > d0 && on.get(e.cal).copied().unwrap_or(false) && deleting.as_deref() != Some(e.id().as_str()))
-                .map(|e| event(e, &c, d0, t))
-                .collect()
-        });
+        let list: Vec<CalEvent> = all
+            .iter()
+            .filter(|e| e.start < d1 && e.end > d0 && on.get(e.cal).copied().unwrap_or(false) && deleting.as_deref() != Some(e.id().as_str()))
+            .map(|e| event(e, &c, d0, t))
+            .collect();
         if list.is_empty() && skip_empty {
             continue;
         }
@@ -1007,8 +1072,8 @@ fn edit_day_text(day0: i64) -> String {
 
 /// Edit: the details turn into the form (the same rows in every look; the times are the UI's drums).
 fn open_edit(ui: &AppWindow, s: &crate::UiState, id: &str) {
-    let Some(e) = EVENTS.with(|ev| ev.borrow().iter().find(|e| e.id() == id).cloned()) else { return };
     let entities = crate::page_entities(s, "calendar");
+    let Some(e) = page_events(&entities).into_iter().find(|e| e.id() == id) else { return };
     let c = cals(s, &entities);
     let features = c.features.get(e.cal).copied().unwrap_or(0);
     if features & CAN_UPDATE == 0 || e.uid.is_empty() {
@@ -1100,8 +1165,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         // the view (the plain look's picker): kept as the last used one, the start view after a restart
         "cal.view" => {
             let view: i32 = value.parse().unwrap_or(0).clamp(0, 4);
-            ui.set_cal_view(view);
-            SHIFT.with(|o| o.set(0));
+            let n = crate::acting_n("calendar");
+            crate::pages::with_inst(ui.get_cal_inst(), |m| ui.set_cal_inst(m), n, |d| d.view = view);
+            set_shift(n, 0);
             ui.set_cal_picker(false);
             ui.set_cal_settings(false);
             crate::page_set(ui, "calendar", None, json!({ "last_view": view }));
@@ -1110,7 +1176,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         // a new look closes the settings and opens them again as the new look's menu once the old one has left
         "cal.look" => {
             let look: i32 = value.parse().unwrap_or(0);
-            if crate::page_looks(ui, "calendar").first() == Some(&look) {
+            if crate::page_look("calendar") == look {
                 return;
             }
             ui.set_cal_settings(false);
@@ -1132,19 +1198,24 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         "cal.picker-close" => ui.set_cal_picker(false),
         // a calendar shown or hidden on the page (at least one stays on); the integration keeps the choice
         "cal.toggle" => {
-            let n: usize = value.parse().unwrap_or(usize::MAX);
-            with_state(|s| {
+            let k: usize = value.parse().unwrap_or(usize::MAX);
+            let at = crate::acting_n("calendar");
+            let hidden = with_state(|s| {
                 let entities = crate::page_entities(s, "calendar");
-                let mut on = shown(s, &entities);
-                if n >= on.len() || (on[n] && on.iter().filter(|&&x| x).count() <= 1) {
-                    return;
+                let page = crate::pages::kind_pages(s.panel_config.as_ref(), "calendar").get(at).map(|(_, p)| (*p).clone()).unwrap_or(Value::Null);
+                let mut on = shown(&page, &entities, at);
+                if k >= on.len() || (on[k] && on.iter().filter(|&&x| x).count() <= 1) {
+                    return None;
                 }
-                on[n] = !on[n];
+                on[k] = !on[k];
                 let hidden: Vec<String> = entities.iter().zip(&on).filter(|(_, &o)| !o).map(|(id, _)| id.clone()).collect();
-                HIDE_PENDING.with(|p| *p.borrow_mut() = Some(hidden.clone()));
-                crate::page_set(ui, "calendar", None, json!({ "hidden_calendars": hidden }));
-                refresh(ui, s);
+                HIDE_PENDING.with(|p| p.borrow_mut().insert(at, hidden.clone()));
+                Some(hidden)
             });
+            if let Some(hidden) = hidden {
+                crate::page_set(ui, "calendar", None, json!({ "hidden_calendars": hidden }));
+                with_state(|s| refresh(ui, s));
+            }
         }
         // a tap on a day (month grid, wall calendar, a week column or a narrow event there): that day's events in a list
         "cal.month-day" | "cal.wall-day" | "cal.week-day" => {
@@ -1153,8 +1224,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 "cal.wall-day" => "wall",
                 _ => "week",
             };
-            let n: usize = value.parse().unwrap_or(0);
-            if let Some(day0) = DAYS.with(|d| d.borrow().get(key).and_then(|v| v.get(n).copied())) {
+            let k: usize = value.parse().unwrap_or(0);
+            let at = crate::acting_n("calendar");
+            if let Some(day0) = DAYS.with(|d| d.borrow().get(&(at, key)).and_then(|v| v.get(k).copied())) {
                 with_state(|s| open_day(ui, s, day0));
             }
         }
@@ -1170,8 +1242,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         // a departure board row or a tear-off line: its details
         "cal.board" | "cal.tear" => {
             let key = if what == "cal.board" { "board" } else { "tear" };
-            let n: usize = value.parse().unwrap_or(0);
-            if let Some((ev, when)) = ROWS.with(|r| r.borrow().get(key).and_then(|v| v.get(n).cloned())) {
+            let k: usize = value.parse().unwrap_or(0);
+            let at = crate::acting_n("calendar");
+            if let Some((ev, when)) = ROWS.with(|r| r.borrow().get(&(at, key)).and_then(|v| v.get(k).cloned())) {
                 ui.set_cal_picker(false);
                 ui.set_cal_detail_ev(ev);
                 ui.set_cal_detail_when(when.into());
@@ -1186,12 +1259,13 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         "cal.settings-close" => ui.set_cal_settings(false),
         "cal.close-all" => close_all(ui),
         "cal.prev" | "cal.next" => {
-            SHIFT.with(|o| o.set(o.get() + if what == "cal.next" { 1 } else { -1 }));
+            let at = crate::acting_n("calendar");
+            set_shift(at, shift_of(at) + if what == "cal.next" { 1 } else { -1 });
             with_state(|s| refresh(ui, s));
         }
         // the page came on screen: the time grids show the period with today in it again
         "cal.shown" => {
-            if SHIFT.with(|o| o.replace(0)) != 0 {
+            if set_shift(crate::acting_n("calendar"), 0) != 0 {
                 with_state(|s| refresh(ui, s));
             }
         }
@@ -1324,6 +1398,37 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn ev(entity: &str, title: &str, start: i64) -> Ev {
+        Ev { title: title.into(), start, end: start + 3600, all_day: false, cal: 99, entity: entity.into(), note: String::new(), place: String::new(),
+            uid: format!("{title}-uid"), rid: String::new() }
+    }
+
+    #[test]
+    fn each_calendar_page_shows_its_own_calendars_in_its_own_colours() {
+        EVENTS.with(|e| *e.borrow_mut() = vec![ev("calendar.work", "Standup", 100), ev("calendar.home", "Dinner", 200), ev("calendar.club", "Match", 300)]);
+        // a page with the club and the home calendar: their events, coloured by their place on that page
+        let page = page_events(&["calendar.club".to_string(), "calendar.home".to_string()]);
+        let seen: Vec<(&str, usize)> = page.iter().map(|e| (e.title.as_str(), e.cal)).collect();
+        assert_eq!(seen, [("Dinner", 1), ("Match", 0)]);
+        // another page with the work calendar only
+        let other = page_events(&["calendar.work".to_string()]);
+        assert_eq!(other.iter().map(|e| e.title.as_str()).collect::<Vec<_>>(), ["Standup"]);
+        // an event keeps its id on every page (an edit or a delete finds it from any of them)
+        let both = page_events(&["calendar.home".to_string()]);
+        assert_eq!(both[0].id(), page[0].id());
+        EVENTS.with(|e| e.borrow_mut().clear());
+    }
+
+    #[test]
+    fn each_calendar_page_keeps_its_own_period() {
+        set_shift(0, 0);
+        set_shift(1, 2);
+        assert_eq!(shift_of(0), 0);
+        assert_eq!(shift_of(1), 2);
+        assert_eq!(set_shift(1, 0), 2);
+        assert_eq!(shift_of(7), 0);
+    }
 
     #[test]
     fn ranges_share_one_am_pm() {

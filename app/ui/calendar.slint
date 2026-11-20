@@ -562,6 +562,8 @@ export component CalendarPage inherits Rectangle {
 
     // ---------------------------------------------------------------- the look's menus
     CalMenus {
+        // (the details are shared by the kind's pages: only the page on screen shows them)
+        visible: root.on-screen;
         look: root.look; view: root.view; cals: root.cals; clock-cells: root.clock-cells; desk-line: root.desk-line;
         picker: root.picker; settings: root.settings;
         day-open: root.day-sheet; day-title: root.day-sheet-title; day-caps: root.day-sheet-caps; day-short: root.day-sheet-short; day-week: root.day-sheet-week;

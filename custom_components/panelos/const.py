@@ -50,9 +50,10 @@ DEFAULT_PANEL_ID = "nspanel-pro"
 TILE_DOMAINS = ("light", "switch", "cover", "fan", "input_boolean", "scene", "script", "sensor", "climate")
 
 # The panel's pages, in the order they are swiped: each a kind, its look
-# (variant), the entities it shows and its own switches. The same kind may
-# come more than once (several weather pages); the first page is the start
-# page. A page can be hidden: it keeps its settings here but is not sent.
+# (variant), the entities it shows and its own switches. Any kind may come any
+# number of times (ten music pages, each on its own player), each page with its
+# own settings; the first page is the start page. A page can be hidden: it keeps
+# its settings here but is not sent.
 CONF_PAGES = "pages"
 MAX_PAGES = 12
 # kind: (number of looks, entity domains, how many entities). "home" is the
@@ -65,7 +66,7 @@ PAGE_KINDS = {
     "music": (5, ("media_player",), 1),
     "timers": (5, (), 0),
     "thermostat": (4, ("climate",), 8),
-    "quick": (3, TILE_DOMAINS, 16),
+    "quick": (3, TILE_DOMAINS, 8),
     "camera": (1, ("camera",), 8),
     "calendar": (4, ("calendar",), 8),
     "todo": (5, ("todo",), 8),

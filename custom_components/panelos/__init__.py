@@ -75,7 +75,7 @@ from .house import House
 from .notes import Notes
 from .players import async_register_players_view
 from .sounds import async_register_views
-from .page import async_hide_page, async_setup_page, async_show_page, checked_page
+from .page import async_hide_page, async_setup_page, async_show_page, checked_page, split_quick_pages
 from .panel import Panel, alive, find_entry, link_gone, links, panel_config, voice_player
 
 type PanelOSConfigEntry = ConfigEntry[Panel]
@@ -275,13 +275,16 @@ def ws_report(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
         vol.Optional("panel_id", default=""): str,
         vol.Required("index"): vol.All(int, vol.Range(min=0, max=63)),
         vol.Optional("variant"): vol.All(int, vol.Range(min=0, max=15)),
+        # the page's entities (a music page's player picked on the panel), checked with the page
+        vol.Optional("entities"): vol.All([str], vol.Length(max=64)),
         # a weather page's widgets edited on the panel come as its "items" (a list, checked with the page)
         vol.Optional("options"): {str: vol.Any(None, bool, int, float, vol.All(str, vol.Length(max=200)), list)},
     }
 )
 @callback
 def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """A page's look or some of its options set on the panel itself (its page sheet); `index` counts the pages it shows."""
+    """A page's look, entities or some of its options set on the panel itself (its menus, on that page); `index`
+    counts the pages it shows, so each page of a kind is set apart."""
     panel = _loaded_panel(hass, msg["panel_id"])
     if panel is None:
         connection.send_error(msg["id"], "not_found", f"No PanelOS entry for the panel '{msg['panel_id']}'")
@@ -298,6 +301,8 @@ def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
     page = pages[shown[msg["index"]]]
     if "variant" in msg:
         page["variant"] = msg["variant"]
+    if "entities" in msg:
+        page["entities"] = list(msg["entities"])
     if "options" in msg:
         if any(not key.replace("_", "").isalpha() or len(key) > 32 for key in msg["options"]):
             connection.send_error(msg["id"], "invalid_format", "Option names are lower-case words")
@@ -489,6 +494,10 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: PanelOSConfigEntry) -> bool:
     """Set up one panel: its device and entities, and its settings."""
+    # a quick controls page takes eight tiles: more go on pages of their own
+    if (pages := split_quick_pages([dict(p) for p in {**entry.data, **entry.options}.get(CONF_PAGES, DEFAULT_PAGES)])) is not None:
+        _LOGGER.info("Quick controls pages with more than eight tiles split into pages of eight")
+        hass.config_entries.async_update_entry(entry, options={**entry.options, CONF_PAGES: pages})
     panel = Panel(hass, entry)
     await panel.async_load_pending()
     entry.runtime_data = panel

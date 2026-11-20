@@ -224,6 +224,42 @@ def checked_page(value: Any) -> dict[str, Any]:
     return _page(value)
 
 
+# A quick controls page's options that go with its tiles, one value per tile in the tiles' order.
+_TILE_LISTS = ("tapes", "group_starts", "group_names")
+
+
+def split_quick_pages(pages: list[dict[str, Any]], max_pages: int = MAX_PAGES) -> list[dict[str, Any]] | None:
+    """Quick controls pages with more tiles than a page takes, split into pages of their own right after them (each tile
+    keeps its label and group); None when no page has too many. The list never grows past `max_pages`: tiles that find
+    no room stay out."""
+    most = PAGE_KINDS["quick"][2]
+    if not any(p.get("kind") == "quick" and len(p.get("entities") or []) > most for p in pages):
+        return None
+    out: list[dict[str, Any]] = []
+    for i, page in enumerate(pages):
+        ents = list(page.get("entities") or [])
+        if page.get("kind") != "quick" or len(ents) <= most:
+            out.append(page)
+            continue
+        options = dict(page.get("options") or {})
+        lists = {key: options[key] for key in _TILE_LISTS if isinstance(options.get(key), list)}
+        for k in range(0, len(ents), most):
+            # room for this part: the pages still to come keep theirs
+            if k > 0 and len(out) + len(pages) - i > max_pages:
+                break
+            part = {**page, "entities": ents[k : k + most], "options": dict(options)}
+            for key, values in lists.items():
+                chunk = values[k : k + most]
+                if any(chunk):
+                    part["options"][key] = chunk
+                else:
+                    part["options"].pop(key, None)
+            if k > 0:
+                part["hidden"] = bool(page.get("hidden"))
+            out.append(part)
+    return out
+
+
 def _pages(pages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     if pages:
         pages[0]["hidden"] = False  # the start page is always shown

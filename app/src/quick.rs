@@ -201,14 +201,17 @@ pub fn picture(rel: &str) -> slint::Image {
     slint::Image::load_from_path(&path).unwrap_or_default()
 }
 
-/// The quick controls page from the states (only when the panel has one).
+/// The tiles a quick controls page shows at most (the integration takes no more; more go on a page of their own).
+pub const MAX_TILES: usize = 8;
+
+/// Every quick controls page from the states (only when the panel has one), each from its own entities and options.
 pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
-    let pages = ui.get_pages();
-    let Some(slot) = (0..pages.row_count()).filter_map(|i| pages.row_data(i)).find(|p| p.kind == "quick") else {
+    let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "quick").into_iter().map(|(_, p)| p.clone()).collect::<Vec<Value>>();
+    if pages.is_empty() {
+        // (a quick controls page that is not on the integration's list has no tiles)
+        crate::pages::keep_insts(&ui.get_quick_inst(), 0);
         return;
-    };
-    ui.set_quick_look(slot.variant);
-    ui.set_quick_title(texts::kept(if slot.variant == 2 { "quick.titles.deck" } else { "quick.titles" }, 0).into());
+    }
     // the deck's placard may name the panel's room (lines that need it wait until the panel knows its room)
     let room = crate::config_str(s, "room").to_uppercase();
     ui.set_quick_placard(texts::kept_if("quick.placard", 0, |l| !l.contains("{ROOM}") || !room.is_empty()).replace("{ROOM}", &room).into());
@@ -229,18 +232,63 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         ui.set_quick_lamp_amber(picture("quick/lamp-amber.png"));
         ui.set_quick_screw(picture("quick/screw.png"));
     }
-    let entities = crate::page_entities(s, "quick");
+    // the desk's settings menu: "SETTINGS" on the same tape
+    if crate::page_looks(ui, "quick").contains(&1) && crate::draw::AVAILABLE && ui.get_quick_settings_tape().size().width == 0 {
+        let job = crate::draw::Job::DeskTape { text: "SETTINGS".into(), tint: crate::draw::Tint::Blue, seed: crate::draw::seed("SETTINGS"), width: 140 };
+        ui.set_quick_settings_tape(crate::draw::get(job));
+    }
+    for (n, page) in pages.iter().enumerate() {
+        let data = page_data(s, page, &room);
+        crate::pages::with_inst(ui.get_quick_inst(), |m| ui.set_quick_inst(m), n, |d| {
+            let QuickData { list, title, mood, groups, deck } = data;
+            if d.title.as_str() != title {
+                d.title = title.into();
+            }
+            if d.mood.as_str() != mood {
+                d.mood = mood.into();
+            }
+            if let Some(m) = crate::pages::update_rows(&d.tiles, list) {
+                d.tiles = m;
+            }
+            if let Some(groups) = groups {
+                if !same_rows(&d.groups, &groups) {
+                    d.groups = ModelRc::new(VecModel::from(groups));
+                }
+            }
+            if let Some(deck) = deck {
+                d.deck_panel = deck;
+            }
+        });
+    }
+    crate::pages::keep_insts(&ui.get_quick_inst(), pages.len());
+    if ui.get_quick_sheet() {
+        details(ui, s, ui.get_quick_sheet_index().max(0) as usize);
+    }
+}
+
+/// What one quick controls page shows: its tiles, title, line under the tiles, the deck's group frames (None: not the
+/// flight deck) and the deck's plate when it needs another one.
+struct QuickData {
+    list: Vec<QuickTile>,
+    title: String,
+    mood: String,
+    groups: Option<Vec<QuickGroup>>,
+    deck: Option<slint::Image>,
+}
+
+/// One quick controls page from its own entities, look and options.
+fn page_data(s: &crate::UiState, page: &Value, room: &str) -> QuickData {
+    let look = crate::pages::variant_of(page);
+    let option = |k: &str| crate::pages::option_of(page, k);
+    let entities: Vec<String> = crate::pages::entities_of(page).into_iter().take(MAX_TILES).collect();
     let mut list = tiles(&s.states, &entities, crate::accent(s));
     // the flight deck's plate: its finger wear under the levers' places (they are centred by their number)
-    let n = list.len().clamp(1, 8);
-    if DECK_N.with(|d| d.replace(n)) != n {
-        ui.set_quick_deck_panel(picture(&format!("quick/deck-panel-{n}.png")));
-    }
+    let levers = list.len().clamp(1, 8);
+    let deck = (look == 2).then(|| DECKS.with(|d| d.borrow_mut().entry(levers).or_insert_with(|| picture(&format!("quick/deck-panel-{levers}.png"))).clone()));
     // the mixing desk: a tiny label tape under each fader, as wide as its strip (the integration's label, else the
     // name without the room), coloured by kind; the flight deck's plates show the same short text
-    let looks = crate::page_looks(ui, "quick");
-    if looks.contains(&1) || looks.contains(&2) {
-        let own = crate::page_option(s, "quick", "tapes").and_then(|v| v.as_array().cloned()).unwrap_or_default();
+    if look == 1 || look == 2 {
+        let own = option("tapes").and_then(Value::as_array).cloned().unwrap_or_default();
         let width = tape_width(list.len());
         for (i, (t, id)) in list.iter_mut().zip(&entities).enumerate() {
             let text = own
@@ -248,54 +296,41 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
                 .and_then(|v| v.as_str())
                 .map(str::to_string)
                 .filter(|v| !v.is_empty())
-                .unwrap_or_else(|| short_name(&t.name, &room));
+                .unwrap_or_else(|| short_name(&t.name, room));
             let tint = match id.split('.').next().unwrap_or("") {
                 "climate" | "fan" | "water_heater" => crate::draw::Tint::Green,
                 "media_player" => crate::draw::Tint::Red,
                 _ => crate::draw::Tint::Blue,
             };
             t.label = text.clone().into();
-            if looks.contains(&1) && crate::draw::AVAILABLE {
+            if look == 1 && crate::draw::AVAILABLE {
                 let seed = crate::draw::seed(id);
                 t.tape = crate::draw::get(crate::draw::Job::DeskTape { text, tint, seed, width });
                 t.has_tape = t.tape.size().width > 0;
             }
         }
-        // the desk's settings menu: "SETTINGS" on the same tape
-        if looks.contains(&1) && crate::draw::AVAILABLE && ui.get_quick_settings_tape().size().width == 0 {
-            let job = crate::draw::Job::DeskTape { text: "SETTINGS".into(), tint: crate::draw::Tint::Blue, seed: crate::draw::seed("SETTINGS"), width: 140 };
-            ui.set_quick_settings_tape(crate::draw::get(job));
-        }
     }
     // the flight deck's painted group frames
-    if looks.contains(&2) {
-        let mode = crate::page_option(s, "quick", "groups").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-        let starts: Vec<bool> = crate::page_option(s, "quick", "group_starts")
-            .and_then(|v| v.as_array().map(|a| a.iter().map(|x| x.as_bool().unwrap_or(false)).collect()))
-            .unwrap_or_default();
-        let names: Vec<String> = crate::page_option(s, "quick", "group_names")
-            .and_then(|v| v.as_array().map(|a| a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect()))
-            .unwrap_or_default();
+    let groups = (look == 2).then(|| {
+        let mode = option("groups").and_then(Value::as_str).unwrap_or_default().to_string();
+        let starts: Vec<bool> =
+            option("group_starts").and_then(Value::as_array).map(|a| a.iter().map(|x| x.as_bool().unwrap_or(false)).collect()).unwrap_or_default();
+        let names: Vec<String> =
+            option("group_names").and_then(Value::as_array).map(|a| a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect()).unwrap_or_default();
         let domains: Vec<&str> = entities.iter().map(|id| id.split('.').next().unwrap_or("")).collect();
         // groups off: one frame with the panel's room, or a line for a panel that does not know where it is
-        let one = if room.is_empty() { texts::kept("quick.lost.group", 0) } else { room.clone() };
-        let groups: Vec<QuickGroup> = frames(&groupings(&domains, &mode, &starts, &names, &one))
+        let one = if room.is_empty() { texts::kept("quick.lost.group", 0) } else { room.to_string() };
+        frames(&groupings(&domains, &mode, &starts, &names, &one))
             .into_iter()
             .map(|f| QuickGroup { row: f.row as i32, start: f.start as i32, count: f.count as i32, name: f.name.into() })
-            .collect();
-        if !same_rows(&ui.get_quick_groups(), &groups) {
-            ui.set_quick_groups(ModelRc::new(VecModel::from(groups)));
-        }
-    }
-    let mood = mood(&list);
-    if ui.get_quick_mood().as_str() != mood {
-        ui.set_quick_mood(mood.into());
-    }
-    if let Some(m) = crate::pages::update_rows(&ui.get_quick_tiles(), list) {
-        ui.set_quick_tiles(m);
-    }
-    if ui.get_quick_sheet() {
-        details(ui, s, ui.get_quick_sheet_index().max(0) as usize);
+            .collect()
+    });
+    QuickData {
+        title: texts::kept(if look == 2 { "quick.titles.deck" } else { "quick.titles" }, 0),
+        mood: mood(&list),
+        list,
+        groups,
+        deck,
     }
 }
 
@@ -325,8 +360,8 @@ thread_local! {
     static LAMPS: RefCell<Lamps> = RefCell::new(Lamps::default());
     /// The effects of the light whose details are open (Home Assistant's own names).
     static EFFECTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
-    /// The number of levers the deck's plate was drawn for.
-    static DECK_N: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    /// The deck's plates, by the number of levers (loaded once each).
+    static DECKS: RefCell<HashMap<usize, slint::Image>> = RefCell::new(HashMap::new());
 }
 
 /// A control's label when none is set in the integration: its whole name, without the panel's room in front
@@ -601,7 +636,7 @@ fn nearest_colour(rgb: [u8; 3]) -> Option<usize> {
 
 /// The details of control `i`: what it can do (its tile from the page, with its label and tape).
 pub fn details(ui: &AppWindow, s: &crate::UiState, i: usize) {
-    let Some(tile) = ui.get_quick_tiles().row_data(i) else { return };
+    let Some(tile) = crate::pages::inst(&ui.get_quick_inst(), crate::acting_n("quick")).tiles.row_data(i) else { return };
     let entities = crate::page_entities(s, "quick");
     let Some(id) = entities.get(i) else { return };
     let domain = id.split('.').next().unwrap_or("");
@@ -640,7 +675,7 @@ pub fn details(ui: &AppWindow, s: &crate::UiState, i: usize) {
         .and_then(Value::as_array)
         .map(|l| l.iter().filter_map(Value::as_str).map(str::to_string).collect())
         .unwrap_or_default();
-    let caps = ui.get_quick_look() == 2;
+    let caps = crate::page_look("quick") == 2;
     let effects: Vec<SharedString> = raw
         .iter()
         .map(|e| {

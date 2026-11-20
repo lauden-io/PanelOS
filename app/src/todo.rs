@@ -5,6 +5,7 @@
 //! the list). The chip's list picker and the page settings are the look's own
 //! menus (spec 40).
 
+use std::collections::HashMap;
 use std::io::Read;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -27,7 +28,8 @@ struct Item {
 }
 
 thread_local! {
-    static ITEMS: std::cell::RefCell<Vec<Item>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Each list's items as Home Assistant sent them last (the lists the to-do pages show).
+    static ITEMS: std::cell::RefCell<HashMap<String, Vec<Item>>> = std::cell::RefCell::new(HashMap::new());
     /// The third due date chip: days from today.
     static DUE_DAYS: std::cell::Cell<u32> = const { std::cell::Cell::new(2) };
     /// Items just ticked on the panel: they stay in the open list (ticked and struck through for 1.5 s, then folding
@@ -52,8 +54,8 @@ const ADDED_MS: u64 = 15_000;
 
 thread_local! {
     static ADDED: std::cell::RefCell<Vec<Added>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The list shown takes `todo/item/move` (Home Assistant's MOVE_TODO_ITEM feature).
-    static CAN_MOVE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// The lists that take `todo/item/move` (Home Assistant's MOVE_TODO_ITEM feature).
+    static CAN_MOVE: std::cell::RefCell<HashMap<String, bool>> = std::cell::RefCell::new(HashMap::new());
     /// A look change from the settings: the menu closes, the look changes, its menu opens again (counts the changes,
     /// so a later one wins).
     static LOOK_TURN: std::cell::Cell<u32> = const { std::cell::Cell::new(0) };
@@ -115,17 +117,31 @@ fn place_added(list: &str, items: &mut Vec<Item>, added: &mut Vec<Added>, can_mo
 }
 
 thread_local! {
-    /// The keys of the last update of a list, and the items first seen in a later update with when (spec 25.D3-D5: the
+    /// Each list's keys at its last update, and the items first seen in a later update with when (spec 25.D3-D5: the
     /// looks that print or write a new item in; not on the first read of a list).
-    static SEEN: std::cell::RefCell<(String, Vec<String>, Vec<(String, Instant)>)> = const { std::cell::RefCell::new((String::new(), Vec::new(), Vec::new())) };
+    static SEEN: std::cell::RefCell<HashMap<String, (Vec<String>, Vec<(String, Instant)>)>> = std::cell::RefCell::new(HashMap::new());
+    /// Each list's count of open items as Home Assistant's state says (a change reads the list again).
+    static OPEN: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
 }
 const FRESH_MS: u64 = 900;
 
 fn item_key(i: &Item) -> String {
     if i.uid.is_empty() { i.summary.clone() } else { i.uid.clone() }
 }
-/// The list to read, and a request to read it now.
-static WANTED: Mutex<(String, bool)> = Mutex::new((String::new(), false));
+/// The lists to read (the one each to-do page shows), and the ones to read now.
+static WANTED: Mutex<(Vec<String>, Vec<String>)> = Mutex::new((Vec::new(), Vec::new()));
+
+/// A list read again now.
+fn read_now(list: &str) {
+    let mut w = WANTED.lock().unwrap();
+    if !w.1.iter().any(|l| l == list) {
+        w.1.push(list.to_string());
+    }
+}
+
+fn can_move(list: &str) -> bool {
+    CAN_MOVE.with(|c| c.borrow().get(list).copied().unwrap_or(false))
+}
 static STARTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 fn ensure_started(ui: &AppWindow, s: &crate::UiState) {
@@ -138,40 +154,40 @@ fn ensure_started(ui: &AppWindow, s: &crate::UiState) {
     };
     let weak = ui.as_weak();
     std::thread::spawn(move || {
-        let mut last = String::new();
-        let mut next = Instant::now();
+        // when each list is read next (every minute; at once when it is new or asked for)
+        let mut next: HashMap<String, Instant> = HashMap::new();
         loop {
-            let (list, now_please) = {
+            let (lists, now_please) = {
                 let mut w = WANTED.lock().unwrap();
-                let r = w.clone();
-                w.1 = false;
-                r
+                (w.0.clone(), std::mem::take(&mut w.1))
             };
-            if !list.is_empty() && (list != last || now_please || Instant::now() >= next) {
-                last = list.clone();
-                next = Instant::now() + Duration::from_secs(60);
+            next.retain(|l, _| lists.contains(l));
+            for list in lists {
+                if !now_please.contains(&list) && next.get(&list).is_some_and(|t| Instant::now() < *t) {
+                    continue;
+                }
+                next.insert(list.clone(), Instant::now() + Duration::from_secs(60));
                 if let Some(items) = fetch(&url, &auth, &list) {
                     let weak = weak.clone();
                     let _ = slint::invoke_from_event_loop(move || {
                         // a new item from the panel goes to the top of the list (C-550): without "previous_uid",
                         // Home Assistant moves it first
                         let mut items = items;
-                        let can_move = CAN_MOVE.with(|c| c.get());
-                        let (moves, found, again) = ADDED.with(|a| place_added(&list, &mut items, &mut a.borrow_mut(), can_move, Instant::now()));
+                        let (moves, found, again) = ADDED.with(|a| place_added(&list, &mut items, &mut a.borrow_mut(), can_move(&list), Instant::now()));
                         // an added item with its id from Home Assistant is not a new one again (it played its entrance)
                         SEEN.with(|seen| {
-                            let mut seen = seen.borrow_mut();
-                            if seen.0 == list {
-                                seen.1.extend(found);
+                            if let Some(seen) = seen.borrow_mut().get_mut(&list) {
+                                seen.0.extend(found);
                             }
                         });
                         for (l, uid) in moves {
                             crate::send_raw(json!({ "type": "todo/item/move", "entity_id": l, "uid": uid }));
                         }
                         if again {
-                            slint::Timer::single_shot(Duration::from_millis(1200), || WANTED.lock().unwrap().1 = true);
+                            let list = list.clone();
+                            slint::Timer::single_shot(Duration::from_millis(1200), move || read_now(&list));
                         }
-                        ITEMS.with(|i| *i.borrow_mut() = items);
+                        ITEMS.with(|i| i.borrow_mut().insert(list, items));
                         if let Some(ui) = weak.upgrade() {
                             with_state(|s| refresh(&ui, s));
                         }
@@ -260,134 +276,91 @@ fn row(i: &Item) -> TodoItem {
 /// The label tapes' colours, one per list in turn.
 const TAPE_TINTS: [Tint; 4] = [Tint::Red, Tint::Blue, Tint::Green, Tint::Black];
 
-/// The to-do page (only when the panel has one).
-pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
-    let pages = ui.get_pages();
-    let Some(slot) = (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i)).find(|p| p.kind == "todo")
-    else {
-        return;
-    };
-    let entities = crate::page_entities(s, "todo");
+/// The list a to-do page shows: its pick among the page's lists (the first one until one is picked).
+fn shown_list(entities: &[String], sel: i32) -> Option<(usize, String)> {
     if entities.is_empty() {
-        return;
+        return None;
     }
-    // the label maker and the notepad need pictures drawn by the app (GPU build); otherwise the plain look
-    let look = if !draw::AVAILABLE && slot.variant >= 3 { 0 } else { slot.variant };
-    ui.set_todo_look(look);
-    let sel = (ui.get_todo_sel().max(0) as usize).min(entities.len() - 1);
-    {
-        let mut w = WANTED.lock().unwrap();
-        // A changed count of open items in HA: read the list again.
-        let open: String = s.states.get(&entities[sel]).map(|e| e.state.clone()).unwrap_or_default();
-        thread_local!(static OPEN: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
-        if OPEN.with(|o| o.replace(open.clone())) != open {
-            w.1 = true;
-        }
-        w.0 = entities[sel].clone();
-    }
-    // the list takes due dates (Home Assistant's "set due date" feature, 16, or date and time, 32)
-    let features = s.states.get(&entities[sel]).and_then(|e| e.attrs.get("supported_features")).and_then(Value::as_u64).unwrap_or(0);
-    ui.set_todo_can_due(features & (16 | 32) != 0);
-    // descriptions on items (SET_DESCRIPTION_ON_ITEM)
-    ui.set_todo_can_note(features & 64 != 0);
-    // items can be moved (MOVE_TODO_ITEM): a new one goes to the top
-    CAN_MOVE.with(|c| c.set(features & 8 != 0));
-    ensure_started(ui, s);
-    let looks = crate::page_looks(ui, "todo");
-    let (tapes, hands) = (draw::AVAILABLE && looks.contains(&3), draw::AVAILABLE && looks.contains(&4));
-    let lists: Vec<TodoList> = entities
+    let sel = (sel.max(0) as usize).min(entities.len() - 1);
+    Some((sel, entities[sel].clone()))
+}
+
+/// Every to-do page (only when the panel has one), each with its own lists and the one it shows.
+pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
+    let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "todo").into_iter().map(|(_, p)| p.clone()).collect::<Vec<_>>();
+    // the list each page shows: read (and read again when Home Assistant's count of its open items changes)
+    let shows: Vec<Option<(usize, String)>> = pages
         .iter()
         .enumerate()
-        .map(|(i, id)| {
-            let st = s.states.get(id);
-            let name: String = st.and_then(|e| e.attrs.get("friendly_name")).and_then(Value::as_str).unwrap_or(id).to_string();
-            let open: i32 = st.and_then(|e| e.state.parse().ok()).unwrap_or(0);
-            let tint = (i % 4) as i32;
-            // the label maker's menu: the name on tapes in the list's colour (the shown one marked and rimmed), what is
-            // left on a small white tape
-            let (tape, count_tape) = if tapes {
-                let shown = i == sel;
-                let text = if shown { format!("\u{25B6} {name}") } else { name.clone() };
-                (
-                    draw::get(Job::TapeLabel { text, tint: TAPE_TINTS[i % 4], small: false, seed: draw::seed(&name), max_w: 220, rim: shown }),
-                    draw::get(Job::Tape { text: open.to_string(), tint: Tint::White, small: true, seed: draw::seed(&name).wrapping_add(7) }),
-                )
-            } else {
-                Default::default()
-            };
-            TodoList {
-                name: name.into(),
-                icon: icons::glyph(if id.contains("shopping") { "cart-outline" } else { "format-list-checks" })
-                    .map(String::from)
-                    .unwrap_or_default()
-                    .into(),
-                open,
-                tint,
-                tape,
-                count_tape,
-            }
+        .map(|(n, p)| shown_list(&crate::pages::entities_of(p), crate::pages::inst(&ui.get_todo_inst(), n).sel))
+        .collect();
+    let mut lists: Vec<String> = Vec::new();
+    for (_, list) in shows.iter().flatten() {
+        if !lists.contains(list) {
+            lists.push(list.clone());
+        }
+    }
+    {
+        let open_changed: Vec<String> = lists
+            .iter()
+            .filter(|l| {
+                let open: String = s.states.get(*l).map(|e| e.state.clone()).unwrap_or_default();
+                OPEN.with(|o| o.borrow_mut().insert((*l).clone(), open.clone())).is_some_and(|before| before != open)
+            })
+            .cloned()
+            .collect();
+        WANTED.lock().unwrap().0 = lists.clone();
+        for l in open_changed {
+            read_now(&l);
+        }
+    }
+    if lists.is_empty() {
+        crate::pages::keep_insts(&ui.get_todo_inst(), pages.len());
+        return;
+    }
+    let features = |list: &str| s.states.get(list).and_then(|e| e.attrs.get("supported_features")).and_then(Value::as_u64).unwrap_or(0);
+    // items can be moved (MOVE_TODO_ITEM): a new one goes to the top
+    CAN_MOVE.with(|c| {
+        let mut c = c.borrow_mut();
+        for l in &lists {
+            c.insert(l.clone(), features(l) & 8 != 0);
+        }
+    });
+    // the adding form is the page on screen's: its list takes due dates (Home Assistant's "set due date" feature, 16,
+    // or date and time, 32) and descriptions on items (SET_DESCRIPTION_ON_ITEM)
+    let acting = crate::acting_n("todo");
+    if let Some(Some((_, list))) = shows.get(acting) {
+        ui.set_todo_can_due(features(list) & (16 | 32) != 0);
+        ui.set_todo_can_note(features(list) & 64 != 0);
+    }
+    ensure_started(ui, s);
+    // the items first seen in this update of each list (once per list, whichever pages show it)
+    let fresh: HashMap<String, Vec<String>> = lists
+        .iter()
+        .map(|list| {
+            let keys: Vec<String> = ITEMS.with(|i| i.borrow().get(list).map(|v| v.iter().map(item_key).collect()).unwrap_or_default());
+            let fresh = SEEN.with(|seen| {
+                let mut seen = seen.borrow_mut();
+                let entry = seen.entry(list.clone()).or_default();
+                if !entry.0.is_empty() {
+                    for k in &keys {
+                        if !entry.0.contains(k) && !entry.1.iter().any(|(f, _)| f == k) {
+                            entry.1.push((k.clone(), Instant::now()));
+                        }
+                    }
+                }
+                entry.0 = keys;
+                entry.1.retain(|(_, t)| t.elapsed() < Duration::from_millis(FRESH_MS));
+                entry.1.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>()
+            });
+            (list.clone(), fresh)
         })
         .collect();
-    let name = lists.get(sel).map(|l| l.name.to_string()).unwrap_or_default();
-    if let Some(m) = crate::pages::update_rows(&ui.get_todo_lists(), lists) {
-        ui.set_todo_lists(m);
-    }
-    ui.set_todo_sel(sel as i32);
-    let items = ITEMS.with(|i| i.borrow().clone());
-    let show_done = ui.get_todo_show_done();
-    // the label maker's tapes and the notepad's lines (completed ones only while they are unfolded)
-    let tint = TAPE_TINTS[sel % 4];
-    let drawn = |i: &Item, done_part: bool| -> TodoItem {
-        let mut r = row(i);
-        if done_part && !show_done {
-            return r;
-        }
-        let (due_text, due_state) = due(&i.due);
-        let struck = done_part || i.done;
-        let seed = draw::seed(&i.summary);
-        if tapes {
-            r.tape = draw::get(Job::TapeItem { text: i.summary.clone(), tint, seed, due: due_text.clone(), due_state, note: i.note.clone(), struck });
-        }
-        if hands {
-            r.hand = draw::get(Job::HandItem { text: i.summary.clone(), seed, due: due_text, due_state, note: i.note.clone(), ticked: struck, faded: done_part });
-        }
-        r
-    };
     let leaving: Vec<String> = LEAVING.with(|l| {
         let mut l = l.borrow_mut();
         l.retain(|(_, t)| t.elapsed() < Duration::from_millis(LEAVE_MS));
         l.iter().map(|(k, _)| k.clone()).collect()
     });
-    let stays = |i: &&Item| i.done && leaving.contains(&item_key(i));
-    let list_id = entities[sel].clone();
-    let fresh: Vec<String> = SEEN.with(|seen| {
-        let mut seen = seen.borrow_mut();
-        let keys: Vec<String> = items.iter().map(item_key).collect();
-        if seen.0 == list_id && !seen.1.is_empty() {
-            for k in &keys {
-                if !seen.1.contains(k) && !seen.2.iter().any(|(f, _)| f == k) {
-                    seen.2.push((k.clone(), Instant::now()));
-                }
-            }
-        } else {
-            seen.2.clear();
-        }
-        seen.0 = list_id.clone();
-        seen.1 = keys;
-        seen.2.retain(|(_, t)| t.elapsed() < Duration::from_millis(FRESH_MS));
-        seen.2.iter().map(|(k, _)| k.clone()).collect()
-    });
-    let open: Vec<TodoItem> = items
-        .iter()
-        .filter(|i| !i.done || stays(i))
-        .map(|i| {
-            let mut r = drawn(i, false);
-            r.fresh = fresh.contains(&item_key(i));
-            r
-        })
-        .collect();
-    let done: Vec<TodoItem> = items.iter().filter(|i| i.done && !stays(i)).map(|i| drawn(i, true)).collect();
-    ui.set_todo_leaving(items.iter().filter(|i| stays(i)).count() as i32);
     // the receipt and terminal looks' own lines and the receipt's stamp
     ui.set_todo_receipt_footer(texts::kept("todo.receipt.footers", 0).into());
     ui.set_todo_receipt_empty(texts::kept("todo.receipt.empty", 0).into());
@@ -395,11 +368,8 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     ui.set_todo_stamp(format!("{} {}", local_format(now(), "%d.%m.%Y"), local_hm(now())).into());
     // the receipt's menus: "19 NOV 2026  14:28"
     ui.set_todo_menu_stamp(format!("{}  {}", local_format(now(), "%d %b %Y").to_uppercase(), local_hm(now())).into());
-    if open.is_empty() {
-        ui.set_todo_empty_title(texts::kept("todo.empty.titles", 0).into());
-        ui.set_todo_empty_sub(texts::kept("todo.empty.subs", 0).into());
-    }
-    let n_open = open.iter().filter(|i| !i.done).count();
+    ui.set_todo_empty_title(texts::kept("todo.empty.titles", 0).into());
+    ui.set_todo_empty_sub(texts::kept("todo.empty.subs", 0).into());
     if draw::AVAILABLE {
         // the label maker's menus: the heads, labels and Done on the same tapes (drawn ahead, so a change to that look
         // opens its settings with them)
@@ -416,31 +386,129 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         if let Some(m) = crate::pages::update_rows(&ui.get_todo_menu_tapes(), menu) {
             ui.set_todo_menu_tapes(m);
         }
-    }
-    if tapes {
-        let count = if n_open == 0 { "ALL CLEAR".to_string() } else { format!("{n_open} TO DO") };
-        ui.set_todo_label_head(draw::get(Job::TapeHead { name: name.clone(), count, seed: draw::seed(&name) }));
-        ui.set_todo_label_done_head(draw::get(Job::Tape { text: format!("DONE · {}", done.len()), tint: Tint::Black, small: true, seed: 77 + done.len() as u32 }));
-        if n_open == 0 {
-            let text = texts::kept("todo.label.empty", 0);
-            ui.set_todo_label_empty_tape(draw::get(Job::Tape { text, tint, small: false, seed: 4242 }));
-        }
-    }
-    if hands {
-        let count = if n_open == 0 { "all done".to_string() } else { format!("{n_open} left") };
-        ui.set_todo_note_head(draw::get(Job::HandHead { title: name.clone(), count, seed: draw::seed(&name) }));
-        ui.set_todo_note_done(draw::get(Job::HandDone { n: done.len(), open: show_done }));
-        if n_open == 0 {
+        if crate::page_looks(ui, "todo").contains(&4) {
             let (title, sub) = (ui.get_todo_empty_title().to_string(), ui.get_todo_empty_sub().to_string());
             ui.set_todo_note_empty(draw::get(Job::HandEmpty { title, sub }));
         }
     }
-    if let Some(m) = crate::pages::update_rows(&ui.get_todo_open(), open) {
-        ui.set_todo_open(m);
+    for (n, page) in pages.iter().enumerate() {
+        let entities = crate::pages::entities_of(page);
+        let Some(Some((sel, list_id))) = shows.get(n).cloned() else { continue };
+        // the label maker and the notepad need pictures drawn by the app (GPU build); otherwise the plain look
+        let look = crate::pages::variant_of(page);
+        let (tapes, hands) = (draw::AVAILABLE && look == 3, draw::AVAILABLE && look == 4);
+        let show_done = crate::pages::inst(&ui.get_todo_inst(), n).show_done;
+        let lists: Vec<TodoList> = entities
+            .iter()
+            .enumerate()
+            .map(|(i, id)| {
+                let st = s.states.get(id);
+                let name: String = st.and_then(|e| e.attrs.get("friendly_name")).and_then(Value::as_str).unwrap_or(id).to_string();
+                let open: i32 = st.and_then(|e| e.state.parse().ok()).unwrap_or(0);
+                let tint = (i % 4) as i32;
+                // the label maker's menu: the name on tapes in the list's colour (the shown one marked and rimmed), what is
+                // left on a small white tape
+                let (tape, count_tape) = if tapes {
+                    let shown = i == sel;
+                    let text = if shown { format!("\u{25B6} {name}") } else { name.clone() };
+                    (
+                        draw::get(Job::TapeLabel { text, tint: TAPE_TINTS[i % 4], small: false, seed: draw::seed(&name), max_w: 220, rim: shown }),
+                        draw::get(Job::Tape { text: open.to_string(), tint: Tint::White, small: true, seed: draw::seed(&name).wrapping_add(7) }),
+                    )
+                } else {
+                    Default::default()
+                };
+                TodoList {
+                    name: name.into(),
+                    icon: icons::glyph(if id.contains("shopping") { "cart-outline" } else { "format-list-checks" })
+                        .map(String::from)
+                        .unwrap_or_default()
+                        .into(),
+                    open,
+                    tint,
+                    tape,
+                    count_tape,
+                }
+            })
+            .collect();
+        let name = lists.get(sel).map(|l| l.name.to_string()).unwrap_or_default();
+        let items = ITEMS.with(|i| i.borrow().get(&list_id).cloned().unwrap_or_default());
+        // the label maker's tapes and the notepad's lines (completed ones only while they are unfolded)
+        let tint = TAPE_TINTS[sel % 4];
+        let drawn = |i: &Item, done_part: bool| -> TodoItem {
+            let mut r = row(i);
+            if done_part && !show_done {
+                return r;
+            }
+            let (due_text, due_state) = due(&i.due);
+            let struck = done_part || i.done;
+            let seed = draw::seed(&i.summary);
+            if tapes {
+                r.tape = draw::get(Job::TapeItem { text: i.summary.clone(), tint, seed, due: due_text.clone(), due_state, note: i.note.clone(), struck });
+            }
+            if hands {
+                r.hand = draw::get(Job::HandItem { text: i.summary.clone(), seed, due: due_text, due_state, note: i.note.clone(), ticked: struck, faded: done_part });
+            }
+            r
+        };
+        let stays = |i: &&Item| i.done && leaving.contains(&item_key(i));
+        let fresh = fresh.get(&list_id).cloned().unwrap_or_default();
+        let open: Vec<TodoItem> = items
+            .iter()
+            .filter(|i| !i.done || stays(i))
+            .map(|i| {
+                let mut r = drawn(i, false);
+                r.fresh = fresh.contains(&item_key(i));
+                r
+            })
+            .collect();
+        let done: Vec<TodoItem> = items.iter().filter(|i| i.done && !stays(i)).map(|i| drawn(i, true)).collect();
+        let leaving_n = items.iter().filter(|i| stays(i)).count() as i32;
+        let n_open = open.iter().filter(|i| !i.done).count();
+        let heads = tapes.then(|| {
+            let count = if n_open == 0 { "ALL CLEAR".to_string() } else { format!("{n_open} TO DO") };
+            (
+                draw::get(Job::TapeHead { name: name.clone(), count, seed: draw::seed(&name) }),
+                draw::get(Job::Tape { text: format!("DONE \u{b7} {}", done.len()), tint: Tint::Black, small: true, seed: 77 + done.len() as u32 }),
+                (n_open == 0).then(|| draw::get(Job::Tape { text: texts::kept("todo.label.empty", 0), tint, small: false, seed: 4242 })),
+            )
+        });
+        let notes = hands.then(|| {
+            let count = if n_open == 0 { "all done".to_string() } else { format!("{n_open} left") };
+            (draw::get(Job::HandHead { title: name.clone(), count, seed: draw::seed(&name) }), draw::get(Job::HandDone { n: done.len(), open: show_done }))
+        });
+        crate::pages::with_inst(ui.get_todo_inst(), |m| ui.set_todo_inst(m), n, |d| {
+            if let Some(m) = crate::pages::update_rows(&d.lists, lists) {
+                d.lists = m;
+            }
+            d.sel = sel as i32;
+            d.leaving = leaving_n;
+            if let Some((head, done_head, empty)) = heads {
+                d.label_head = head;
+                d.label_done_head = done_head;
+                if let Some(e) = empty {
+                    d.label_empty_tape = e;
+                }
+            }
+            if let Some((head, done_note)) = notes {
+                d.note_head = head;
+                d.note_done = done_note;
+            }
+            if let Some(m) = crate::pages::update_rows(&d.open_items, open) {
+                d.open_items = m;
+            }
+            if let Some(m) = crate::pages::update_rows(&d.done_items, done) {
+                d.done_items = m;
+            }
+        });
     }
-    if let Some(m) = crate::pages::update_rows(&ui.get_todo_done(), done) {
-        ui.set_todo_done(m);
-    }
+    crate::pages::keep_insts(&ui.get_todo_inst(), pages.len());
+}
+
+/// The list the to-do page on screen shows.
+fn acting_list(ui: &AppWindow) -> Option<String> {
+    let entities = with_state(|s| crate::page_entities(s, "todo"));
+    shown_list(&entities, crate::pages::inst(&ui.get_todo_inst(), crate::acting_n("todo")).sel).map(|(_, l)| l)
 }
 
 /// Taps on the page (`todo.*`).
@@ -448,8 +516,8 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
     let n: usize = value.parse().unwrap_or(0);
     match what {
         "todo.check" | "todo.uncheck" => {
-            let list = WANTED.lock().unwrap().0.clone();
-            let items = ITEMS.with(|i| i.borrow().clone());
+            let Some(list) = acting_list(ui) else { return };
+            let items = ITEMS.with(|i| i.borrow().get(&list).cloned().unwrap_or_default());
             let pick: Vec<&Item> = items.iter().filter(|i| i.done == (what == "todo.uncheck")).collect();
             let Some(item) = pick.get(n) else { return };
             let status = if what == "todo.check" { "completed" } else { "needs_action" };
@@ -468,17 +536,17 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             // Shown ticked at once; the list is read again right after.
             let uid = item.uid.clone();
             ITEMS.with(|i| {
-                for it in i.borrow_mut().iter_mut() {
+                for it in i.borrow_mut().get_mut(&list).into_iter().flatten() {
                     if it.uid == uid {
                         it.done = what == "todo.check";
                     }
                 }
             });
-            WANTED.lock().unwrap().1 = true;
+            read_now(&list);
             with_state(|s| refresh(ui, s));
         }
         "todo.done-toggle" => {
-            ui.set_todo_show_done(!ui.get_todo_show_done());
+            crate::pages::with_inst(ui.get_todo_inst(), |m| ui.set_todo_inst(m), crate::acting_n("todo"), |d| d.show_done = !d.show_done);
             with_state(|s| refresh(ui, s));
         }
         // adding an item: the field with the keyboard (a capital first), due date chips where the list takes one
@@ -504,11 +572,15 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         "todo.picker-close" => ui.set_todo_picker(false),
         "todo.pick" => {
             ui.set_todo_picker(false);
-            if n < slint::Model::row_count(&ui.get_todo_lists()) && n as i32 != ui.get_todo_sel() {
-                ui.set_todo_sel(n as i32);
+            let at = crate::acting_n("todo");
+            let d = crate::pages::inst(&ui.get_todo_inst(), at);
+            if n < slint::Model::row_count(&d.lists) && n as i32 != d.sel {
+                crate::pages::with_inst(ui.get_todo_inst(), |m| ui.set_todo_inst(m), at, |d| d.sel = n as i32);
                 ui.set_todo_scroll(0.0);
-                WANTED.lock().unwrap().1 = true;
                 with_state(|s| refresh(ui, s));
+                if let Some(list) = acting_list(ui) {
+                    read_now(&list);
+                }
             }
         }
         // the page settings (the quick shade's page row): look and time format
@@ -584,8 +656,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 "enter" => {
                     let text = if note_on { ui.get_todo_draft().trim().to_string() } else { draft.trim().to_string() };
                     let note = if note_on { draft.trim().to_string() } else { ui.get_todo_note_draft().trim().to_string() };
-                    if !text.is_empty() {
-                        let list = WANTED.lock().unwrap().0.clone();
+                    if let (false, Some(list)) = (text.is_empty(), acting_list(ui)) {
                         let days = match ui.get_todo_due_pick() {
                             0 => Some(0),
                             1 => Some(1),
@@ -603,17 +674,18 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                         // shown at once, at the top (where the list can move items; else where Home Assistant puts it,
                         // the end of the open ones); the list is read again right after
                         let row = Item { uid: String::new(), summary: text.clone(), done: false, due: String::new(), note: note.clone() };
-                        if CAN_MOVE.with(|c| c.get()) {
+                        if can_move(&list) {
                             ADDED.with(|a| a.borrow_mut().push(Added { list: list.clone(), text, note, uid: None, moved: false, since: Instant::now() }));
-                            ITEMS.with(|i| i.borrow_mut().insert(0, row));
+                            ITEMS.with(|i| i.borrow_mut().entry(list.clone()).or_default().insert(0, row));
                         } else {
                             ITEMS.with(|i| {
                                 let mut i = i.borrow_mut();
-                                let at = i.iter().rposition(|it| !it.done).map(|p| p + 1).unwrap_or(0);
-                                i.insert(at, row);
+                                let items = i.entry(list.clone()).or_default();
+                                let at = items.iter().rposition(|it| !it.done).map(|p| p + 1).unwrap_or(0);
+                                items.insert(at, row);
                             });
                         }
-                        WANTED.lock().unwrap().1 = true;
+                        read_now(&list);
                     }
                     ui.set_todo_adding(false);
                     with_state(|s| refresh(ui, s));
@@ -659,9 +731,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
 }
 
 
-/// The look the to-do page has now.
-fn current_look(ui: &AppWindow) -> i32 {
-    crate::page_looks(ui, "todo").first().copied().unwrap_or(0)
+/// The look of the to-do page on screen.
+fn current_look(_ui: &AppWindow) -> i32 {
+    crate::page_look("todo")
 }
 
 /// A new look from the settings: the menu closes (its own way out), the page takes the look, and the settings open again
@@ -762,6 +834,16 @@ mod tests {
             assert!(adds.is_empty());
             assert_eq!(items.len(), 1);
         }
+    }
+
+    #[test]
+    fn each_page_shows_its_own_pick_among_its_lists() {
+        let lists = vec!["todo.shop".to_string(), "todo.work".to_string()];
+        assert_eq!(shown_list(&lists, 1), Some((1, "todo.work".to_string())));
+        // a pick past the page's lists (a list taken off it): its last one; none picked yet: the first
+        assert_eq!(shown_list(&lists, 5), Some((1, "todo.work".to_string())));
+        assert_eq!(shown_list(&lists, -1), Some((0, "todo.shop".to_string())));
+        assert_eq!(shown_list(&[], 0), None);
     }
 
     #[test]
