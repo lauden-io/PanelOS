@@ -3360,7 +3360,11 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         "music.look" => page_set(ui, "music", Some(value.parse().unwrap_or(0)), Value::Null),
         // the camera and notification pages' sheets
         "cam.fit" => page_set(ui, "camera", None, json!({ "fit": value })),
-        "info.look" => page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null),
+        "info.look" => {
+            page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null);
+            // the new look's pictures (the pager, the fridge door and notes) at once, not when the integration answers
+            with_state(|s| info::refresh(ui, s));
+        }
         "music.holds" => page_set(ui, "music", None, json!({ "holds": value.parse::<i64>().unwrap_or(0) })),
         "music.scroll" => page_set(ui, "music", None, json!({ "scroll": value == "1" })),
         "music.blur" => {
