@@ -114,6 +114,37 @@ fn parse_status(text: &str) -> Option<Link> {
     Some(Link { bssid: get("bssid")?.to_ascii_lowercase(), ssid: get("ssid")?.to_string() })
 }
 
+/// An SSID as wpa_cli prints it (printf-escaped: `\xNN`, `\\`, `\"`, `\e`, `\n`, `\r`, `\t`) back to its bytes.
+fn unescape_ssid(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 1 < b.len() {
+            let hex = (b[i + 1] == b'x' && i + 3 < b.len())
+                .then(|| std::str::from_utf8(&b[i + 2..i + 4]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+                .flatten();
+            if let Some(v) = hex {
+                out.push(v);
+                i += 4;
+                continue;
+            }
+            out.push(match b[i + 1] {
+                b'e' => 0x1b,
+                b'n' => b'\n',
+                b'r' => b'\r',
+                b't' => b'\t',
+                c => c,
+            });
+            i += 2;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
+}
+
 /// `wpa_cli signal_poll`: the link's signal in dBm.
 fn parse_signal(text: &str) -> Option<i32> {
     text.lines().find_map(|l| l.strip_prefix("RSSI="))?.trim().parse().ok()
@@ -219,7 +250,7 @@ fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
     // A scan for the network's own name: an access point that does not broadcast it (a hidden SSID) answers only a
     // probe that names it, and a plain scan lists it without a name. FAIL-BUSY while wpa_supplicant scans or connects
     // by itself.
-    let hex: String = link.ssid.bytes().map(|b| format!("{b:02x}")).collect();
+    let hex: String = unescape_ssid(&link.ssid).iter().map(|b| format!("{b:02x}")).collect();
     if !ok(wpa_cli(&["scan", "ssid", &hex])) && !ok(wpa_cli(&["scan"])) {
         return false;
     }
@@ -361,6 +392,64 @@ fn watch(linked: impl Fn() -> bool) {
     }
 }
 
+/// wpa_supplicant's own link events (it changes the access point by itself when beacons are lost, and the drops the
+/// link watch repairs start there): beacon losses, disconnects with their reason, connections, one line each in the
+/// connection log. Read from `wpa_cli` in interactive mode, which prints the events as they come; started again when
+/// wpa_cli ends (wpa_supplicant restarted).
+fn wpa_events() {
+    use std::io::BufRead;
+    let mut last_loss: Option<std::time::Instant> = None;
+    loop {
+        let child = Command::new("wpa_cli")
+            .args(["-i", IFACE])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else {
+            std::thread::sleep(Duration::from_secs(60));
+            continue;
+        };
+        // stdin stays open and is never written: interactive mode keeps listening
+        let _stdin = child.stdin.take();
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                if let Some(note) = wpa_event_note(&line, &mut last_loss) {
+                    crate::connlog::note(&note);
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
+/// The connection log line for one wpa_cli event line (none for the others); beacon losses at most once in 30 s.
+fn wpa_event_note(line: &str, last_loss: &mut Option<std::time::Instant>) -> Option<String> {
+    let ev = line.split("CTRL-EVENT-").nth(1)?.trim();
+    let field = |key: &str| ev.split_whitespace().find_map(|w| w.strip_prefix(key)).map(str::to_string);
+    if ev.starts_with("BEACON-LOSS") {
+        if last_loss.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
+            return None;
+        }
+        *last_loss = Some(std::time::Instant::now());
+        let on = wpa_cli(&["status"]).as_deref().and_then(parse_status).map(|l| format!(" on {}", l.bssid)).unwrap_or_default();
+        return Some(format!("Wi-Fi: beacons lost{on}"));
+    }
+    if ev.starts_with("DISCONNECTED") {
+        let bssid = field("bssid=").unwrap_or_default();
+        let reason = field("reason=").unwrap_or_default();
+        let by_panel = field("locally_generated=").is_some_and(|v| v == "1");
+        return Some(format!("Wi-Fi: disconnected from {bssid} (reason {reason}{})", if by_panel { ", by the panel" } else { "" }));
+    }
+    if ev.starts_with("CONNECTED") {
+        let to = ev.split("Connection to ").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
+        return Some(format!("Wi-Fi: connected to {to}"));
+    }
+    None
+}
+
 /// Runs the roam check thread (`idle`: whether the panel is idle; `stalled`: the music stalls and
 /// nothing else is going on) and the link watch (`linked`: whether the link to Home Assistant is up).
 pub fn spawn(
@@ -370,6 +459,9 @@ pub fn spawn(
 ) {
     if let Err(e) = std::thread::Builder::new().name("link-watch".into()).spawn(move || watch(linked)) {
         crate::connlog::note(&format!("link watch not started: {e}"));
+    }
+    if let Err(e) = std::thread::Builder::new().name("wpa-events".into()).spawn(wpa_events) {
+        crate::connlog::note(&format!("Wi-Fi event log not started: {e}"));
     }
     let started = std::thread::Builder::new().name("roam".into()).spawn(move || {
         // the first check waits a while after the start; a stalling stream does not
@@ -460,6 +552,27 @@ mod tests {
         let link = parse_status(STATUS).unwrap();
         assert_eq!(link, Link { bssid: "aa:00:00:00:00:01".into(), ssid: "Home".into() });
         assert_eq!(parse_status(&STATUS.replace("COMPLETED", "SCANNING")), None);
+    }
+
+    #[test]
+    fn ssid_escapes() {
+        assert_eq!(unescape_ssid("Home"), b"Home".to_vec());
+        assert_eq!(unescape_ssid(r#"Caf\xc3\xa9 \"x\""#), "Café \"x\"".as_bytes().to_vec());
+        assert_eq!(unescape_ssid(r"a\\b"), b"a\\b".to_vec());
+    }
+
+    #[test]
+    fn wpa_event_lines() {
+        let mut last = None;
+        assert_eq!(
+            wpa_event_note("<3>CTRL-EVENT-DISCONNECTED bssid=aa:00:00:00:00:01 reason=4 locally_generated=1", &mut last).as_deref(),
+            Some("Wi-Fi: disconnected from aa:00:00:00:00:01 (reason 4, by the panel)")
+        );
+        assert_eq!(
+            wpa_event_note("> <3>CTRL-EVENT-CONNECTED - Connection to aa:00:00:00:00:02 completed [id=0 id_str=]", &mut last).as_deref(),
+            Some("Wi-Fi: connected to aa:00:00:00:00:02")
+        );
+        assert_eq!(wpa_event_note("<3>CTRL-EVENT-SCAN-RESULTS ", &mut last), None);
     }
 
     #[test]
