@@ -5,12 +5,16 @@
 //!   `ws://<panel>:8928/sendspin`).
 //! - Every connection is end-to-end encrypted (Noise `KKpsk2_25519_ChaChaPoly_SHA256`; the panel is the responder).
 //! - Pairing needs no one: Home Assistant asks the panel's pairing token over the encrypted ESPHome API
-//!   (`SendspinPairingTokenRequest`) and Music Assistant pairs with it (Pairing PSK flow). Unpaired access stays off.
+//!   (`SendspinPairingTokenRequest`) and Music Assistant pairs with it (Pairing PSK flow). Unpaired access stays off:
+//!   a session that has not paired (the pairing PSK, or the sentinel any host gets) can only pair; it never holds the
+//!   panel, never starts, clears, ends or feeds the music and never sets its clock.
 //! - Audio comes as 48 kHz 16-bit PCM chunks stamped with the server's clock; the time filter maps them to the
 //!   panel's clock and the speaker thread (`voice::player_thread`) mixes them in when they are due, under every
 //!   other sound. While the voice assistant listens or thinks, the music is silent (as on the XVF speaker).
 //! - A stall (the music had played for 5 s, then the buffer ran dry for a second) is noted: the Wi-Fi roam check
 //!   then runs during the music (`roam`), as the stream breaks up anyway.
+//! - A new server's clock starts the time filter afresh; a session that hears nothing for 30 s (the clock exchanges
+//!   answer every 5 s) ends.
 //!
 //! The identity (Curve25519 key pair), the pairing PSK, the pairing records, volume and mute are kept in
 //! `/mnt/persist/nspanel/sendspin.json` (0600).
@@ -19,7 +23,7 @@ use std::collections::VecDeque;
 use std::io::{ErrorKind, Read};
 use std::net::{TcpListener, TcpStream};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::{Mutex, OnceLock};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
 use base64::Engine as _;
@@ -314,6 +318,8 @@ struct Music {
     /// The server time of the next sample to play.
     cursor: Option<f64>,
     filter: TimeFilter,
+    /// The connection whose clock the filter follows (a new one starts it afresh: another server's clock base).
+    filter_conn: u64,
     gain: f32,
     /// For the log line while music plays: sum of squares and count of the mixed music samples, since when.
     stat: (f64, u64, Option<Instant>),
@@ -329,18 +335,29 @@ static MUSIC: Mutex<Music> = Mutex::new(Music {
     chunks: VecDeque::new(),
     cursor: None,
     filter: TimeFilter::new(),
+    filter_conn: 0,
     gain: 0.0,
     stat: (0.0, 0, None),
     flowing_since: None,
     dry_since: None,
 });
 static MUSIC_ON: AtomicBool = AtomicBool::new(false);
+/// Music Assistant's mute of the panel (the store's, without its lock: the speaker thread reads it every 10 ms).
+static MUTED: AtomicBool = AtomicBool::new(false);
+
+/// A lock that a panic elsewhere does not poison for good: the speaker thread mixes the music under every sound, so it
+/// must never stop on the music's lock.
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(|e| e.into_inner())
+}
 /// The last stall: the music had played for a while, then the buffer ran dry for a second (the network brought too
 /// little). A start or a seek, whose first chunks are on their way, is no stall.
 static LAST_STALL: Mutex<Option<Instant>> = Mutex::new(None);
 /// A stall is this long without music after this long with it.
 const STALL_DRY: Duration = Duration::from_secs(1);
 const STALL_AFTER: Duration = Duration::from_secs(5);
+/// A session that heard nothing from its server for this long (the clock exchanges answer every 5 s) ends.
+const IDLE_LIMIT: Duration = Duration::from_secs(30);
 
 /// Sendspin music is playing: the speaker keeps running for it.
 pub fn music_active() -> bool {
@@ -349,16 +366,16 @@ pub fn music_active() -> bool {
 
 /// The music stalled within the last `within` (and still plays).
 pub fn stalled_within(within: Duration) -> bool {
-    music_active() && LAST_STALL.lock().unwrap().is_some_and(|t| t.elapsed() <= within)
+    music_active() && lock(&LAST_STALL).is_some_and(|t| t.elapsed() <= within)
 }
 
 /// Development: counts as a stall now.
 pub fn note_stall() {
-    *LAST_STALL.lock().unwrap() = Some(Instant::now());
+    *lock(&LAST_STALL) = Some(Instant::now());
 }
 
 fn set_active(on: bool) {
-    let mut m = MUSIC.lock().unwrap();
+    let mut m = lock(&MUSIC);
     m.active = on;
     m.flowing_since = None;
     m.dry_since = None;
@@ -381,46 +398,39 @@ static PLAYER: OnceLock<std::sync::Arc<crate::voice::Player>> = OnceLock::new();
 /// `out` (48 kHz mono). Small timing errors are corrected by dropping or repeating one frame per 10 ms (0.2 %,
 /// inaudible); large ones (a start, a seek, an underrun) by jumping.
 pub fn mix_music(out: &mut [i16], heard_at: i64) {
-    let mut m = MUSIC.lock().unwrap();
+    let mut m = lock(&MUSIC);
     if !m.active || m.filter.count == 0 || out.is_empty() {
         return;
     }
-    let target = {
-        let s = store().lock().unwrap();
-        // silent while the voice assistant listens or thinks (as the XVF speaker mutes its amplifier)
-        // the volume itself is the panel's hardware volume; here only mute
-        if s.muted || crate::voice::busy() && !crate::voice::speaking() { 0.0 } else { 1.0 }
-    };
-    let due = m.filter.server_time(heard_at);
-    let n = out.len();
-    let mut take = n;
-    match m.cursor {
-        Some(c) if (c - due).abs() <= 30_000.0 => {
-            let err = c - due;
-            if err > 200.0 {
-                take = n - 1; // early: repeat a frame
-            } else if err < -200.0 {
-                take = n + 1; // late: drop a frame
-            }
-        }
-        _ => m.cursor = Some(due),
+    // silent while the voice assistant listens or thinks (as the XVF speaker mutes its amplifier)
+    // the volume itself is the panel's hardware volume; here only mute
+    let target = if MUTED.load(Ordering::Relaxed) || crate::voice::busy() && !crate::voice::speaking() { 0.0 } else { 1.0 };
+    mix_into(&mut m, out, heard_at, target);
+}
+
+/// How many frames of music to take for `n` frames heard, the cursor `err` µs early (negative: late): beyond 200 µs
+/// one fewer (one is repeated) or one more (one is dropped). A block of a single frame is taken as it is.
+fn frames_to_take(n: usize, err: f64) -> usize {
+    if n < 2 {
+        n
+    } else if err > 200.0 {
+        n - 1
+    } else if err < -200.0 {
+        n + 1
+    } else {
+        n
     }
-    let start = m.cursor.unwrap_or(due);
-    // chunks that ended before the cursor are gone
-    while let Some((ts, s)) = m.chunks.front() {
-        if (*ts as f64) + s.len() as f64 * SAMPLE_US <= start {
-            m.chunks.pop_front();
-        } else {
-            break;
-        }
-    }
+}
+
+/// `take` frames of the chunks from the server time `start` (µs) on; silence where no chunk has them.
+fn render(chunks: &VecDeque<(i64, Vec<i16>)>, start: f64, take: usize) -> Vec<i16> {
     let mut samples: Vec<i16> = Vec::with_capacity(take);
     let mut k = 0usize;
     for i in 0..take {
         let t = start + i as f64 * SAMPLE_US;
         let mut v = 0i16;
-        while k < m.chunks.len() {
-            let (ts, s) = &m.chunks[k];
+        while k < chunks.len() {
+            let (ts, s) = &chunks[k];
             let pos = ((t - *ts as f64) / SAMPLE_US).round();
             if pos < 0.0 {
                 break; // a gap before this chunk
@@ -433,9 +443,49 @@ pub fn mix_music(out: &mut [i16], heard_at: i64) {
         }
         samples.push(v);
     }
-    m.cursor = Some(start + take as f64 * SAMPLE_US);
-    // the stall watch: the buffer does not reach the end of this block
+    samples
+}
+
+/// The rendered frames brought to exactly `n`: one fewer gets its middle frame repeated, one more loses its middle
+/// frame; anything else is padded with silence or cut.
+fn fit(mut samples: Vec<i16>, n: usize) -> Vec<i16> {
+    if samples.len() + 1 == n && !samples.is_empty() {
+        let mid = samples.len() / 2;
+        samples.insert(mid, samples[mid]);
+    } else if samples.len() == n + 1 {
+        samples.remove(samples.len() / 2);
+    }
+    samples.resize(n, 0);
+    samples
+}
+
+/// The mixing itself, at the gain `target` (0 silent, 1 full).
+fn mix_into(m: &mut Music, out: &mut [i16], heard_at: i64, target: f32) {
+    let n = out.len();
+    if n == 0 {
+        return;
+    }
+    let due = m.filter.server_time(heard_at);
+    let take = match m.cursor {
+        Some(c) if (c - due).abs() <= 30_000.0 => frames_to_take(n, c - due),
+        _ => {
+            m.cursor = Some(due);
+            n
+        }
+    };
+    let start = m.cursor.unwrap_or(due);
+    // chunks that ended before the cursor are gone
+    while let Some((ts, s)) = m.chunks.front() {
+        if (*ts as f64) + s.len() as f64 * SAMPLE_US <= start {
+            m.chunks.pop_front();
+        } else {
+            break;
+        }
+    }
+    let samples = render(&m.chunks, start, take);
     let end = start + take as f64 * SAMPLE_US;
+    m.cursor = Some(end);
+    // the stall watch: the buffer does not reach the end of this block
     let dry = m.chunks.back().is_none_or(|(ts, s)| (*ts as f64) + s.len() as f64 * SAMPLE_US < end);
     let now = Instant::now();
     if !dry {
@@ -445,20 +495,14 @@ pub fn mix_music(out: &mut [i16], heard_at: i64) {
         // once per stall: the music has to flow for a while again before the next one counts
         m.flowing_since = None;
         m.dry_since = None;
-        *LAST_STALL.lock().unwrap() = Some(now);
+        *lock(&LAST_STALL) = Some(now);
         eprintln!("nspanel-app: sendspin: stall, the buffer ran dry for {} s", STALL_DRY.as_secs());
     } else if m.flowing_since.is_some_and(|f| f.elapsed() < STALL_AFTER) {
         // a gap soon after a start or a seek: no stall, the music starts flowing again
         m.flowing_since = None;
     }
     // back to n frames: one repeated or one dropped in the middle
-    if take == n - 1 {
-        let mid = samples.len() / 2;
-        let rep = samples[mid];
-        samples.insert(mid, rep);
-    } else if take == n + 1 {
-        samples.remove(samples.len() / 2);
-    }
+    let samples = fit(samples, n);
     let mut g = m.gain;
     let step = 1.0 / 480.0; // full scale in 10 ms
     for (o, s) in out.iter_mut().zip(samples.iter()) {
@@ -518,7 +562,7 @@ static GOODBYE_SENT: AtomicBool = AtomicBool::new(false);
 /// Says goodbye to the server before the app stops (waits at most 700 ms; at once without a session).
 pub fn goodbye() {
     GOODBYE.store(true, Ordering::SeqCst);
-    if ADMITTED.lock().unwrap().is_none() {
+    if lock(&ADMITTED).is_none() {
         return;
     }
     let t = Instant::now();
@@ -528,11 +572,27 @@ pub fn goodbye() {
 }
 static ADMITTED: Mutex<Option<(u64, bool)>> = Mutex::new(None); // (connection, declares playback)
 
+/// The connection `id` holds the panel now.
+fn holds(id: u64) -> bool {
+    lock(&ADMITTED).is_some_and(|(a, _)| a == id)
+}
+
+/// The connection `id` no longer holds the panel (it ended, or its keys no longer allow playback): its music stops.
+fn release(id: u64) {
+    let mut a = lock(&ADMITTED);
+    if a.is_some_and(|(c, _)| c == id) {
+        *a = None;
+        drop(a);
+        set_active(false);
+    }
+}
+
 pub fn spawn(player: std::sync::Arc<crate::voice::Player>, volume: u8, set_volume: impl Fn(u8) + Send + Sync + 'static) {
     let _ = PLAYER.set(player);
     VOLUME.store(volume.min(100), Ordering::SeqCst);
     let _ = SET_VOLUME.set(Box::new(set_volume));
-    let _ = store(); // loads or creates the identity (client id and token for Home Assistant)
+    // loads or creates the identity (client id and token for Home Assistant)
+    MUTED.store(store().lock().unwrap().muted, Ordering::SeqCst);
     std::thread::spawn(|| {
         let listener = loop {
             match TcpListener::bind(("0.0.0.0", PORT)) {
@@ -552,12 +612,7 @@ pub fn spawn(player: std::sync::Arc<crate::voice::Player>, volume: u8, set_volum
                     Ok(why) => eprintln!("nspanel-app: sendspin: {peer} ended ({why})"),
                     Err(e) => eprintln!("nspanel-app: sendspin: {peer}: {e}"),
                 }
-                let mut a = ADMITTED.lock().unwrap();
-                if a.is_some_and(|(c, _)| c == id) {
-                    *a = None;
-                    drop(a);
-                    set_active(false);
-                }
+                release(id);
             });
         }
     });
@@ -701,6 +756,30 @@ fn noise_respond(
     Ok((hs, msg2, kind))
 }
 
+/// What a `server/activate` may do, by the session's PSK (unpaired access is off).
+#[derive(Debug, PartialEq)]
+enum Admission {
+    /// The session ends with this goodbye reason.
+    Refuse(&'static str),
+    /// Not paired (the pairing PSK, the sentinel): pairing only; the server that holds the panel and its music stay.
+    PairingOnly,
+    /// A paired server: it holds the panel, as a player or not.
+    Admit { player: bool },
+}
+
+/// The activation of `activities` with `roles` (None: as before, `player_now`) for a session with a `kind` PSK.
+fn admission(kind: PskKind, activities: &[String], roles: Option<&[String]>, player_now: bool) -> Admission {
+    let playback = activities.iter().any(|a| a == "playback");
+    let pairing = activities.iter().any(|a| a == "pairing");
+    if kind != PskKind::LongTerm {
+        if playback || roles.is_some_and(|r| !r.is_empty()) { Admission::Refuse("pairing_required") } else { Admission::PairingOnly }
+    } else if pairing {
+        Admission::Refuse("unauthorized")
+    } else {
+        Admission::Admit { player: roles.map_or(player_now, |r| r.iter().any(|x| x == "player@v1")) }
+    }
+}
+
 fn player_state() -> Value {
     let s = store().lock().unwrap();
     json!({"type": "client/state", "payload": {
@@ -757,8 +836,12 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
     let mut c = Conn { ws, transport, kind, server_id, h, frag: None };
 
     let mut activities: Vec<String> = Vec::new();
+    // the player role is only a paired server's (long-term PSK), and only it holds the panel (ADMITTED): a session
+    // that has not paired (the pairing PSK, the sentinel) may pair, never touch the music
     let mut player_role = false;
     let mut activated = false;
+    let mut admitted = false;
+    let mut last_heard = Instant::now();
     let mut pairing_index = 0u32;
     let mut pending_psk: Option<Vec<u8>> = None;
     let mut state_sent = false;
@@ -777,12 +860,17 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
             GOODBYE_SENT.store(true, Ordering::SeqCst);
             return Ok("the app stops".into());
         }
-        if ADMITTED.lock().unwrap().is_some_and(|(a, _)| a != id) && activated {
+        if admitted && !holds(id) {
             let _ = c.send(&json!({"type": "client/goodbye", "payload": {"reason": "another_server"}}));
             return Ok("another server took over".into());
         }
         if !activated && started.elapsed() > Duration::from_secs(30) {
             return Err("no server/activate within 30 s".into());
+        }
+        // a live server answers the clock exchanges every 5 s: a silent one is gone (a half-open connection would
+        // keep the music "on" and the roam check off until TCP gives up)
+        if activated && last_heard.elapsed() > IDLE_LIMIT {
+            return Err(format!("nothing from the server for {} s", IDLE_LIMIT.as_secs()));
         }
         // the clock
         if activated {
@@ -807,7 +895,16 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
             }
             if burst_left == 0 {
                 if let Some((meas, err, added)) = best.take() {
-                    MUSIC.lock().unwrap().filter.update(meas, err, added);
+                    // only the server that holds the panel as a player sets the music's clock (another server's clock
+                    // base starts the filter afresh)
+                    if player_role && holds(id) {
+                        let mut m = lock(&MUSIC);
+                        if m.filter_conn != id {
+                            m.filter = TimeFilter::new();
+                            m.filter_conn = id;
+                        }
+                        m.filter.update(meas, err, added);
+                    }
                     synced = true;
                 }
             }
@@ -822,13 +919,19 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
         }
 
         let Some((msg, at)) = c.recv()? else { continue };
+        last_heard = Instant::now();
+        // this connection plays on the panel: a paired server holding it as a player, with playback
+        let plays = player_role && activities.iter().any(|a| a == "playback") && holds(id);
         if msg[0] == 4 {
             // an audio chunk: timestamp, send_ahead, PCM
             if msg.len() < 13 {
                 return Err("short audio chunk".into());
             }
+            if !plays {
+                continue;
+            }
             let ts = i64::from_be_bytes(msg[1..9].try_into().unwrap());
-            let mut m = MUSIC.lock().unwrap();
+            let mut m = lock(&MUSIC);
             if m.active {
                 let pcm = &msg[13..];
                 let mono: Vec<i16> = if m.channels == 2 {
@@ -880,44 +983,55 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
                     p.get("active_roles").and_then(Value::as_array).map(|a| a.iter().filter_map(|x| x.as_str().map(String::from)).collect());
                 let playback = acts.iter().any(|a| a == "playback");
                 let pairing = acts.iter().any(|a| a == "pairing");
-                let roles_now = roles.clone().unwrap_or_else(|| if activated && player_role { vec!["player@v1".into()] } else { Vec::new() });
-                // what the matched PSK allows (unpaired access is off)
-                if c.kind != PskKind::LongTerm && (playback || !roles_now.is_empty() && roles.is_some()) {
-                    let _ = c.send(&json!({"type": "client/goodbye", "payload": {"reason": "pairing_required"}}));
-                    return Ok("pairing required".into());
-                }
-                if c.kind == PskKind::LongTerm && pairing {
-                    let _ = c.send(&json!({"type": "client/goodbye", "payload": {"reason": "unauthorized"}}));
-                    return Ok("unauthorized activity".into());
-                }
-                // one admitted connection: playback wins over an idle one
-                {
-                    let mut a = ADMITTED.lock().unwrap();
-                    match *a {
-                        Some((other, other_playback)) if other != id && other_playback && !playback && !pairing => {
-                            drop(a);
-                            let _ = c.send(&json!({"type": "client/goodbye", "payload": {"reason": "concurrent_attempt"}}));
-                            return Ok("another server is playing".into());
-                        }
-                        _ => *a = Some((id, playback)),
+                match admission(c.kind, &acts, roles.as_deref(), activated && player_role) {
+                    Admission::Refuse(reason) => {
+                        let _ = c.send(&json!({"type": "client/goodbye", "payload": {"reason": reason}}));
+                        return Ok(format!("activation refused ({reason})"));
                     }
+                    Admission::Admit { player } => {
+                        // one admitted connection: playback wins over an idle one
+                        {
+                            let mut a = lock(&ADMITTED);
+                            match *a {
+                                Some((other, other_playback)) if other != id && other_playback && !playback => {
+                                    drop(a);
+                                    let _ = c.send(&json!({"type": "client/goodbye", "payload": {"reason": "concurrent_attempt"}}));
+                                    return Ok("another server is playing".into());
+                                }
+                                _ => *a = Some((id, playback)),
+                            }
+                        }
+                        admitted = true;
+                        player_role = player;
+                        if player {
+                            // a new player: the clock and the chunks of the one before (stamped with its clock) go,
+                            // before this one's first chunks come
+                            let mut m = lock(&MUSIC);
+                            if m.filter_conn != id {
+                                m.filter = TimeFilter::new();
+                                m.filter_conn = id;
+                                m.chunks.clear();
+                                m.cursor = None;
+                            }
+                        }
+                        if playback {
+                            let mut s = store().lock().unwrap();
+                            if s.last_server != c.server_id {
+                                s.last_server = c.server_id.clone();
+                                save_store(&s);
+                            }
+                        }
+                        if !playback || !player_role {
+                            set_active(false);
+                        }
+                    }
+                    Admission::PairingOnly => player_role = false,
+                }
+                if !player_role {
+                    state_sent = false;
                 }
                 activated = true;
                 activities = acts;
-                player_role = c.kind == PskKind::LongTerm && roles_now.iter().any(|r| r == "player@v1");
-                if playback {
-                    let mut s = store().lock().unwrap();
-                    if s.last_server != c.server_id {
-                        s.last_server = c.server_id.clone();
-                        save_store(&s);
-                    }
-                } else {
-                    set_active(false);
-                }
-                if !player_role {
-                    set_active(false);
-                    state_sent = false;
-                }
                 if pairing {
                     pairing_index += 1;
                     let method = p["pairing"]["method"].as_str().unwrap_or("");
@@ -957,6 +1071,15 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
                 c.transport = hs.into_transport_mode().map_err(|e| format!("transport: {e}"))?;
                 c.kind = kind;
                 pairing_index = 0;
+                // what the session may do follows its keys: without a long-term PSK no player, no hold on the panel
+                if kind != PskKind::LongTerm {
+                    player_role = false;
+                    state_sent = false;
+                    if admitted {
+                        admitted = false;
+                        release(id);
+                    }
+                }
                 eprintln!("nspanel-app: sendspin: new session keys ({kind:?})");
             }
             "server/time" => {
@@ -975,14 +1098,13 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
                 }
             }
             "stream/start" => {
-                if let Some(pl) = p.get("player").filter(|_| player_role && activities.iter().any(|a| a == "playback")) {
+                if let Some(pl) = p.get("player").filter(|_| plays) {
                     let ok = pl["codec"] == "pcm" && pl["sample_rate"] == 48000 && pl["bit_depth"] == 16;
                     let channels = pl["channels"].as_u64().unwrap_or(2) as u16;
-                    let was = MUSIC.lock().unwrap().active;
                     {
-                        let mut m = MUSIC.lock().unwrap();
+                        let mut m = lock(&MUSIC);
                         m.channels = channels;
-                        if !was {
+                        if !m.active {
                             m.chunks.clear();
                             m.cursor = None;
                         }
@@ -996,8 +1118,8 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
             }
             "stream/clear" => {
                 let roles = p.get("roles").and_then(Value::as_array);
-                if roles.is_none_or(|r| r.iter().any(|x| x == "player")) {
-                    let mut m = MUSIC.lock().unwrap();
+                if plays && roles.is_none_or(|r| r.iter().any(|x| x == "player")) {
+                    let mut m = lock(&MUSIC);
                     // a seek: the new chunks are on their way, the gap is no stall
                     m.flowing_since = None;
                     m.dry_since = None;
@@ -1012,12 +1134,12 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
             }
             "stream/end" => {
                 let roles = p.get("roles").and_then(Value::as_array);
-                if roles.is_none_or(|r| r.iter().any(|x| x == "player")) {
+                if plays && roles.is_none_or(|r| r.iter().any(|x| x == "player")) {
                     set_active(false);
                 }
             }
             "server/command" => {
-                if let Some(pl) = p.get("player").filter(|_| player_role) {
+                if let Some(pl) = p.get("player").filter(|_| player_role && holds(id)) {
                     let changed = {
                         let mut s = store().lock().unwrap();
                         let before = (s.volume, s.muted);
@@ -1031,7 +1153,10 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
                                 }
                                 STATE_DIRTY.store(false, Ordering::SeqCst);
                             }
-                            Some("mute") => s.muted = pl["mute"].as_bool().unwrap_or(s.muted),
+                            Some("mute") => {
+                                s.muted = pl["mute"].as_bool().unwrap_or(s.muted);
+                                MUTED.store(s.muted, Ordering::SeqCst);
+                            }
                             _ => {}
                         }
                         let changed = before != (s.volume, s.muted);
@@ -1097,5 +1222,99 @@ mod tests {
             f.update(1_000_000, 500, i * 1_000_000);
         }
         assert!((f.server_time(10_000_000) - 11_000_000.0).abs() < 1.0);
+    }
+
+    fn music(cursor_early_us: Option<f64>, chunk: Vec<i16>) -> Music {
+        let mut filter = TimeFilter::new();
+        filter.update(0, 500, 1); // the server's clock is the panel's
+        let mut chunks = VecDeque::new();
+        chunks.push_back((1_000_000i64, chunk));
+        Music {
+            active: true,
+            channels: 2,
+            chunks,
+            cursor: cursor_early_us.map(|e| 1_000_000.0 + e),
+            filter,
+            filter_conn: 1,
+            gain: 1.0,
+            stat: (0.0, 0, None),
+            flowing_since: None,
+            dry_since: None,
+        }
+    }
+
+    #[test]
+    fn frames_to_take_never_takes_none_of_a_block() {
+        assert_eq!(frames_to_take(0, 1000.0), 0);
+        assert_eq!(frames_to_take(1, 1000.0), 1);
+        assert_eq!(frames_to_take(1, -1000.0), 1);
+        assert_eq!(frames_to_take(2, 1000.0), 1);
+        assert_eq!(frames_to_take(480, 1000.0), 479);
+        assert_eq!(frames_to_take(480, -1000.0), 481);
+        assert_eq!(frames_to_take(480, 100.0), 480);
+    }
+
+    #[test]
+    fn fit_gives_exactly_n_frames() {
+        assert_eq!(fit(vec![], 0), Vec::<i16>::new());
+        assert_eq!(fit(vec![], 1), vec![0]);
+        assert_eq!(fit(vec![7], 2), vec![7, 7]);
+        assert_eq!(fit(vec![1, 2, 3], 2), vec![1, 3]);
+        assert_eq!(fit(vec![1, 2, 3], 4), vec![1, 2, 2, 3]);
+        assert_eq!(fit(vec![1, 2], 5), vec![1, 2, 0, 0, 0]);
+        assert_eq!(fit(vec![1, 2, 3, 4], 2), vec![1, 2]);
+    }
+
+    #[test]
+    fn render_fills_gaps_with_silence() {
+        let mut chunks = VecDeque::new();
+        assert_eq!(render(&chunks, 0.0, 3), vec![0, 0, 0]);
+        chunks.push_back((0i64, vec![5i16]));
+        assert_eq!(render(&chunks, 0.0, 0), Vec::<i16>::new());
+        assert_eq!(render(&chunks, 0.0, 3), vec![5, 0, 0]);
+    }
+
+    #[test]
+    fn one_frame_blocks_mix_early_late_and_on_time() {
+        // the last piece of a sound is one frame long while the music's cursor is early, late or on time
+        for early in [Some(1_000.0), Some(-1_000.0), Some(0.0), None] {
+            for chunk in [vec![], vec![1000i16], vec![1000i16; 480]] {
+                let mut m = music(early, chunk);
+                let mut out = [0i16; 1];
+                mix_into(&mut m, &mut out, 1_000_000, 1.0);
+                let mut empty: [i16; 0] = [];
+                mix_into(&mut m, &mut empty, 1_000_000, 1.0);
+            }
+        }
+    }
+
+    #[test]
+    fn any_block_length_mixes_to_its_own_length() {
+        let mut m = music(Some(500.0), vec![1000i16; 4800]);
+        let mut heard = 1_000_000i64;
+        for n in [1usize, 2, 3, 480, 1, 0, 1, 481, 2, 1] {
+            let mut out = vec![0i16; n];
+            mix_into(&mut m, &mut out, heard, 1.0);
+            assert_eq!(out.len(), n);
+            // the cursor jumps between early and late
+            heard += (n as f64 * SAMPLE_US) as i64 + if n % 2 == 0 { 400 } else { -400 };
+        }
+    }
+
+    #[test]
+    fn only_a_paired_server_holds_the_panel() {
+        let s = |v: &[&str]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>();
+        let player = s(&["player@v1"]);
+        for kind in [PskKind::Sentinel, PskKind::Pairing] {
+            assert_eq!(admission(kind, &s(&["pairing"]), None, false), Admission::PairingOnly);
+            assert_eq!(admission(kind, &[], None, false), Admission::PairingOnly);
+            assert_eq!(admission(kind, &s(&["playback"]), None, false), Admission::Refuse("pairing_required"));
+            assert_eq!(admission(kind, &s(&["pairing"]), Some(&player), false), Admission::Refuse("pairing_required"));
+            assert_eq!(admission(kind, &s(&["pairing"]), Some(&[]), false), Admission::PairingOnly);
+        }
+        assert_eq!(admission(PskKind::LongTerm, &s(&["pairing"]), None, false), Admission::Refuse("unauthorized"));
+        assert_eq!(admission(PskKind::LongTerm, &s(&["playback"]), Some(&player), false), Admission::Admit { player: true });
+        assert_eq!(admission(PskKind::LongTerm, &s(&["playback"]), None, true), Admission::Admit { player: true });
+        assert_eq!(admission(PskKind::LongTerm, &[], Some(&[]), true), Admission::Admit { player: false });
     }
 }
