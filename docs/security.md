@@ -58,14 +58,16 @@ While a timer or an alarm rings (and the microphones are not muted), the panel l
 
 The dashboard mode shows Home Assistant's frontend in WPE WebKit (`panelos-web`, `buildroot/package/panelos-web`). The browser comes in its own SquashFS image (`/mnt/persist/panelos-web.squashfs`, mounted read-only at `/opt/panelos-web` by `S50panelos-web`) and the app starts it chrooted there, with `/dev`, `/proc` and `/sys` bound in and its data in `/mnt/persist/panelos-web-data` (0700). It runs as root: the chroot keeps its files apart, not its rights.
 
-It logs in like Home Assistant's mobile apps (external authentication): the page asks for a token, and the app answers with the panel's access token. The web view does not check which page asks and does not limit where the page navigates.
+It logs in like Home Assistant's mobile apps (external authentication): the page asks for a token, and the app answers with the panel's access token. The token goes only to a page on the origin (scheme, host and port) of the dashboard address the app loads: a request counts only while the view shows that origin, the answer checks the origin again in the page that receives it, and it never goes into a frame inside the page.
+
+The view stays on that origin. A link, a script or a redirect that would put another site in the view is refused before that page replaces the dashboard, and new windows never open. Frames inside the dashboard (a webpage card) and what it loads from other hosts (pictures, card scripts) are not limited. Card resources run as part of Home Assistant's own page, so install only ones you trust.
 
 ## Home Assistant integration
 
 - **The PanelOS page** in the sidebar is for administrators only, and so are the WebSocket commands behind it (settings, pictures of the screen, the touch test, the proximity calibration, the alerts and statuses).
 - **Its actions** (`panelos.show_view`, `notify`, `show_status`, `clear_status`, `critical_alert`, `clear_critical_alert`) are admin-only (`async_register_admin_service`).
 - **Uploaded sounds:** only administrators upload (`POST /api/panelos/sounds`). Any logged-in user can download one by its id (`/api/panelos/sound/<id>`), which is how the panels keep their copies.
-- **The panel's own commands** (`panelos/subscribe`, `report`, `page_set`, `timer`, `notification`, `alive`, `log`, `screen`) are open to every logged-in Home Assistant user, since the panel uses an ordinary user (see Not covered).
+- **The panel's own commands** (`panelos/subscribe`, `report`, `page_set`, `timer`, `notification`, `alive`, `log`, `screen`) accept only the panel's own Home Assistant user and administrators. The first user that is not an administrator to subscribe for a panel is kept in the panel's entry as its user. Another such user is refused, and so is a subscription for a panel that is not set up. The PanelOS page shows the panel's user (Device, About) and can forget it; the next user that connects is kept then. Removing the panel or deleting the user forgets it too. Administrators are never kept, so with a panel that logs in as an administrator the first other user to connect would be: give each panel its own user that is not an administrator.
 - **Voice assistants** that use the Assist API get tools to start, list and cancel timers and to set, list and cancel alarms on a panel named by its room (`llm.py`; at most 20 alarms a panel), from any device.
 
 ## At the panel
@@ -127,5 +129,4 @@ All of these need root on the panel, which needs the SSH key.
 
 - **No verified boot.** The stock U-Boot starts whatever is in the boot partition; physical access (BOOT button and USB) or root on the panel means full control. The UI and web bundles are not signed either.
 - The panel app runs as root, and so does the web view.
-- **Any Home Assistant user can act as a panel** towards the integration: the panel's commands (above) do not check that the user is the panel's. Another user of the same Home Assistant can read a panel's settings, change its pages and, on a development install, add lines to its log file. Give Home Assistant accounts only to people you would let use the panel.
-- **The web view hands the token to the page it shows** without checking where that page comes from. A dashboard that opens another site in the web view gives that site the means to ask for the panel's token.
+- **The panel's user is the first one that connects.** Right after a panel is added, or after Forget, another Home Assistant user that connects first is kept instead; the panel is then refused, and the PanelOS page shows the other name.
