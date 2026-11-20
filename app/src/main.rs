@@ -623,12 +623,12 @@ fn update_clock(ui: &AppWindow) {
         }
         // The synthwave scenes in use: their view, colour and the next car.
         synth::tick(ui, s);
-        // city windows lit one by one (drawn city / big city, the first such Custom page)
+        // city windows lit one by one (drawn city / big city, the first such custom or weather details page)
         {
             let w = ui.get_weather();
             let pages = ui.get_pages();
             let slot = (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i))
-                .find(|p| p.kind == "home" && matches!(if p.theme >= 0 { p.theme } else { w.theme }, 4 | 6));
+                .find(|p| (p.kind == "home" || p.kind == "weather") && matches!(if p.theme >= 0 { p.theme } else { w.theme }, 4 | 6));
             let theme = slot.as_ref().map(|p| if p.theme >= 0 { p.theme } else { w.theme }).unwrap_or(-1);
             let light = slot.as_ref().is_some_and(|p| p.light == 1 || (p.light == 0 && !ui.global::<Theme>().get_dark()));
             let hour = local_hour();
@@ -807,6 +807,11 @@ fn refresh_pages(ui: &AppWindow) {
         if !same {
             let lays: Vec<HomeLayout> = lays.into_iter().map(|items| HomeLayout { items: ModelRc::new(VecModel::from(items)) }).collect();
             ui.set_home_layouts(ModelRc::new(VecModel::from(lays)));
+        }
+        // the weather details page's widgets while it has none of its own
+        let wx = pages::weather_items(a);
+        if !same_rows(&ui.get_weather_items(), &wx) {
+            ui.set_weather_items(ModelRc::new(VecModel::from(wx)));
         }
         // the next event of the custom page's calendars (its entities)
         let calendars: Vec<String> = page_entities(s, "home").into_iter().filter(|e| e.starts_with("calendar.")).collect();
@@ -3335,12 +3340,12 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         "shade.open" => shade::open(ui),
         "shade.peek" => shade::fill(ui),
         // A home widget's view: clock → timers, date / event → calendar,
-        // weather now / curve / hours / days → weather, music → music.
+        // weather now / curve / hours / days / details → weather, music → music.
         "home.tap" => {
             let kind = match value {
                 "0" => "timers",
                 "1" | "3" => "calendar",
-                "2" | "4" | "5" | "6" => "weather",
+                "2" | "4" | "5" | "6" | "11" => "weather",
                 "7" => "music",
                 _ => return,
             };

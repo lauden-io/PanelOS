@@ -20,7 +20,7 @@ import "./fonts/CourierPrime-Bold.ttf";
 import { Theme, Act, Clock, Words } from "theme.slint";
 import { Jelly } from "widgets.slint";
 import { PairingScreen, FoundHa, SetupScreen, WifiNet, WifiScreen, WifiPasswordScreen, HiddenNetworkScreen, HaPickScreen, ConnectingScreen, OfflineScreen, Phrases } from "overlays.slint";
-import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData, WeatherPanel } from "panels.slint";
+import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData } from "panels.slint";
 import { HomeItem, HomeEvent, HomeMusic, HomeGrid, WxIcons } from "home.slint";
 import { PhotoSky, WinRect } from "photo_sky.slint";
 import { FastLane } from "fast_lane.slint";
@@ -96,6 +96,8 @@ export component AppWindow inherits Window {
     // home page: widgets on the living weather background
     in property <[HomeItem]> home-items;
     in property <[HomeLayout]> home-layouts;
+    // a weather details page without widgets of its own: the weather widgets it shows (weather now, details, hours, days)
+    in property <[HomeItem]> weather-items;
     // thermostat panel: the climate devices, the one on the dial, the rooms (device picker), the options sheet
     in property <[ClimateDev]> thermo-devices;
     in property <int> thermo-sel;
@@ -522,9 +524,6 @@ export component AppWindow inherits Window {
     in property <string> home-year: "2026";
     in property <string> home-week: "Week 46";
     in property <image> weather-sky-frame;   // optional per-frame sky from the app (radial cloud flow)
-    in property <bool> weather-details: true;
-    in property <bool> weather-hours: true;
-    in property <bool> weather-days: true;
     in property <[Person]> people;
     in property <bool> show-people: true;
     in property <int> info-unread;       // unread notifications (the bell's count)
@@ -728,7 +727,7 @@ export component AppWindow inherits Window {
         (p.light == 1 || (p.light == 0 && !Theme.dark)) && (p.theme >= 0 ? p.theme : root.weather.theme) >= 3 && (p.theme >= 0 ? p.theme : root.weather.theme) != 8
     }
     pure function on-color(p: PageSlot) -> bool {
-        (p.kind == "weather" && p.variant == 1) || (p.kind == "home" && !root.light-home(p)) || (p.kind == "music" && !(p.variant == 1 && !Theme.dark)) || (p.kind == "timers" && (root.timers-ringing || (p.variant == 3 && root.timers-mode == 1))) || (p.kind == "thermostat" && p.variant == 3) || (p.kind == "todo" && p.variant == 2) || (p.kind == "calendar" && p.variant == 1) || (p.kind == "info" && (root.info-critical || p.variant == 3)) || root.status-on || (p.kind == "quick" && p.variant > 0) || (p.kind == "camera" && (root.cam-ring || (root.cam-view == 0 && root.cam-items.length > 0 && root.cam-items[root.cam-sel].state == 0 && (root.cam-fit == 0 || Theme.dark))))
+        ((p.kind == "home" || p.kind == "weather") && !root.light-home(p)) || (p.kind == "music" && !(p.variant == 1 && !Theme.dark)) || (p.kind == "timers" && (root.timers-ringing || (p.variant == 3 && root.timers-mode == 1))) || (p.kind == "thermostat" && p.variant == 3) || (p.kind == "todo" && p.variant == 2) || (p.kind == "calendar" && p.variant == 1) || (p.kind == "info" && (root.info-critical || p.variant == 3)) || root.status-on || (p.kind == "quick" && p.variant > 0) || (p.kind == "camera" && (root.cam-ring || (root.cam-view == 0 && root.cam-items.length > 0 && root.cam-items[root.cam-sel].state == 0 && (root.cam-fit == 0 || Theme.dark))))
     }
 
     // ---- the pages, side by side ----
@@ -818,7 +817,9 @@ export component AppWindow inherits Window {
                 // (partly) on screen: a page off screen stands still (its clocks' seconds do not run)
                 property <bool> on-view: !root.screensaver-on && (i == root.warm-page || (self.x > -root.width && self.x < root.width));
 
-                // several weather pages may each have their own background and widgets
+                // several weather pages may each have their own background and widgets; the weather details page is such a
+                // page too, with weather widgets only
+                property <bool> grid-page: slot.kind == "home" || slot.kind == "weather";
                 property <int> home-theme: slot.theme >= 0 ? slot.theme : root.weather.theme;
                 // the light scene: drawn and line themes (and plain) follow the panel's theme, or the page's choice
                 property <bool> home-light: slot.light == 1 || (slot.light == 0 && !Theme.dark);
@@ -835,14 +836,16 @@ export component AppWindow inherits Window {
                 }
                 property <float> mood-k: self.mood-on-b ? 1 : 0;
                 animate mood-k { duration: 3s; easing: ease-in-out; }
-                property <[HomeItem]> home-items: slot.layout >= 0 && slot.layout < root.home-layouts.length ? root.home-layouts[slot.layout].items : root.home-items;
+                property <[HomeItem]> home-items: slot.layout >= 0 && slot.layout < root.home-layouts.length ? root.home-layouts[slot.layout].items
+                    : slot.kind == "weather" ? root.weather-items : root.home-items;
                 // the plain background: one colour, the panel's own ground (Night or Paper), the widgets in Ink on Paper
-                if slot.kind == "home" && home-slot.home-theme == 9: Rectangle {
+                if home-slot.grid-page && home-slot.home-theme == 9: Rectangle {
                     background: home-slot.home-light ? #F5F3EE : #000000;
                     HomeGrid {
                         live: home-slot.on-view;
                         rise: true; shown: root.page == i && !root.screensaver-on;
                         items: home-slot.home-items;
+                        weather-only: slot.kind == "weather";
                         data: root.weather;
                         clock: root.clock;
                         event: root.home-event;
@@ -876,7 +879,7 @@ export component AppWindow inherits Window {
                 }
                 // the weather picture changes softly: on a new condition the new picture fades in over the old one,
                 // or the old one fades out over the new one (3 s); the widgets lie over both, drawn once
-                if slot.kind == "home" && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k < 0.999: PhotoSky {
+                if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k < 0.999: PhotoSky {
                     taps: home-slot.mood-k <= 0.001;
                     mood: home-slot.mood-a;
                     theme: home-slot.home-theme;
@@ -904,7 +907,7 @@ export component AppWindow inherits Window {
                     sun-veil: root.weather.sun-veil;
                     moon-veil: root.weather.moon-veil;
                 }
-                if slot.kind == "home" && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k > 0.001: PhotoSky {
+                if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k > 0.001: PhotoSky {
                     taps: true;
                     mood: home-slot.mood-b;
                     opacity: home-slot.mood-k;
@@ -938,18 +941,19 @@ export component AppWindow inherits Window {
                 property <bool> saver: root.screensaver-on;
                 property <bool> line-drawing;
                 property <duration> line-t0;
-                changed saver => { if !self.saver && self.home-theme == 7 && root.page == i { self.line-t0 = animation-tick(); self.line-drawing = true; } }
+                changed saver => { if !self.saver && self.grid-page && self.home-theme == 7 && root.page == i { self.line-t0 = animation-tick(); self.line-drawing = true; } }
                 Timer { interval: 1250ms; running: home-slot.line-drawing; triggered => { home-slot.line-drawing = false; } }
                 property <float> line-k: self.line-drawing ? clamp((animation-tick() - self.line-t0) / 1200ms, 0, 1) : 1;
-                if slot.kind == "home" && home-slot.home-theme == 7 && home-slot.line-drawing: Rectangle {
+                if home-slot.grid-page && home-slot.home-theme == 7 && home-slot.line-drawing: Rectangle {
                     x: (root.width + 24px) * home-slot.line-k - 24px; width: root.width + 24px; height: root.height;
                     Rectangle { x: 0; width: 24px; background: @linear-gradient(90deg, Theme.background.with-alpha(0) 0%, Theme.background 100%); }
                     Rectangle { x: 24px; width: root.width; background: Theme.background; }
                 }
-                if slot.kind == "home" && home-slot.home-theme != 8 && home-slot.home-theme != 9: Rectangle {
+                if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9: Rectangle {
                     HomeGrid {
                         live: home-slot.on-view;
                         items: home-slot.home-items;
+                        weather-only: slot.kind == "weather";
                         data: root.weather;
                         clock: root.clock;
                         event: root.home-event;
@@ -981,14 +985,15 @@ export component AppWindow inherits Window {
                         picker: root.home-picker;
                     }
                 }
-                if slot.kind == "home" && home-slot.home-theme == 8: FastLane {
+                if home-slot.grid-page && home-slot.home-theme == 8: FastLane {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
                     back-c: root.home-fl-back-c; floor-c: root.home-fl-floor-c; mix-c: root.home-fl-mix-c;
-                    mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars;
+                    mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars-on ? root.home-fl-cars : [];
                     palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r; palm-l2: root.home-fl-palm-l2; palm-r2: root.home-fl-palm-r2; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
                     HomeGrid {
                         live: home-slot.on-view;
                         items: home-slot.home-items;
+                        weather-only: slot.kind == "weather";
                         data: root.weather;
                         clock: root.clock;
                         event: root.home-event;
@@ -1020,18 +1025,6 @@ export component AppWindow inherits Window {
                         drop-row: root.home-drop-row;
                         picker: root.home-picker;
                     }
-                }
-                if slot.kind == "weather": WeatherPanel {
-                    data: root.weather;
-                    sky-frame: root.weather-sky-frame;
-                    variant: slot.variant;
-                    appear: 1;
-                    shown: root.page == i && !root.screensaver-on;
-                    accent: root.clock-accent;
-                    weight: 600;
-                    show-details: root.weather-details;
-                    show-hours: root.weather-hours;
-                    show-days: root.weather-days;
                 }
                 if slot.kind == "clock": ClockFace {
                     data: root.clock;
@@ -1080,7 +1073,7 @@ export component AppWindow inherits Window {
                 if slot.kind == "thermostat" && slot.variant == 3: FastLane {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
                     back-c: root.home-fl-back-c; floor-c: root.home-fl-floor-c; mix-c: root.home-fl-mix-c;
-                    mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars;
+                    mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars-on ? root.home-fl-cars : [];
                     palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r; palm-l2: root.home-fl-palm-l2; palm-r2: root.home-fl-palm-r2; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
                 }
                 if slot.kind == "thermostat": ThermostatPage {
