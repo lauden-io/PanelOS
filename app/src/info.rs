@@ -448,13 +448,8 @@ pub fn pop_act(ui: &AppWindow, what: &str, value: &str) {
 
 fn close_window(ui: &AppWindow) {
     pop(ui, None);
-    with_state(|s| {
-        // its time on screen is over (unless a strip from Home Assistant still counts it)
-        if !ui.get_strip_on() {
-            s.show_until = None;
-        }
-        refresh(ui, s);
-    });
+    // (the window keeps its own time: a strip, a shown view or a ring keep theirs)
+    with_state(|s| refresh(ui, s));
 }
 
 /// The notifications page (only when the panel has one).

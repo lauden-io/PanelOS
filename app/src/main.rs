@@ -48,6 +48,7 @@ mod texts;
 mod thermo;
 mod todo;
 mod touch;
+mod visit;
 mod voice;
 mod web;
 mod webstats;
@@ -71,6 +72,7 @@ use auth::Auth;
 use config::{AppConfig, PERSIST_DIR};
 use ha::{Command, EntityState, Event};
 use settings::Settings;
+use visit::{Hold, Visit};
 
 slint::include_modules!();
 
@@ -199,8 +201,10 @@ pub struct UiState {
     art_accent: Option<slint::Color>,
     /// The record's colour (the cover's own, black, white or grey too): None without a cover.
     art_record: Option<slint::Color>,
-    /// When a layer opened by a show request closes by itself.
+    /// When the dashboard shown by a show request goes by itself (a shown page view's time is its visit's).
     show_until: Option<Instant>,
+    /// When a notification's strip goes by itself.
+    strip_until: Option<Instant>,
     /// When the light level was last sent to Home Assistant.
     last_lux_report: Instant,
     /// Play / pause pressed on the panel: (playing, when, the position then) until the player reports it (at most 3 s),
@@ -381,7 +385,7 @@ fn popup(ui: &AppWindow, id: &str, title: &str, message: &str) {
     ui.set_strip_tint(slint::Color::from_rgb_u8(0x2a, 0x2c, 0x2f));
     ui.set_strip_on(true);
     with_state(|s| {
-        s.show_until = Some(Instant::now() + Duration::from_secs(seconds));
+        s.strip_until = Some(Instant::now() + Duration::from_secs(seconds));
         if sound {
             s.player.play(voice::Sound::Chime);
         }
@@ -692,10 +696,10 @@ fn update_clock(ui: &AppWindow) {
     if RANG.with(|r| r.replace(false)) {
         wake(ui);
         // the ringing screen is the timers page's: a temporary one when the list has none
-        visit_page(ui, "timers");
+        visit_page(ui, "timers", Hold::Ring);
     }
     if RING_OVER.with(|r| r.replace(false)) {
-        end_visit(ui);
+        end_visit(ui, true);
     }
 }
 
@@ -704,8 +708,6 @@ thread_local! {
     static TIMER_SHEET_CLOSE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// A timer the panel runs reached zero during this clock update.
     static RANG: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-    /// A view shown by Home Assistant ran out of time (back to the page before at the next tick).
-    static SHOW_OVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
     /// A ring ended by itself (its minute passed) during this clock update.
     static RING_OVER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
@@ -1117,6 +1119,8 @@ fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
                 close_page_sheets(ui);
             }
             ui.set_page(i as i32);
+            // a temporary page shown before goes once left
+            leave_temporary_page(ui, i as i32);
             true
         }
         None => false,
@@ -1146,63 +1150,102 @@ fn close_page_sheets(ui: &AppWindow) {
 }
 
 thread_local! {
-    /// A visit the panel made by itself (a ring, a show request): (the page it came from, the page it went to).
-    static VISIT: std::cell::Cell<Option<(i32, i32)>> = const { std::cell::Cell::new(None) };
+    /// The visit the panel made by itself (a ring, a view shown for some seconds), while it holds.
+    static VISIT: std::cell::Cell<Option<Visit>> = const { std::cell::Cell::new(None) };
 }
 
-/// Goes to a page by itself (a timer rings, Home Assistant asks for a view) and remembers where it came from, so
-/// `end_visit` can go back there.
-fn visit_page(ui: &AppWindow, kind: &str) {
-    let from = ui.get_page();
-    let known = VISIT.with(|v| v.get());
-    if !go_to_page(ui, kind) {
-        open_temporary_page(ui, kind);
-    }
-    let to = ui.get_page();
-    // a second visit on top of one keeps the first page to go back to
-    let from = known.map_or(from, |(f, _)| f);
-    if to != from {
-        VISIT.with(|v| v.set(Some((from, to))));
-    }
-}
-
-/// The visit is over (the ring stopped, the shown view's time ran out): back to the page from before, unless someone
-/// paged meanwhile.
-fn end_visit(ui: &AppWindow) {
-    if let Some((from, to)) = VISIT.with(|v| v.take()) {
-        let temp = with_state(|s| s.temp_page);
-        if ui.get_page() == to || temp.is_some_and(|t| t as i32 == ui.get_page()) {
-            ui.set_page(from);
+/// Goes to a page by itself (a timer rings, Home Assistant shows a view for some seconds) and remembers where it came
+/// from, so `end_visit` can go back there.
+fn visit_page(ui: &AppWindow, kind: &str, hold: Hold) {
+    let page = ui.get_page();
+    let mut v = Visit::base(VISIT.with(|c| c.get()), page);
+    let to = if go_to_page(ui, kind) {
+        ui.get_page()
+    } else {
+        let new = with_state(|s| s.temp_page.is_none());
+        let Some((at, took_over)) = open_temporary_page(ui, kind) else { return };
+        let at = at as i32;
+        if new {
+            v = v.inserted(at);
+        } else if took_over && v.from == at {
+            // the temporary page it came from now shows this: back to the page that one was opened next to
+            v.from = (at - 1).max(0);
         }
-    }
+        at
+    };
+    VISIT.with(|c| c.set(Some(v.hold(to, hold))));
 }
 
-/// A page the panel's list lacks (a home widget's view): slides in next to
-/// the current one, without a dot; a swipe back to the right returns, and it
-/// is gone once left.
-fn open_temporary_page(ui: &AppWindow, kind: &str) {
-    if with_state(|s| s.temp_page.is_some()) {
+/// The ring stopped (`ring`) or the shown view's time is up: back to the page from before (or to the view still
+/// shown), unless someone paged meanwhile. The other one's hold stays.
+fn end_visit(ui: &AppWindow, ring: bool) {
+    let Some(v) = VISIT.with(|c| c.get()) else { return };
+    let (left, go) = v.end(ring, ui.get_page(), Instant::now());
+    VISIT.with(|c| c.set(left));
+    let Some(page) = go else { return };
+    if page < 0 || page as usize >= ui.get_pages().row_count() {
         return;
     }
+    close_page_sheets(ui);
+    ui.set_page(page);
+    // a temporary page the visit showed goes once left
+    leave_temporary_page(ui, page);
+}
+
+/// A view shown without seconds stays: an earlier shown view's way back is dropped (a ring's stays).
+fn end_show_visit() {
+    VISIT.with(|c| {
+        c.set(c.get().and_then(|mut v| {
+            v.show = None;
+            v.ring.is_some().then_some(v)
+        }))
+    });
+}
+
+/// A page the panel's list lacks (a home widget's view): slides in next to the current one, without a dot; a swipe
+/// back to the right returns, and it is gone once left. The page left closes its sheets (they would hold the swipes).
+/// A temporary page already there takes the new kind. Returns its place in the pager (a new one shows there 40 ms
+/// later) and whether it took over a temporary page of another kind.
+fn open_temporary_page(ui: &AppWindow, kind: &str) -> Option<(usize, bool)> {
     let pages = ui.get_pages();
-    let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
+    let vec = pages.as_any().downcast_ref::<VecModel<PageSlot>>()?;
+    let slot = PageSlot { kind: kind.into(), variant: 0, theme: -1, layout: -1, light: 0 };
+    if let Some(t) = with_state(|s| s.temp_page) {
+        if t >= vec.row_count() {
+            // still on its way in
+            return Some((t, false));
+        }
+        let other = vec.row_data(t).is_some_and(|p| p.kind != kind);
+        if other || ui.get_page() != t as i32 {
+            close_page_sheets(ui);
+        }
+        if other {
+            vec.set_row_data(t, slot);
+        }
+        ui.set_page(t as i32);
+        if other {
+            refresh_pages(ui);
+        }
+        return Some((t, other));
+    }
+    close_page_sheets(ui);
     let at = (ui.get_page().max(0) as usize + 1).min(vec.row_count());
     with_state(|s| s.temp_page = Some(at));
     // the page frame restarts at the page shown (the same picture, drawn once), then the new page slides in
     ui.set_instant(true);
     ui.invoke_reset_pos();
-    let kind = kind.to_string();
     let weak = ui.as_weak();
     slint::Timer::single_shot(Duration::from_millis(40), move || {
         let Some(ui) = weak.upgrade() else { return };
         ui.set_instant(false);
         let pages = ui.get_pages();
         let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
-        vec.insert(at.min(vec.row_count()), PageSlot { kind: kind.into(), variant: 0, theme: -1, layout: -1, light: 0 });
+        vec.insert(at.min(vec.row_count()), slot);
         ui.set_dots_hidden(true);
         ui.set_page(at as i32);
         refresh_pages(&ui);
     });
+    Some((at, false))
 }
 
 /// After a swipe: the temporary page goes once it is off screen (the pages
@@ -1215,14 +1258,17 @@ fn leave_temporary_page(ui: &AppWindow, now: i32) {
     let weak = ui.as_weak();
     slint::Timer::single_shot(Duration::from_millis(320), move || {
         let Some(ui) = weak.upgrade() else { return };
-        if with_state(|s| s.temp_page.take()) != Some(t) {
+        // back on it meanwhile (a visit took it over), or another one in its place: it stays
+        if with_state(|s| s.temp_page) != Some(t) || ui.get_page() as usize == t {
             return;
         }
+        with_state(|s| s.temp_page = None);
         let pages = ui.get_pages();
         let Some(vec) = pages.as_any().downcast_ref::<VecModel<PageSlot>>() else { return };
         if t < vec.row_count() {
             ui.set_instant(true);
             vec.remove(t);
+            VISIT.with(|v| v.set(v.get().map(|v| v.removed(t as i32))));
             let page = ui.get_page();
             if page as usize > t {
                 ui.set_page(page - 1);
@@ -1247,7 +1293,7 @@ fn handle_timer(ui: &AppWindow, kind: i32, id: String, name: String, left: u32, 
     }
     if finished {
         wake(ui);
-        visit_page(ui, "timers");
+        visit_page(ui, "timers", Hold::Ring);
     }
     update_clock(ui);
 }
@@ -1702,7 +1748,8 @@ fn stop_ringing(ui: &AppWindow, why: &str) {
         }
     });
     ui.set_timers_ringing(false);
-    end_visit(ui);
+    // the ring's visit only: a view Home Assistant shows keeps its own time
+    end_visit(ui, true);
 }
 
 /// The voice view's status line for a state (listen, think, reply, more,
@@ -2223,30 +2270,32 @@ fn handle_show(ui: &AppWindow, v: &Value) {
     eprintln!("nspanel-app: show request {v}");
     wake(ui);
     ui.set_set_view(0);
-    let chime = with_state(|s| {
-        s.show_until = (seconds > 0).then(|| Instant::now() + Duration::from_secs(seconds));
-        v["chime"].as_bool().unwrap_or(false).then(|| s.player.clone())
-    });
+    // with seconds: shown until then, and back to where the panel was; without: it stays
+    let until = (seconds > 0).then(|| Instant::now() + Duration::from_secs(seconds));
+    let chime = with_state(|s| v["chime"].as_bool().unwrap_or(false).then(|| s.player.clone()));
     match v["view"].as_str().unwrap_or("home") {
         "dashboard" => {
             if ui.get_web_active() {
                 set_dashboard(ui, true);
+                with_state(|s| s.show_until = until);
             }
         }
-        "media" => {
-            if seconds > 0 {
-                visit_page(ui, "music");
-            } else {
+        "media" => match until {
+            Some(until) => visit_page(ui, "music", Hold::Show(until)),
+            None => {
+                end_show_visit();
                 go_to_page(ui, "music");
             }
-        }
+        },
         other => {
             set_dashboard(ui, with_state(|s| s.settings.display_mode == "dashboard") && ui.get_web_active());
             let kind = if ui.get_pages().iter().any(|p| p.kind == other) { other } else { "home" };
-            if seconds > 0 {
-                visit_page(ui, kind);
-            } else {
-                go_to_page(ui, kind);
+            match until {
+                Some(until) => visit_page(ui, kind, Hold::Show(until)),
+                None => {
+                    end_show_visit();
+                    go_to_page(ui, kind);
+                }
             }
         }
     }
@@ -2731,7 +2780,8 @@ fn start_screensaver(ui: &AppWindow, s: &mut UiState) {
             }
         }
     });
-    s.show_until = None;
+    // the strip goes; a shown view or dashboard keeps its time and goes back under the screensaver
+    s.strip_until = None;
     ui.set_set_view(0);
     ui.set_strip_on(false);
     info::pop(ui, None);
@@ -3001,20 +3051,26 @@ fn update_web(ui: &AppWindow, s: &mut UiState) {
 
 /// Runs twice a second: theme, screensaver, proximity wake, backlight target.
 fn tick(ui: &AppWindow) {
-    if SHOW_OVER.with(|o| o.replace(false)) {
-        end_visit(ui);
+    // a view shown for some seconds: its time is up (back to the page before, unless a ring holds the panel)
+    if VISIT.with(|v| v.get()).and_then(|v| v.show).is_some_and(|(_, until)| Instant::now() >= until) {
+        end_visit(ui, false);
     }
     update_connection_screens(ui);
     with_state(|s| update_web(ui, s));
     let result = with_state(|s| {
         s.lux = s.light.lux();
         update_theme(ui, s);
-        // Layer opened by a show request: close it when its time is up.
+        // A notification's strip: it goes when its time is up (a status strip keeps its own).
+        if s.strip_until.is_some_and(|t| Instant::now() >= t) {
+            s.strip_until = None;
+            if !s.alert_strip {
+                ui.set_strip_on(false);
+            }
+        }
+        // The dashboard shown by a show request: back to the display mode when its time is up.
         if s.show_until.is_some_and(|t| Instant::now() >= t) {
             s.show_until = None;
-            ui.set_strip_on(false);
             set_dashboard(ui, s.settings.display_mode == "dashboard" && s.web.is_some());
-            SHOW_OVER.with(|o| o.set(true));
         }
         let idle = platform::idle_time();
         // Proximity test view: on while the file exists. Its first line is
@@ -3061,6 +3117,8 @@ fn tick(ui: &AppWindow) {
         let timeout = s.settings.screensaver_seconds;
         // (and not while a timer runs: its chips stay in view)
         let showing = s.show_until.is_some()
+            || s.strip_until.is_some()
+            || VISIT.with(|v| v.get()).is_some_and(|v| v.show.is_some())
             || ui.get_pop_on()
             || s.proximity_test.is_some()
             || ui.get_voice_on()
@@ -3339,7 +3397,10 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             }
             ui.set_timers_sheet(value.parse::<i32>().unwrap_or(-1));
         }
-        "strip.close" => ui.set_strip_on(false),
+        "strip.close" => {
+            ui.set_strip_on(false);
+            with_state(|s| s.strip_until = None);
+        }
         "status.fold" | "strip.open" | "info.crit-silence" => alerts::act(ui, what),
         "set.touch" => start_touch_test(ui),
         "shade.open" => shade::open(ui),
@@ -3762,6 +3823,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             art_tx: None,
             art: None,
             show_until: None,
+            strip_until: None,
             last_lux_report: Instant::now(),
             music_hold: None,
             digits: Default::default(),
