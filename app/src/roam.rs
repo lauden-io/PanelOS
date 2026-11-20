@@ -32,8 +32,13 @@
 //! When the music stalls (its buffer runs dry, see `sendspin`) and nothing else is going on,
 //! the check runs at once during the music, at most every 10 minutes: the stream breaks up
 //! anyway, and the move still needs an access point at least 10 dB stronger.
+//!
+//! Roaming can be switched off in the integration (`wifi_roaming`): then there are no roam
+//! checks, no stall checks and no link probes (all of them can move the panel). The link watch,
+//! which makes a dead link again, and the Wi-Fi power save staying off do not depend on it.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const IFACE: &str = "wlan0";
@@ -71,6 +76,20 @@ const POOR_FILE: &str = "/tmp/panelos-poor-aps";
 /// A stalling stream: how often the roam thread looks, and the least time between two checks it starts.
 const STALL_POLL: Duration = Duration::from_secs(5);
 const STALL_GAP: Duration = Duration::from_secs(10 * 60);
+
+/// Roaming on (the default) or off (the integration's `wifi_roaming`).
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Switches roaming on or off (a change is written to the connection log).
+pub fn set_enabled(on: bool) {
+    if ENABLED.swap(on, Ordering::SeqCst) != on {
+        crate::connlog::note(if on { "roaming on" } else { "roaming off: no roam checks, stall checks or link probes" });
+    }
+}
+
+fn enabled() -> bool {
+    ENABLED.load(Ordering::SeqCst)
+}
 
 /// The current connection.
 #[derive(Debug, Clone, PartialEq)]
@@ -241,8 +260,8 @@ fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
             crate::connlog::note(&format!("roam check: {current} dBm on {}, no other access point of the network, staying", link.bssid))
         }
         Decision::Move { current, to } => {
-            // A voice run may have started during the scan.
-            if !idle() {
+            // A voice run may have started during the scan (or roaming was switched off).
+            if !idle() || !enabled() {
                 return false;
             }
             crate::connlog::note(&format!(
@@ -377,6 +396,12 @@ pub fn spawn(
         let mut poor_probes = 0;
         let mut stall_check: Option<std::time::Instant> = None;
         loop {
+            // roaming off: nothing that could move the panel (the link watch runs on)
+            if !enabled() {
+                poor_probes = 0;
+                std::thread::sleep(STALL_POLL);
+                continue;
+            }
             if std::time::Instant::now() >= next_check {
                 let done = idle() && check(&idle, false);
                 next_check = std::time::Instant::now() + if done { INTERVAL } else { RETRY };
@@ -387,6 +412,9 @@ pub fn spawn(
             let mut stall = false;
             while std::time::Instant::now() < wake {
                 std::thread::sleep(STALL_POLL.min(wake.saturating_duration_since(std::time::Instant::now())));
+                if !enabled() {
+                    break;
+                }
                 if stalled() && stall_check.is_none_or(|t| t.elapsed() >= STALL_GAP) {
                     stall = true;
                     break;
@@ -398,7 +426,7 @@ pub fn spawn(
                 check(&|| idle() || stalled(), false);
                 continue;
             }
-            if !idle() {
+            if !idle() || !enabled() {
                 continue;
             }
             // the link's quality: two poor probes in a row (30 s apart) and the panel leaves this access point

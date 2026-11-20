@@ -18,6 +18,7 @@ mod camera;
 mod clock;
 mod config;
 mod connlog;
+mod device_options;
 mod devlog;
 mod display;
 mod draw;
@@ -1050,6 +1051,8 @@ fn apply_panel_config(ui: &AppWindow) {
             saver_clock(ui, s);
         }
     });
+    // Wi-Fi roaming, the wake distance, the child lock
+    with_state(|s| device_options::apply(ui, s));
     let reload = with_state(|s| {
         let slots = pages::page_slots(s.panel_config.as_ref());
         let current = ui.get_page();
@@ -2187,6 +2190,10 @@ fn handle_show(ui: &AppWindow, v: &Value) {
         start_touch_test(ui);
         return;
     }
+    if v["type"].as_str() == Some("proximity_calibration") {
+        device_options::start_calibration(ui);
+        return;
+    }
     // the alarms as edited in the integration (the panel keeps and rings them)
     if v["type"].as_str() == Some("alarms") {
         eprintln!("nspanel-app: alarms from Home Assistant ({})", v["list"].as_array().map_or(0, Vec::len));
@@ -2786,7 +2793,7 @@ fn report_device(s: &mut UiState) {
     let before = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone()),
+        (d.mic_muted, d.alarms.clone(), d.child_lock),
     );
     d.theme = s.settings.theme.clone();
     d.brightness = s.settings.brightness;
@@ -2794,6 +2801,7 @@ fn report_device(s: &mut UiState) {
     d.screensaver_seconds = s.settings.screensaver_seconds;
     d.screensaver_style = s.settings.screensaver_style.clone();
     d.proximity_wake = s.settings.proximity_wake;
+    d.child_lock = s.settings.child_lock;
     d.screen_on = !s.screensaver;
     d.dashboard = s.shared.dashboard.lock().unwrap().clone();
     d.presence = s.proximity.near();
@@ -2808,7 +2816,7 @@ fn report_device(s: &mut UiState) {
     let after = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone()),
+        (d.mic_muted, d.alarms.clone(), d.child_lock),
     );
     if lux_changed {
         d.lux = s.lux.map(|l| l.round());
@@ -2845,11 +2853,24 @@ const THEME_LIGHT_LUX: f64 = 30.0;
 /// (no flipping at dusk or when a hand passes the sensor).
 const THEME_SETTLE: Duration = Duration::from_secs(10);
 
-/// Dark or light for the "auto" theme, by the light sensor. The first
-/// decision is immediate, so the first screen already has the right look.
-/// Without a sensor reading: Home Assistant's sun, otherwise unchanged (dark
-/// at the start).
-fn auto_dark(s: &mut UiState) -> bool {
+/// Dark or light for the "auto" theme, by what the integration's `theme_auto` names: the sun (Home Assistant's
+/// `sun.sun`), set times (once the clock is set), or the light sensor. The light sensor's first decision is
+/// immediate, so the first screen already has the right look. Without what the trigger needs, the light sensor
+/// decides; without a sensor reading Home Assistant's sun, otherwise unchanged (dark at the start).
+fn auto_dark(s: &mut UiState, by: device_options::AutoBy) -> bool {
+    match by {
+        device_options::AutoBy::Sun => {
+            if let Some(sun) = s.states.get("sun.sun") {
+                s.theme_pending = None;
+                return sun.state == "below_horizon";
+            }
+        }
+        device_options::AutoBy::Times { from, to } if clock::valid() => {
+            s.theme_pending = None;
+            return device_options::in_window(device_options::minutes_now(), from, to);
+        }
+        _ => {}
+    }
     let Some(lux) = s.lux else {
         s.theme_pending = None;
         return match s.states.get("sun.sun") {
@@ -2890,19 +2911,22 @@ fn auto_dark(s: &mut UiState) -> bool {
 }
 
 fn update_theme(ui: &AppWindow, s: &mut UiState) {
+    let by = device_options::auto_by(s.panel_config.as_ref());
     let dark = match s.settings.theme.as_str() {
         "light" => false,
-        "auto" => auto_dark(s),
+        "auto" => auto_dark(s, by),
         _ => true,
     };
+    // the setting with Auto's trigger: a change of either is someone's switch, the quicker change
+    let seen = if s.settings.theme == "auto" { format!("auto {by:?}") } else { s.settings.theme.clone() };
     ui.set_theme_mode(match s.settings.theme.as_str() {
         "light" => 0,
         "auto" => 2,
         _ => 1,
     });
     if s.dark != Some(dark) {
-        // Auto changed it by itself (the light, the sun): the calmer change; a switch by someone: the quicker one
-        ui.set_theme_slow(s.dark.is_some() && s.settings.theme == "auto" && s.theme_mode_seen.as_deref() == Some("auto"));
+        // Auto changed it by itself (the light, the sun, the time): the slow blend; a switch by someone: the quicker one
+        ui.set_theme_slow(s.dark.is_some() && s.settings.theme == "auto" && s.theme_mode_seen.as_deref() == Some(seen.as_str()));
         let first = s.dark.is_none();
         s.dark = Some(dark);
         if first {
@@ -2936,7 +2960,7 @@ fn update_theme(ui: &AppWindow, s: &mut UiState) {
             });
         }
     }
-    s.theme_mode_seen = Some(s.settings.theme.clone());
+    s.theme_mode_seen = Some(seen);
 }
 
 /// Backlight fade, every 20 ms: towards the target in perceived brightness
@@ -3020,6 +3044,8 @@ fn tick(ui: &AppWindow) {
             let integration = test.as_deref().and_then(|t| t.split_whitespace().next()).unwrap_or(hw::PROXIMITY_INTEGRATION);
             s.light.set_proximity_integration(integration);
             s.proximity = hw::ProximityWake::new(integration.parse().unwrap_or(0.01184));
+            let cm = device_options::wake_cm(s);
+            s.proximity.set_wake_cm(cm);
             test_started = test.is_some() && s.proximity_test.is_none();
             ui.set_prox_test(test.is_some());
             match &test {
@@ -3053,6 +3079,7 @@ fn tick(ui: &AppWindow) {
         let showing = s.show_until.is_some()
             || ui.get_pop_on()
             || s.proximity_test.is_some()
+            || device_options::calibrating()
             || ui.get_voice_on()
             || s.ringing.is_some()
             || s.timers.values().any(|t| t.active)
@@ -3073,7 +3100,8 @@ fn tick(ui: &AppWindow) {
         let saver_ends = s.screensaver && s.saver_auto && !saver_window(s, true);
         // Proximity: presence for Home Assistant, wake from the screensaver
         let mut wake_now = test_started && s.screensaver;
-        if let Some(p) = s.light.proximity() {
+        let reading = s.light.proximity();
+        if let Some(p) = reading {
             let approach = s.proximity.update(p);
             wake_now |= approach && s.screensaver && s.settings.proximity_wake;
             if s.proximity_test.is_some() {
@@ -3084,6 +3112,8 @@ fn tick(ui: &AppWindow) {
                 platform::note_stir();
             }
         }
+        // the child lock locking again, the wake distance calibration
+        device_options::tick(ui, s, idle, reading);
         // the clocks' calm: nobody near and nothing asked of the panel for 10 minutes
         let calm = platform::calm();
         if ui.global::<Clock>().get_calm() != calm {
@@ -3194,6 +3224,7 @@ fn show_proximity_test(ui: &AppWindow, s: &UiState, raw: f64) {
 
 fn on_setting(ui: &AppWindow, key: &str, value: &str) {
     let mut reload = false;
+    let mut lock = false;
     match key {
         // the integration's page settings are open: the panel shows that page (by its place among the
         // pages shown), so the picture there shows what is being set
@@ -3237,6 +3268,10 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
             }
             "screensaver_style" => s.settings.screensaver_style = value.to_string(),
             "proximity_wake" => s.settings.proximity_wake = value == "true",
+            "child_lock" => {
+                s.settings.child_lock = value == "true";
+                lock = true;
+            }
             "display_mode" => {
                 if matches!(value, "dashboard" | "assistant") {
                     s.settings.display_mode = value.to_string();
@@ -3277,6 +3312,9 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
         }
         s.settings.save();
     });
+    if lock {
+        device_options::lock_changed(ui);
+    }
     apply_panel_config(ui);
     if reload {
         send(Command::Reload);
@@ -3289,6 +3327,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
     stir(ui);
     match what {
         "saver.wake" => wake(ui),
+        w if w.starts_with("lock.") || w.starts_with("prox.") => device_options::act(ui, w, value),
         "timers.stop" => stop_ringing(ui, "tap"),
         "timers.more" => ring_more(ui),
         w if w.starts_with("alarms.") || w.starts_with("alarm.") => alarms::act(ui, w, value),
@@ -4195,6 +4234,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         || ui.get_timers_ringing()
                         || ui.get_setup()
                         || ui.get_prox_test()
+                        || ui.get_prox_cal_on()
+                        || ui.get_child_lock_open()
                         || ui.get_intro_visible())
             }),
             changed: Box::new(move |on| changed_view.set_direct(on)),
