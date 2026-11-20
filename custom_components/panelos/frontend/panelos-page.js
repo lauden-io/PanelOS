@@ -4965,10 +4965,10 @@ class PanelOSPage extends HTMLElement {
   // forecasts (the page's weather, else the panel's), the next event of the page's calendars, the music of the page's
   // player (else the panel's). A widget without data shows the panel's own picture with demo content (null here).
 
-  // The panel's time format (24-hour unless the panel's settings say 12-hour).
+  // The panel's time format: its Time format setting as it reports it ("24-hour" / "12-hour"); 24-hour until known.
   _h24(p) {
-    const st = this._settings(p);
-    return !(st.time_format === "12" || st.time_format === "12h" || st.h24 === false);
+    const v = String((p.states || {}).time_format || "");
+    return !v.startsWith("12");
   }
 
   // Now in Home Assistant's time zone: hour, minute, second, weekday, day, month.
