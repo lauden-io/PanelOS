@@ -1103,16 +1103,35 @@ class PanelOSPage extends HTMLElement {
     // Use of the page keeps the live preview going: only while this is the active window (a pointer over a window in
     // the background does not count), and making the window active again counts as use.
     this._use = { at: Date.now(), paused: false };
-    this._onUse = () => {
+    this._onUse = (ev) => {
       if (document.visibilityState !== "visible" || !document.hasFocus()) return;
       const now = Date.now();
       if (!this._use.paused && now - this._use.at < 1000) return;
       this._use.at = now;
       if (this._use.paused) {
         this._use.paused = false;
-        this._requestRender();
+        this._resumeRender(ev);
         this._schedulePicture(0);
       }
+    };
+    // The page drawn again after the pause, not under a press that is starting: this listener (on the window) runs
+    // before the press is noted (_onPointerDown), so a redraw now would replace the element under the pointer and its
+    // click would be lost. After a press or a touch the redraw waits until the press is noted (and then until it ends);
+    // after a key until the key is up (Space clicks a button on key up).
+    this._resumeRender = (ev) => {
+      const type = ev?.type;
+      if (type === "pointerdown" || type === "touchstart" || type === "mousedown") {
+        setTimeout(() => this._render(), 0);
+      } else if (type === "keydown") {
+        let timer = null;
+        const go = () => {
+          window.removeEventListener("keyup", go, true);
+          clearTimeout(timer);
+          setTimeout(() => this._render(), 0);
+        };
+        timer = setTimeout(go, 1500);
+        window.addEventListener("keyup", go, true);
+      } else this._requestRender();
     };
     this._resize = new ResizeObserver(() => this._fit());
     this._onClick = (ev) => {
