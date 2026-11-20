@@ -27,6 +27,9 @@ export global Clock {
     // calm (the app: nobody near and nothing asked of the panel for 10 minutes): every clock's colon turns from
     // breathing into a plain step, bright one second and dim the next, and the seconds tick once a second
     in-out property <bool> calm;
+    // the time format of every clock time the panel shows (one panel-wide value; durations never change):
+    // true 24-hour ("18:45"), false 12-hour ("6:45 PM")
+    in-out property <bool> h24: true;
 }
 
 export global Theme {

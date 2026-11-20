@@ -55,7 +55,8 @@ fi
 # absolute path they have there; the build sees them at the same path. Also for
 # the image's own app (software renderer): all the pages' pictures would not fit
 # into the image, and it runs as the fallback next to the bundle.
-export PANELOS_UI_DIR=/opt/panelos-ui/share/ui
+# (PANELOS_UI_DIR set by the caller: a check build of a second work tree; its binary is not for the panel)
+export PANELOS_UI_DIR="${PANELOS_UI_DIR:-/opt/panelos-ui/share/ui}"
 mkdir -p "$PANELOS_UI_DIR"
 rsync -a --delete "$WORK/src/ui/" "$PANELOS_UI_DIR/"
 cargo build --release --target aarch64-unknown-linux-gnu "${FEATURES[@]}"
