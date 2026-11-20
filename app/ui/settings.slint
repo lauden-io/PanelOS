@@ -2,11 +2,11 @@
 // microphone, theme, do not disturb, screen off); the PanelOS mark in it opens the full settings after a hold (so children
 // do not wander in). Editors for the pages stay in Home Assistant. Every text here is fixed: one line per place, the same
 // every time.
-import { Icon, MarkButton, CheckBox, Brand, TouchSlider } from "widgets.slint";
+import { Icon, MarkButton, CheckBox, Brand, TouchSlider, Segmented, Dropdown, Toggle, ThemeSwitch } from "widgets.slint";
 export { Brand }
 import { TimerItem } from "timers.slint";
 import { InfoNote } from "info.slint";
-import { Theme, Act } from "theme.slint";
+import { Theme, Act, Clock } from "theme.slint";
 
 
 // the PanelOS mark: P in Morse as two rows (dot dash / dash dot)
@@ -147,12 +147,45 @@ component HoldMorse inherits Rectangle {
 }
 
 export struct SetRow { icon: string, label: string, value: string, danger: bool }
+
+// The head of a settings page, at the settings list's title row: back to the list, the page's name.
+component PageHead inherits Rectangle {
+    in property <string> title;
+    Icon { x: 16px; y: 56px; width: 36px; height: 36px; text: "\u{F0141}"; font-size: 26px; color: Brand.text;
+        TouchArea { x: -8px; y: -8px; width: parent.width + 16px; height: parent.height + 16px; clicked => { Act.act("set.view", "3"); } } }
+    Text { x: 56px; y: 52px; height: 44px; text: root.title; font-size: 21px; font-family: "Space Grotesk"; font-weight: 500; color: Brand.text; vertical-alignment: center; }
+}
+
+// A row of a settings page (60 px; a line above all but the first): its name at the left, wrapping when long, the
+// control at the right (`control-w` wide, placed by the row's children).
+component PageRow inherits Rectangle {
+    in property <string> label;
+    in property <string> sub;              // a second line under the name (a value)
+    in property <bool> first;
+    in property <length> control-w;
+    height: 60px;
+    if !root.first: Rectangle { x: 14px; y: 0; width: parent.width - 28px; height: 1px; background: Brand.line; }
+    VerticalLayout {
+        x: 14px; y: 0; width: parent.width - 28px - root.control-w - (root.control-w > 0 ? 12px : 0px); height: parent.height;
+        alignment: center; spacing: 1px;
+        Text { text: root.label; font-size: 15px; font-weight: 500; color: Brand.text; wrap: word-wrap; }
+        if root.sub != "": Text { text: root.sub; font-size: 12px; color: Brand.muted; wrap: word-wrap; }
+    }
+    @children
+}
+
+// A card of rows on a settings page.
+component PageCard inherits Rectangle {
+    border-radius: 16px; background: Brand.surface; border-width: 1px; border-color: Brand.line;
+    VerticalLayout { padding-top: 4px; padding-bottom: 4px; @children }
+}
 export struct SetBar { label: string, value: float, tint: color, text: string }
 export struct SetSeg { share: float, tint: color }
 export struct SetSection { name: string, size: string, segs: [SetSeg], rows: [SetBar], note: string }
 
 export component SettingsLayer inherits Rectangle {
-    in property <int> view;                   // 1 quick shade, 2 hold to open, 3 settings list, 4 storage, 5 restart confirm
+    in property <int> view;                   // 1 quick shade, 2 hold to open, 3 settings list, 4 storage, 5 restart confirm,
+                                              // 6 display, 7 voice, 8 sound, 9 about
     in property <float> shade-pos: 1;         // the quick shade: 0 hidden above … 1 down (follows the finger; a little over 1 = the rubber band)
     in property <string> shade-title;
     in property <float> brightness;
@@ -181,6 +214,18 @@ export component SettingsLayer inherits Rectangle {
     in property <[TimerItem]> now-timers;     // what runs now: the timers (the timers page's order) …
     in property <[InfoNote]> now-notes;       // … and the notifications, newest first
     in property <bool> moving;                // a drag on the open shade runs (its directions stay on)
+    // the settings pages: display (6), voice (7), sound (8), about (9)
+    in property <[string]> saver-options;     // screensaver after: Never, 30 s, 1 min …
+    in property <int> saver-index;
+    in property <int> saver-style;            // 0 a clock, 1 screen off
+    in property <[string]> wake-options;      // the voice satellite's wake words (their phrases)
+    in property <int> wake1: -1;              // index in wake-options, -1 none
+    in property <[string]> wake-options2;     // the second one's: "None" first
+    in property <int> wake2: 0;               // index in wake-options2
+    in property <[SetRow]> about-rows;        // version, model, addresses
+    in property <[SetRow]> about-links;       // the project's pages (label, address)
+    in property <int> about-link;             // the one the QR code shows
+    in property <image> about-qr;
     callback shade-move(length, bool);        // a vertical drag on the open shade: how far (px, + down), and whether the finger let go
     callback shade-step(int);                 // the chevron: the second step
 
@@ -478,4 +523,108 @@ export component SettingsLayer inherits Rectangle {
         }
     }
 
+
+    // ------------------------------------------------------------------ 6 display: theme, brightness, time format, screensaver
+    if root.view == 6: Rectangle {
+        background: Brand.bg;
+        TouchArea { }
+        PageHead { title: "Display"; }
+        Flickable { x: 16px; y: 108px; width: parent.width - 32px; height: parent.height - 112px;
+            viewport-height: max(self.height, dcol.preferred-height + 8px);
+            dcol := VerticalLayout { width: parent.width; spacing: 12px; alignment: start;
+                PageCard {
+                    PageRow { label: "Theme"; first: true; control-w: 300px;
+                        ThemeSwitch { x: parent.width - 14px - 300px; y: 10px; width: 300px; selected: root.theme-mode; changed(m) => { Act.act("set.theme.mode", m); } } }
+                    // the quick shade's brightness with its Auto box (moving the slider unticks it)
+                    PageRow { label: "Brightness"; control-w: 300px;
+                        TouchSlider { x: parent.width - 14px - 300px; y: 8px; width: 216px; value: root.brightness;
+                            changed(v, final) => { Act.act(final ? "set.brightness.done" : "set.brightness", Math.max(0.01, v)); } }
+                        CheckBox { x: parent.width - 14px - 70px; y: 19px; checked: root.auto-bright; toggled => { Act.act("set.auto", ""); } }
+                        Text { x: parent.width - 14px - 42px; y: 0; width: 42px; height: parent.height; text: "Auto"; font-size: 13px; font-weight: 600; color: Brand.muted; vertical-alignment: center; }
+                        TouchArea { x: parent.width - 14px - 76px; y: 8px; width: 80px; height: 44px; clicked => { Act.act("set.auto", ""); } } }
+                    PageRow { label: "Time format"; control-w: 220px;
+                        Segmented { x: parent.width - 14px - 220px; y: 10px; width: 220px; options: ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
+                            picked(i) => { Act.act("set.timefmt", i); } } }
+                }
+                PageCard {
+                    PageRow { label: "Screensaver after"; first: true; control-w: 180px;
+                        Dropdown { x: parent.width - 14px - 180px; y: 6px; width: 180px; options: root.saver-options; selected: root.saver-index;
+                            picked(i) => { Act.act("set.saver", i); } } }
+                    PageRow { label: "Screensaver"; control-w: 220px;
+                        Segmented { x: parent.width - 14px - 220px; y: 10px; width: 220px; options: ["Clock", "Screen off"]; selected: root.saver-style;
+                            picked(i) => { Act.act("set.saver.style", i); } } }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 7 voice: the microphone, the two wake words
+    if root.view == 7: Rectangle {
+        background: Brand.bg;
+        TouchArea { }
+        PageHead { title: "Voice"; }
+        Flickable { x: 16px; y: 108px; width: parent.width - 32px; height: parent.height - 112px;
+            viewport-height: max(self.height, vcol.preferred-height + 8px);
+            vcol := VerticalLayout { width: parent.width; spacing: 12px; alignment: start;
+                PageCard {
+                    PageRow { label: "Microphone"; first: true; control-w: 56px;
+                        Toggle { x: parent.width - 14px - 56px; y: 14px; on: root.mic-on; toggled => { Act.act("set.mic", ""); } } }
+                    PageRow { label: "Wake word"; control-w: 220px;
+                        Dropdown { x: parent.width - 14px - 220px; y: 6px; width: 220px; options: root.wake-options; selected: root.wake1;
+                            picked(i) => { Act.act("set.wake1", i); } } }
+                    PageRow { label: "Second wake word"; control-w: 220px;
+                        Dropdown { x: parent.width - 14px - 220px; y: 6px; width: 220px; options: root.wake-options2; selected: root.wake2;
+                            picked(i) => { Act.act("set.wake2", i); } } }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ 8 sound: the volume (a chime at the new level)
+    if root.view == 8: Rectangle {
+        background: Brand.bg;
+        TouchArea { }
+        PageHead { title: "Sound"; }
+        PageCard { x: 16px; y: 108px; width: parent.width - 32px; height: 68px;
+            PageRow { label: "Volume"; first: true; control-w: 320px;
+                VolumeIcon { x: parent.width - 14px - 320px; y: 17px; v: root.volume; }
+                TouchSlider { x: parent.width - 14px - 284px; y: 8px; width: 230px; value: root.volume;
+                    changed(v, final) => { if final { Act.act("set.volume", v); } } }
+                Text { x: parent.width - 14px - 46px; y: 0; width: 46px; height: parent.height; text: Math.round(root.volume * 100) + " %"; font-size: 13px;
+                    color: Brand.muted; horizontal-alignment: right; vertical-alignment: center; } }
+        }
+    }
+
+    // ------------------------------------------------------------------ 9 about: version, model, addresses, the project's pages
+    if root.view == 9: Rectangle {
+        background: Brand.bg;
+        TouchArea { }
+        PageHead { title: "About"; }
+        Flickable { x: 16px; y: 108px; width: parent.width - 32px; height: parent.height - 112px;
+            viewport-height: max(self.height, acol.preferred-height + 8px);
+            acol := VerticalLayout { width: parent.width; spacing: 12px; alignment: start;
+                PageCard {
+                    for r[i] in root.about-rows: PageRow { label: r.label; first: i == 0; height: 52px; control-w: 220px;
+                        Text { x: parent.width - 14px - 220px; y: 0; width: 220px; height: parent.height; text: r.value; font-size: 13px; color: Brand.muted;
+                            horizontal-alignment: right; vertical-alignment: center; wrap: word-wrap; } }
+                }
+                // the links as a QR code to scan with a phone (a tap on a link shows its code)
+                PageCard {
+                    Rectangle { height: max(140px, root.about-links.length * 64px + 8px);
+                        Rectangle { x: 14px; y: (parent.height - 116px) / 2; width: 116px; height: 116px; border-radius: 10px; background: #ffffff;
+                            Image { x: 6px; y: 6px; width: 104px; height: 104px; source: root.about-qr; image-rendering: pixelated; } }
+                        for l[i] in root.about-links: Rectangle {
+                            x: 144px; y: 4px + i * 64px; width: parent.width - 144px - 8px; height: 64px; border-radius: 12px;
+                            background: lta.pressed ? Brand.raised : transparent;
+                            lta := TouchArea { clicked => { Act.act("set.link", i); } }
+                            if i == root.about-link: Rectangle { x: 0; y: 23px; width: 4px; height: 18px; border-radius: 2px; background: Brand.signal; }
+                            VerticalLayout { x: 14px; width: parent.width - 20px; alignment: center; spacing: 2px;
+                                Text { text: l.label; font-size: 15px; font-weight: i == root.about-link ? 600 : 500; color: Brand.text; wrap: word-wrap; }
+                                Text { text: l.value; font-size: 12px; color: Brand.muted; wrap: word-wrap; } }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }

@@ -214,6 +214,7 @@ pub fn clock_data(weather: &WeatherData, next: &str, prev_digits: &[String; 4], 
         let data = ClockData {
             hh: "--".into(),
             mm: "--".into(),
+            th: "--".into(),
             d1: "-".into(),
             d2: "-".into(),
             d3: "-".into(),
@@ -231,10 +232,15 @@ pub fn clock_data(weather: &WeatherData, next: &str, prev_digits: &[String; 4], 
     let hh = local_format(t, "%H");
     let mm = local_format(t, "%M");
     let sec: f32 = local_format(t, "%S").parse().unwrap_or(0.0);
-    let digits: [String; 4] = [hh[0..1].to_string(), hh[1..2].to_string(), mm[0..1].to_string(), mm[1..2].to_string()];
+    // the digital faces show the hour in the panel's time format (12-hour: no leading zero, a blank first card)
+    let (th, ampm) = crate::clock::face_hour(hh.parse().unwrap_or(0));
+    let lead = if th.len() == 2 { th[0..1].to_string() } else { String::new() };
+    let digits: [String; 4] = [lead, th[th.len() - 1..].to_string(), mm[0..1].to_string(), mm[1..2].to_string()];
     let data = ClockData {
         hh: hh.clone().into(),
         mm: mm.clone().into(),
+        th: th.into(),
+        ampm: ampm.into(),
         seconds: sec,
         date: local_format(t, "%A, %e %B").split_whitespace().collect::<Vec<_>>().join(" ").into(),
         weekday: local_format(t, "%a").to_uppercase().into(),
@@ -385,8 +391,8 @@ pub fn weather_data(w: &WeatherInput) -> WeatherData {
     if let Some(sun) = w.states.get("sun.sun") {
         data.sun_az = attr_f64(sun, "azimuth").unwrap_or(180.0) as f32;
         data.sun_el = attr_f64(sun, "elevation").unwrap_or(40.0) as f32;
-        data.sunrise = attr_str(sun, "next_rising").and_then(parse_iso).map(|t| local_format(t, "%H:%M")).unwrap_or_default().into();
-        data.sunset = attr_str(sun, "next_setting").and_then(parse_iso).map(|t| local_format(t, "%H:%M")).unwrap_or_default().into();
+        data.sunrise = attr_str(sun, "next_rising").and_then(parse_iso).map(crate::clock::local_hm).unwrap_or_default().into();
+        data.sunset = attr_str(sun, "next_setting").and_then(parse_iso).map(crate::clock::local_hm).unwrap_or_default().into();
     }
     if let Some(home) = w.states.get("zone.home") {
         if let (Some(lat), Some(lon)) = (attr_f64(home, "latitude"), attr_f64(home, "longitude")) {
@@ -440,7 +446,7 @@ pub fn weather_data(w: &WeatherInput) -> WeatherData {
         .map(|f| {
             let t = f.get("datetime").and_then(Value::as_str).and_then(parse_iso).unwrap_or(t_now);
             WeatherHour {
-                label: local_format(t, "%H").into(),
+                label: crate::clock::hour_label(local_format(t, "%H").parse().unwrap_or(0)).into(),
                 icon: glyph(weather_icon(f.get("condition").and_then(Value::as_str).unwrap_or(""))),
                 temp: f.get("temperature").and_then(Value::as_f64).unwrap_or(0.0) as f32,
                 precip: f.get("precipitation_probability").and_then(Value::as_f64).unwrap_or(0.0).round() as i32,

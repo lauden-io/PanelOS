@@ -732,6 +732,8 @@ export component SetupScreen inherits Rectangle {
     callback change-wifi();
     callback choose-many();
     callback theme-changed(int);
+    in property <bool> can-back;         // opened from the settings: a back arrow instead of the logo
+    callback back();
     property <[string]> titles: Words.list("ui.setupscreen.titles");
     property <[string]> subtitles: Words.list("ui.setupscreen.subtitles");
     property <[string]> searching: Words.list("ui.setupscreen.searching");
@@ -762,7 +764,8 @@ export component SetupScreen inherits Rectangle {
             spacing: 12px;
             VerticalLayout {
                 alignment: center;
-                LogoMark { size: 40px; }
+                if !root.can-back: LogoMark { size: 40px; }
+                if root.can-back: RoundButton { icon: "\u{F0141}"; size: 40px; tint: Theme.text; clicked => { root.back(); } }
             }
             VerticalLayout {
                 alignment: center;
@@ -1167,6 +1170,8 @@ export component WifiScreen inherits Rectangle {
     callback pick(string);
     callback rescan();
     callback other();
+    in property <bool> can-back;       // opened from the settings or the setup screen: a back arrow instead of the logo
+    callback back();
     in property <int> theme-mode: 2;   // 0 light, 1 dark, 2 auto
     callback theme-changed(int);
     // Random number from the app (0..1e9), picked each time the screen
@@ -1193,7 +1198,8 @@ export component WifiScreen inherits Rectangle {
             padding-bottom: 2px;
             VerticalLayout {
                 alignment: center;
-                LogoMark { size: 40px; }
+                if !root.can-back: LogoMark { size: 40px; }
+                if root.can-back: RoundButton { icon: "\u{F0141}"; size: 40px; tint: Theme.text; clicked => { root.back(); } }
             }
             VerticalLayout {
                 alignment: center;

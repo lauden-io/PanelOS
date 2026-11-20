@@ -227,6 +227,9 @@
       },
       "display_mode": {
         "name": "Display mode"
+      },
+      "time_format": {
+        "name": "Time format"
       }
     },
     "sensor": {

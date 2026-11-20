@@ -46,6 +46,8 @@ pub struct DeviceState {
     pub screensaver_seconds: u32,
     pub screensaver_style: String,
     pub proximity_wake: bool,
+    /// The time format: true 24-hour, false 12-hour.
+    pub time_24h: bool,
     pub screen_on: bool,
     pub dashboards: Vec<(String, String)>,
     pub dashboard: String,

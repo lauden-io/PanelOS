@@ -18,7 +18,7 @@ import "./fonts/CourierPrime-Regular.ttf";
 import "./fonts/CourierPrime-Bold.ttf";
 
 import { Theme, Act, Clock, Words } from "theme.slint";
-import { Jelly } from "widgets.slint";
+import { Jelly, TextButton } from "widgets.slint";
 import { PairingScreen, FoundHa, SetupScreen, WifiNet, WifiScreen, WifiPasswordScreen, HiddenNetworkScreen, HaPickScreen, ConnectingScreen, OfflineScreen, Phrases } from "overlays.slint";
 import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData, WeatherPanel } from "panels.slint";
 import { HomeItem, HomeEvent, HomeMusic, HomeGrid, WxIcons } from "home.slint";
@@ -200,6 +200,10 @@ export component AppWindow inherits Window {
     in property <[SetRow]> set-rows; in property <string> set-tagline; in property <string> set-page-title; in property <string> set-page-sub;
     in property <float> set-used; in property <string> set-used-text; in property <[SetBar]> set-bars; in property <[SetSection]> set-sections; in property <string> set-confirm-title;
     in property <string> set-confirm-line;
+    // the settings pages (display, voice, about)
+    in property <[string]> set-saver-options; in property <int> set-saver-index; in property <int> set-saver-style;
+    in property <[string]> set-wake-options; in property <int> set-wake1: -1; in property <[string]> set-wake-options2; in property <int> set-wake2;
+    in property <[SetRow]> set-about-rows; in property <[SetRow]> set-about-links; in property <int> set-about-link; in property <image> set-about-qr;
     in property <bool> voice-on;
     in property <int> voice-look;
     in property <int> voice-state: 1;
@@ -576,11 +580,13 @@ export component AppWindow inherits Window {
     in property <string> net-ip: "";           // the panel's own address
     in property <bool> setup-wifi-info: false; // preview: the Wi-Fi info card open
     in property <bool> setup-busy: false;
+    in property <bool> setup-can-back: false;  // opened from the settings: a back arrow instead of the logo
     // First start without network: Wi-Fi network list
     in property <bool> wifi-setup: false;
     in property <[WifiNet]> wifi-networks;
     in property <bool> wifi-scanning: false;
     in property <int> wifi-variant: 0;     // random, picked when the screen opens
+    in property <bool> wifi-can-back: false;   // opened from the settings or the setup screen: a back arrow instead of the logo
     in property <int> theme-mode: 2;       // 0 light, 1 dark, 2 auto (light sensor)
     // Wi-Fi password of the picked network
     in property <bool> wifi-password-open: false;
@@ -714,6 +720,8 @@ export component AppWindow inherits Window {
     callback setup-change-wifi();
     callback setup-choose-many();
     callback setup-pick-back();
+    callback setup-back();
+    callback wifi-back();
     callback wifi-pick(string);
     callback wifi-rescan();
     callback wifi-other();
@@ -1446,6 +1454,9 @@ export component AppWindow inherits Window {
         page-title: root.set-page-title; page-sub: root.set-page-sub; used: root.set-used; used-text: root.set-used-text; bars: root.set-bars; sections: root.set-sections;
         confirm-title: root.set-confirm-title; confirm-line: root.set-confirm-line;
         theme-mode: root.theme-mode;
+        saver-options: root.set-saver-options; saver-index: root.set-saver-index; saver-style: root.set-saver-style;
+        wake-options: root.set-wake-options; wake1: root.set-wake1; wake-options2: root.set-wake-options2; wake2: root.set-wake2;
+        about-rows: root.set-about-rows; about-links: root.set-about-links; about-link: root.set-about-link; about-qr: root.set-about-qr;
         auto-bright: root.set-auto; now-timers: root.timers-list; now-notes: root.info-notes; moving: root.shade-moving;
         shade-move(d, done) => {
             if !done {
@@ -1542,6 +1553,8 @@ export component AppWindow inherits Window {
         choose-many => { root.setup-choose-many(); }
         theme-changed(m) => { root.theme-mode-changed(m); }
         busy: root.setup-busy;
+        can-back: root.setup-can-back;
+        back => { root.setup-back(); }
         pick(url) => { root.setup-pick(url); }
         key(k) => { root.setup-key(k); }
         connect => { root.setup-connect(); }
@@ -1559,6 +1572,8 @@ export component AppWindow inherits Window {
         scanning: root.wifi-scanning;
         variant: root.wifi-variant;
         theme-mode: root.theme-mode;
+        can-back: root.wifi-can-back;
+        back => { root.wifi-back(); }
         theme-changed(m) => { root.theme-mode-changed(m); }
         pick(ssid) => { root.wifi-pick(ssid); }
         rescan => { root.wifi-rescan(); }
@@ -1674,6 +1689,8 @@ export component AppWindow inherits Window {
             }
             moved => { root.touch-test-event(1, self.mouse-x / 1px, self.mouse-y / 1px); }
         }
+        // the way out: nothing is changed (away from every point, above the TouchArea so its taps never count)
+        if root.touch-test-step < 9: TextButton { x: 180px; y: 352px; width: 120px; text: "Cancel"; clicked => { Act.act("touch.cancel", ""); } }
     }
 
     // Hand-over from the boot splash: its last frame (logo and text on

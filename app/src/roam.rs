@@ -210,6 +210,10 @@ fn mark_poor(bssid: &str) {
 /// One check. False when it could not run (not connected, scan refused, the
 /// panel got busy): the caller tries again soon.
 fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
+    // the network is being changed in the settings: not now
+    if crate::wifi::switching() {
+        return false;
+    }
     let Some(link) = wpa_cli(&["status"]).as_deref().and_then(parse_status) else { return false };
     let Some(signal) = wpa_cli(&["signal_poll"]).as_deref().and_then(parse_signal) else { return false };
     if signal >= GOOD_SIGNAL && !leaving {
@@ -343,7 +347,8 @@ fn watch(linked: impl Fn() -> bool) {
         // missed beacons and answered pings in 0.25-3 s; off, in a few ms
         power_save_off();
         std::thread::sleep(WATCH_EVERY);
-        if linked() {
+        // (also while the network is being changed in the settings: that switch makes and checks the link itself)
+        if linked() || crate::wifi::switching() {
             away_since = None;
             continue;
         }

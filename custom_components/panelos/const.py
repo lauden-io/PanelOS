@@ -148,7 +148,7 @@ PLATFORMS = ["binary_sensor", "button", "notify", "number", "select", "sensor", 
 # the commands it gets back.
 ENTITY_KEYS = {
     "switch": ("screen", "auto_brightness", "proximity_wake"),
-    "select": ("dashboard", "theme", "screensaver", "screensaver_style", "display_mode"),
+    "select": ("dashboard", "theme", "screensaver", "screensaver_style", "display_mode", "time_format"),
     "number": ("brightness",),
     "sensor": ("illuminance", "soc_temperature", "wifi_signal", "ip_address", "app_version"),
     "binary_sensor": ("presence",),

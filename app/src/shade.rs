@@ -10,9 +10,25 @@ use slint::{Color, ComponentHandle, ModelRc, SharedString, VecModel};
 use crate::{hw, texts, with_state, AppWindow, SetBar, SetRow, SetSection, SetSeg, Theme};
 
 /// Rows of the settings list, in this order.
+const ROW_WIFI: i32 = 0;
+const ROW_HA: i32 = 1;
+const ROW_DISPLAY: i32 = 2;
+const ROW_VOICE: i32 = 3;
+const ROW_SOUND: i32 = 4;
 const ROW_STORAGE: i32 = 5;
 const ROW_TOUCH: i32 = 6;
+const ROW_ABOUT: i32 = 7;
 const ROW_RESTART: i32 = 8;
+
+/// The settings pages (SettingsLayer views).
+const VIEW_DISPLAY: i32 = 6;
+const VIEW_VOICE: i32 = 7;
+const VIEW_SOUND: i32 = 8;
+const VIEW_ABOUT: i32 = 9;
+
+/// The project's pages on the About page (a QR code each).
+const LINKS: [(&str, &str); 2] =
+    [("Project page", "https://github.com/lauden-io/PanelOS"), ("Report a problem", "https://github.com/lauden-io/PanelOS/issues")];
 
 pub fn open(ui: &AppWindow) {
     fill(ui);
@@ -55,6 +71,24 @@ pub fn fill(ui: &AppWindow) {
             }
             .into(),
         );
+        // the display page
+        let savers: Vec<SharedString> = crate::settings::SCREENSAVER_CHOICES.iter().map(|(_, l)| SharedString::from(*l)).collect();
+        ui.set_set_saver_options(ModelRc::new(VecModel::from(savers)));
+        ui.set_set_saver_index(s.settings.screensaver_index());
+        ui.set_set_saver_style(if s.settings.screensaver_style == "black" { 1 } else { 0 });
+        // the about page
+        let host = s.config.as_ref().map(|c| c.ha_host_port()).unwrap_or_default();
+        let ip = crate::pairing::local_ip_towards(if host.is_empty() { "8.8.8.8:53" } else { &host }).map(|ip| ip.to_string());
+        let ha = s.config.as_ref().map(|c| c.ha_url.trim_end_matches('/').to_string()).unwrap_or_default();
+        let about = vec![
+            info_row("PanelOS", format!("Version {}", env!("CARGO_PKG_VERSION"))),
+            info_row("Model", crate::panel_device::MODEL.to_string()),
+            info_row("Address", ip.unwrap_or_else(|| "–".into())),
+            info_row("Home Assistant", if ha.is_empty() { "–".into() } else { ha }),
+        ];
+        ui.set_set_about_rows(ModelRc::new(VecModel::from(about)));
+        let links: Vec<SetRow> = LINKS.iter().map(|(l, url)| info_row(l, url.trim_start_matches("https://").to_string())).collect();
+        ui.set_set_about_links(ModelRc::new(VecModel::from(links)));
     });
     rows(ui, &Slow::default());
     let weak = ui.as_weak();
@@ -65,6 +99,7 @@ pub fn fill(ui: &AppWindow) {
             wifi: wifi_link(),
             free: storage_free(),
             voice: Some(words.iter().filter_map(|id| known.iter().find(|w| w.id == *id).map(|w| w.phrase.clone())).collect()),
+            known: known.iter().map(|w| (w.id.clone(), w.phrase.clone())).collect(),
         };
         let _ = slint::invoke_from_event_loop(move || {
             if let Some(ui) = weak.upgrade() {
@@ -80,10 +115,64 @@ struct Slow {
     wifi: Option<(String, Option<f64>)>,
     free: Option<u64>,
     voice: Option<Vec<String>>,
+    /// The voice satellite's wake words: id, phrase.
+    known: Vec<(String, String)>,
+}
+
+/// A row of the About page: a name and its value.
+fn info_row(label: &str, value: String) -> SetRow {
+    SetRow { icon: SharedString::new(), label: label.into(), value: value.into(), danger: false }
+}
+
+/// The voice page's two wake word choices: the satellite's wake words (by phrase), and "None" + the same for the second.
+fn wake_choices(ui: &AppWindow, known: &[(String, String)], active: &[String]) {
+    let phrases: Vec<SharedString> = known.iter().map(|(_, p)| SharedString::from(p.as_str())).collect();
+    let pos = |i: usize| active.get(i).and_then(|id| known.iter().position(|(k, _)| k == id));
+    ui.set_set_wake1(pos(0).map_or(-1, |p| p as i32));
+    ui.set_set_wake2(pos(1).map_or(0, |p| p as i32 + 1));
+    let mut second = vec![SharedString::from("None")];
+    second.extend(phrases.iter().cloned());
+    ui.set_set_wake_options(ModelRc::new(VecModel::from(phrases)));
+    ui.set_set_wake_options2(ModelRc::new(VecModel::from(second)));
+}
+
+/// The active wake words after a pick on the voice page (`which` 0 the first, 1 the second; for the second, 0 = none).
+fn picked_wake_words(known: &[String], active: &[String], which: usize, index: usize) -> Vec<String> {
+    let first = active.first().cloned();
+    let second = active.get(1).cloned();
+    match which {
+        0 => {
+            let Some(new) = known.get(index).cloned() else { return active.to_vec() };
+            // the second one stays unless it is the new first one
+            std::iter::once(new.clone()).chain(second.filter(|w| *w != new)).collect()
+        }
+        _ => {
+            let new = index.checked_sub(1).and_then(|i| known.get(i)).cloned();
+            match (first, new) {
+                (Some(f), Some(n)) if f == n => active.to_vec(),
+                (Some(f), Some(n)) => vec![f, n],
+                (Some(f), None) => vec![f],
+                (None, Some(n)) => vec![n],
+                (None, None) => Vec::new(),
+            }
+        }
+    }
+}
+
+/// The About page's QR code: the chosen link.
+fn about_qr(ui: &AppWindow) {
+    let i = (ui.get_set_about_link().max(0) as usize).min(LINKS.len() - 1);
+    if let Some(img) = crate::pairing::qr_image(LINKS[i].1, 208) {
+        ui.set_set_about_qr(img);
+    }
 }
 
 /// The settings list (Wi-Fi and storage once read).
 fn rows(ui: &AppWindow, slow: &Slow) {
+    if !slow.known.is_empty() {
+        let active = with_state(|s| s.settings.wake_words.clone());
+        wake_choices(ui, &slow.known, &active);
+    }
     let list = with_state(|s| {
         let wifi = match &slow.wifi {
             Some((ssid, Some(dbm))) => format!("{ssid} · {dbm:.0} dBm"),
@@ -143,7 +232,44 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             if view == 4 {
                 storage(ui);
             }
+            if view == VIEW_ABOUT {
+                about_qr(ui);
+            }
             ui.set_set_view(view);
+        }
+        // the display page: theme (0 light, 1 dark, 2 auto), time format (0 24-hour, 1 12-hour), screensaver
+        "set.theme.mode" => {
+            crate::on_setting(ui, "theme", match value { "0" => "light", "1" => "dark", _ => "auto" });
+            with_state(|s| crate::update_theme(ui, s));
+            fill(ui);
+        }
+        "set.timefmt" => {
+            crate::on_setting(ui, "time_format", if value == "1" { "12" } else { "24" });
+            fill(ui);
+        }
+        "set.saver" => {
+            crate::on_setting(ui, "screensaver_index", value);
+            fill(ui);
+        }
+        "set.saver.style" => {
+            crate::on_setting(ui, "screensaver_style", if value == "1" { "black" } else { "clock" });
+            fill(ui);
+        }
+        // the voice page: the first or the second wake word (the second's 0 = none)
+        "set.wake1" | "set.wake2" => {
+            let known: Vec<String> = crate::voice::available_wake_words().into_iter().map(|w| w.id).collect();
+            let active = with_state(|s| s.settings.wake_words.clone());
+            let index = value.parse::<usize>().unwrap_or(usize::MAX);
+            let words = picked_wake_words(&known, &active, if what == "set.wake1" { 0 } else { 1 }, index);
+            if words != active {
+                crate::on_setting(ui, "wake_words", &words.join(","));
+            }
+            fill(ui);
+        }
+        // the about page: which link the QR code shows
+        "set.link" => {
+            ui.set_set_about_link(value.parse::<i32>().unwrap_or(0).clamp(0, LINKS.len() as i32 - 1));
+            about_qr(ui);
         }
         "set.brightness" | "set.brightness.done" => {
             let percent = (v.clamp(0.01, 1.0) * 100.0).round() as u8;
@@ -229,11 +355,20 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             });
         }
         "set.row" => match value.parse::<i32>().unwrap_or(-1) {
+            ROW_WIFI => crate::wifi::open(ui),
+            ROW_HA => crate::open_ha_setup(ui),
+            ROW_DISPLAY => ui.set_set_view(VIEW_DISPLAY),
+            ROW_VOICE => ui.set_set_view(VIEW_VOICE),
+            ROW_SOUND => ui.set_set_view(VIEW_SOUND),
             ROW_STORAGE => {
                 storage(ui);
                 ui.set_set_view(4);
             }
             ROW_TOUCH => crate::start_touch_test(ui),
+            ROW_ABOUT => {
+                about_qr(ui);
+                ui.set_set_view(VIEW_ABOUT);
+            }
             ROW_RESTART => ui.set_set_view(5),
             _ => {}
         },
@@ -451,7 +586,7 @@ fn size_text(bytes: u64) -> String {
 }
 
 /// The network and its signal (`iw dev wlan0 link`).
-fn wifi_link() -> Option<(String, Option<f64>)> {
+pub fn wifi_link() -> Option<(String, Option<f64>)> {
     let out = std::process::Command::new("iw").args(["dev", "wlan0", "link"]).output().ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let ssid = text.lines().find_map(|l| l.trim_start().strip_prefix("SSID: ").map(str::to_string))?;
@@ -461,4 +596,30 @@ fn wifi_link() -> Option<(String, Option<f64>)> {
         .and_then(|v| v.split_whitespace().next())
         .and_then(|v| v.parse().ok());
     Some((ssid, dbm))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn ids(v: &[&str]) -> Vec<String> {
+        v.iter().map(|x| x.to_string()).collect()
+    }
+
+    #[test]
+    fn wake_word_picks() {
+        let known = ids(&["alexa", "hey_jarvis", "okay_nabu"]);
+        let active = ids(&["okay_nabu", "hey_jarvis"]);
+        // a new first one keeps the second
+        assert_eq!(picked_wake_words(&known, &active, 0, 0), ids(&["alexa", "hey_jarvis"]));
+        // the second one as the first: the second goes
+        assert_eq!(picked_wake_words(&known, &active, 0, 1), ids(&["hey_jarvis"]));
+        // the second: none, another one, the first one again (no change)
+        assert_eq!(picked_wake_words(&known, &active, 1, 0), ids(&["okay_nabu"]));
+        assert_eq!(picked_wake_words(&known, &active, 1, 1), ids(&["okay_nabu", "alexa"]));
+        assert_eq!(picked_wake_words(&known, &active, 1, 3), active);
+        // without a first one the second becomes it; out of range changes nothing
+        assert_eq!(picked_wake_words(&known, &[], 1, 2), ids(&["hey_jarvis"]));
+        assert_eq!(picked_wake_words(&known, &active, 0, 9), active);
+    }
 }

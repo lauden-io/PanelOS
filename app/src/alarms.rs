@@ -126,7 +126,7 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
         .iter()
         .enumerate()
         .map(|(i, a)| AlarmItem {
-            time: format!("{}:{:02}", a.h, a.m).into(),
+            time: crate::clock::hm(a.h as u32, a.m as u32).into(),
             days: days_text(&a.days).into(),
             label: if a.label.is_empty() { "Alarm".into() } else { a.label.clone().into() },
             on: a.on,
@@ -144,17 +144,17 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
         Some((m, _, a)) => {
             ui.set_timers_next_h(a.h as f32 + a.m as f32 / 60.0);
             ui.set_timers_next_in(m as i32);
-            ui.set_timers_next_time(format!("{}:{:02}", a.h, a.m).into());
+            ui.set_timers_next_time(crate::clock::hm(a.h as u32, a.m as u32).into());
             ui.set_timers_next_label(if a.label.is_empty() { "Alarm".into() } else { a.label.clone().into() });
             let from = (a.h as i32 * 60 + a.m as i32 - 30).rem_euclid(1440);
-            ui.set_timers_dawn_from(format!("{}:{:02}", from / 60, from % 60).into());
+            ui.set_timers_dawn_from(crate::clock::hm(from as u32 / 60, from as u32 % 60).into());
         }
         None => {
             ui.set_timers_next_h(-1.0);
             ui.set_timers_next_in(-1);
         }
     }
-    let hours = |t: &str| t.split_once(':').and_then(|(h, m)| Some(h.parse::<f32>().ok()? + m.parse::<f32>().ok()? / 60.0));
+    let hours = |t: &str| crate::clock::parse_hm(t).map(|(h, m)| h as f32 + m as f32 / 60.0);
     let w = ui.get_weather();
     if let (Some(r), Some(st)) = (hours(w.sunrise.as_str()), hours(w.sunset.as_str())) {
         ui.set_timers_sunrise_h(r);
@@ -165,7 +165,7 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
             ui.set_timers_next_tint(tint(i));
             let (h, mm) = (m / 60, m % 60);
             let when = if h >= 24 { format!("in {} d {} h", h / 24, h % 24) } else if h > 0 { format!("in {h} h {mm} min") } else { format!("in {mm} min") };
-            format!("{}:{:02} · {when}", a.h, a.m)
+            format!("{} · {when}", crate::clock::hm(a.h as u32, a.m as u32))
         }
         None => String::new(),
     };
@@ -184,7 +184,7 @@ pub fn due(s: &mut crate::UiState) -> Option<(String, String, String)> {
     for a in s.settings.alarms.iter_mut() {
         let once = a.days.iter().all(|x| !x);
         if a.on && a.h == h && a.m == m && (once || a.days[wd]) {
-            rang = Some((format!("{}:{:02}", a.h, a.m), if a.label.is_empty() { "Alarm".to_string() } else { a.label.clone() }, a.ring_tone()));
+            rang = Some((crate::clock::hm(a.h as u32, a.m as u32), if a.label.is_empty() { "Alarm".to_string() } else { a.label.clone() }, a.ring_tone()));
             if once {
                 a.on = false;
                 changed = true;

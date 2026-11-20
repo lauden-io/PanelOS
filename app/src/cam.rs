@@ -348,7 +348,7 @@ fn doorbell(ui: &AppWindow, s: &crate::UiState) {
         .unwrap_or("Camera")
         .to_string();
     ui.set_cam_ring_title("Someone is at the door".into());
-    ui.set_cam_ring_sub(format!("{name} · {}", crate::pages::local_format(crate::pages::now(), "%H:%M")).into());
+    ui.set_cam_ring_sub(format!("{name} · {}", crate::clock::local_hm(crate::pages::now())).into());
     ui.set_cam_can_open(crate::page_option(s, "camera", "lock").and_then(|v| v.as_str().map(|l| !l.is_empty())).unwrap_or(false));
     ui.set_cam_can_talk(false);
     ui.set_cam_view(0);

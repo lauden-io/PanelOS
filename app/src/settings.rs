@@ -50,6 +50,8 @@ pub struct Settings {
     pub alarms: Vec<crate::alarms::Alarm>,
     /// The touch calibration's correction (pixels), from the touch test.
     pub touch_offset: (f32, f32),
+    /// The time format of every clock time the panel shows: true 24-hour, false 12-hour.
+    pub time_24h: bool,
 }
 
 /// What the web view shows in dashboard mode.
@@ -193,6 +195,7 @@ impl Default for Settings {
             calendar_view: 0,
             alarms: Vec::new(),
             touch_offset: (0.0, 0.0),
+            time_24h: true,
         }
     }
 }
