@@ -20,7 +20,8 @@ export struct HomeItem {
                     //        4 minimal analog, 5 analog with numerals, 6 split-flap, 7 the time in words,
                     //        8 nixie tubes, 9 LCD quartz watch, 10 twin-bell
                     // sensor: its sensor's place in the page's sensor list (the app sets it; -1 none)
-                    // people: its group in the People list (the app sets it: its people, and whether the ones away show)
+                    // people: its group in the People list (the app sets it: its people, whether the ones away show,
+                    //        pictures or initials)
     accent: color,  // the app fills in the panel accent when the widget has none of its own
     weight: int,    // font weight (100 .. 900), the app fills in the panel weight
     tap: bool,      // a tap opens the widget's view (fixed per kind, see tap-text in HomeGrid); off: no tap action
@@ -31,7 +32,7 @@ export struct HomeItem {
                     //   event: 1 time, 2 calendar colour; curve: 1 rain bars, 2 icons; hourly / daily: 1 rain chance
                     //   weather details: 1 wind, 2 humidity, 4 chance of rain, 8 sunrise and sunset
                     //   music: 1 long titles scroll (style = speed 1..5) instead of being cut off
-                    //   sensor: 1 name, 2 icon; timer: 1 name; people: 1 the ones away too
+                    //   sensor: 1 name, 2 icon; timer: 1 name; people: 1 the ones away too, 2 initials only (no pictures)
     card: int,      // the card behind the widget: 0 = the widget's own (as designed), 1..101 = (card - 1) %
                     // opacity of a card in the card colour (the integration's "Background" slider)
 }
@@ -1016,13 +1017,21 @@ component TimerW inherits Rectangle {
 }
 
 // --------------------------------------------------------------------------- people
-// The people's heads: the ones at home in their colour, the ones away (or unknown) faint. The widget shows its group
+// The People widgets' profile pictures, already round (the app fills it as they arrive; a head's Person.pic is its
+// picture's place here + 1). Kept apart from the heads: pictures compare by identity, the heads by value.
+export global PeoplePics {
+    in property <[image]> pics;
+}
+
+// The people's heads: their profile picture (with the widget's Profile pictures on and a picture in Home Assistant)
+// or their initials in their colour; the ones away (or unknown) fainter inside a grey ring. The widget shows its group
 // of the People list (its `style`, set by the app: its people, the ones away only with its switch on), in as many
 // rows as give the biggest heads, each row centred.
 component PeopleW inherits Rectangle {
     in property <color> ink: #ffffff;
     in property <[Person]> people;
     in property <HomeItem> it;
+    property <color> grey: #8e8e93;       // the ring of the ones away, on dark and light pages alike
     property <length> most: root.it.h >= 2 ? 64px : root.it.w < 2 ? 40px : 46px;
     property <length> gap: root.it.h >= 2 ? 10px : 6px;
     property <length> room-w: root.width - 16px;
@@ -1048,14 +1057,24 @@ component PeopleW inherits Rectangle {
         property <length> d: root.size(Math.max(1, p.n), self.c);
         x: (root.width - (self.in-line * self.d + (self.in-line - 1) * root.gap)) / 2 + Math.mod(p.at, self.c) * (self.d + root.gap);
         y: (root.height - (self.lines * self.d + (self.lines - 1) * root.gap)) / 2 + self.line * (self.d + root.gap);
-        width: self.d; height: self.d; border-radius: self.d / 2;
-        background: p.home ? p.tint : root.ink.with-alpha(0.14);
-        border-width: p.home ? 0px : 1.5px; border-color: root.ink.with-alpha(0.35);
-        Text {
-            text: p.initials; font-size: head.d * 0.38; font-weight: 600;
-            color: p.home ? #ffffff : root.ink.with-alpha(0.65);
+        width: self.d; height: self.d;
+        property <bool> pic: p.pic > 0 && p.pic <= PeoplePics.pics.length;
+        // away: the ring at the head's edge, the head inside it with a gap, fainter (each part on its own: no layer)
+        property <length> rw: p.home ? 0px : Math.max(2px, self.d * 0.06);
+        property <length> pad: p.home ? 0px : self.rw + Math.max(1.5px, self.d * 0.05);
+        property <length> inner: self.d - 2 * self.pad;
+        property <float> fade: p.home ? 1 : 0.45;
+        if !p.home: Rectangle { border-radius: head.d / 2; border-width: head.rw; border-color: root.grey; }
+        if !head.pic: Rectangle {
+            x: head.pad; y: head.pad; width: head.inner; height: head.inner; border-radius: head.inner / 2;
+            background: p.tint.with-alpha(head.fade);
+        }
+        if !head.pic: Text {
+            text: p.initials; font-size: head.inner * 0.38; font-weight: 600;
+            color: #ffffff.with-alpha(p.home ? 1 : 0.75);
             horizontal-alignment: center; vertical-alignment: center;
         }
+        if head.pic: Image { x: head.pad; y: head.pad; width: head.inner; height: head.inner; source: PeoplePics.pics[p.pic - 1]; opacity: head.fade; }
     }
 }
 
@@ -1374,6 +1393,15 @@ component WidgetMenu inherits Rectangle {
                         if pb.k < root.person-names.length: TouchArea { clicked => { Act.act("home.set", root.index + ":person:" + pb.k + ":1"); } }
                     }
                 }
+            }
+            // People: their profile pictures (bit 2 keeps the initials only, so a widget without it shows pictures)
+            if root.it.kind == 10: HorizontalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 8px;
+                min-height: 52px;
+                Text { text: "Profile pictures"; font-size: 15px; color: EditInk.text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                VerticalLayout { alignment: center;
+                    Toggle { on: !root.on(2); tk-raised: EditInk.raised; tk-line: EditInk.line; tk-knob: EditInk.muted;
+                        toggled => { Act.act("home.set", root.index + ":opt:2:1"); } } }
             }
             // Show: what the widget adds (two columns, each a checkbox with its name)
             if root.bit-names.length > 0: VerticalLayout {

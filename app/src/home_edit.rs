@@ -14,7 +14,7 @@ use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::ha::{Command, EntityState};
 use crate::pages::PeopleGroup;
-use crate::{AppWindow, HomeItem, HomeSensor, UiState};
+use crate::{AppWindow, HomeItem, HomeSensor, PeoplePics, UiState};
 
 /// How long a finger rests on the page before the lock opens.
 const HOLD: Duration = Duration::from_millis(700);
@@ -76,6 +76,10 @@ thread_local! {
     static PANEL_PEOPLE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// The people offered in a People widget's menu (the ones the panel knows, in entity id order).
     static PERSONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// A People widget of the settings shows profile pictures (since the pages were last drawn).
+    static PICTURES: Cell<bool> = const { Cell::new(false) };
+    /// The people whose picture is in PeoplePics.pics, in its order, and the pictures' count of changes then.
+    static PIC_IDS: RefCell<(u64, Vec<String>)> = const { RefCell::new((u64::MAX, Vec::new())) };
     /// The widgets sent to Home Assistant and not yet back in its settings: (page in its list, widgets, when).
     static PENDING: RefCell<Option<(usize, Value, Instant)>> = const { RefCell::new(None) };
     /// The widget picked in "Add widget", waiting for its place.
@@ -440,14 +444,16 @@ fn panel_people(config: Option<&Value>) -> Vec<String> {
     person_list(config.and_then(|c| c.get("people")))
 }
 
-/// The pages are drawn anew: the People groups start over (everyone with the ones away first).
+/// The pages are drawn anew: the People groups start over (everyone with the ones away and pictures first: the new
+/// widget as the picker shows it).
 pub fn people_start(config: Option<&Value>) {
     PANEL_PEOPLE.with(|p| *p.borrow_mut() = panel_people(config));
     GROUPS.with(|g| {
         let mut g = g.borrow_mut();
         g.clear();
-        g.push(PeopleGroup { away: true, ids: Vec::new() });
+        g.push(PeopleGroup { away: true, pics: true, ids: Vec::new() });
     });
+    PICTURES.set(false);
 }
 
 /// The people a People widget shows: its own (`people`), else the settings' list; none: everyone.
@@ -460,10 +466,14 @@ fn picked_people(item: &Value) -> Vec<String> {
     }
 }
 
-/// The slot of a People widget's group in the People list (`style` of the widget on the panel).
+/// The slot of a People widget's group in the People list (`style` of the widget on the panel). Its switches: bit 1
+/// the ones away too, bit 2 initials only (without it, the profile pictures).
 pub fn people_slot(item: &Value) -> i32 {
-    let away = item.get("opts").and_then(Value::as_i64).unwrap_or(0) & 1 == 1;
-    let group = PeopleGroup { away, ids: picked_people(item) };
+    let opts = item.get("opts").and_then(Value::as_i64).unwrap_or(0);
+    let group = PeopleGroup { away: opts & 1 == 1, pics: opts & 2 == 0, ids: picked_people(item) };
+    if group.pics {
+        PICTURES.set(true);
+    }
     GROUPS.with(|g| {
         let mut g = g.borrow_mut();
         match g.iter().position(|x| *x == group) {
@@ -476,26 +486,22 @@ pub fn people_slot(item: &Value) -> i32 {
     })
 }
 
-/// The people the panel follows for its People widgets: the ones they name, and everyone (Home Assistant's list of
-/// people, from the integration) when one of them shows everyone or the heads at the bottom of the pages are on.
+/// The people the panel follows for its People widgets and the heads at the bottom of the pages: the ones they name,
+/// and everyone Home Assistant has (its list of people, from the integration) while there is a People widget (its
+/// menu offers every person, by name) or the heads at the bottom show everyone.
 pub fn people_entities(config: Option<&Value>) -> Vec<String> {
     let Some(c) = config else { return Vec::new() };
     let panel = panel_people(Some(c));
     let mut out = Vec::new();
     let mut everyone = false;
-    let mut want = |ids: Vec<String>| {
-        if ids.is_empty() {
-            everyone = true;
-        } else {
-            out.extend(ids);
-        }
-    };
     if c.get("show_people").and_then(Value::as_bool) == Some(true) {
-        want(panel.clone());
+        everyone |= panel.is_empty();
+        out.extend(panel.iter().cloned());
     }
     for it in all_items(c).filter(|i| i.get("kind").and_then(Value::as_i64) == Some(10)) {
+        everyone = true;
         let own = person_list(it.get("people"));
-        want(if own.is_empty() { panel.clone() } else { own });
+        out.extend(if own.is_empty() { panel.clone() } else { own });
     }
     if everyone {
         out.extend(person_list(c.get("person_entities")));
@@ -529,6 +535,12 @@ pub fn toggle_person(it: &mut Value, id: &str, all: &[String]) -> bool {
         None => return false,
     }
     *it != old
+}
+
+/// Profile pictures arrived: the People widgets show them.
+pub fn people_pictures_arrived() {
+    let Some(ui) = UI.with(|u| u.borrow().as_ref().and_then(slint::Weak::upgrade)) else { return };
+    crate::with_state(|s| refresh(&ui, s));
 }
 
 /// The open menu's People widget: which of the offered people it shows.
@@ -596,11 +608,27 @@ pub fn refresh(ui: &AppWindow, s: &UiState) {
     }
     // the People widgets' heads, and the people their menu offers
     let groups = GROUPS.with(|g| g.borrow().clone());
-    let heads = crate::pages::people_groups(&s.states, &groups);
+    let ids = crate::pages::person_ids(&s.states);
+    // the profile pictures: of every person the panel follows while a People widget shows pictures (or the picker
+    // shows a new one), none otherwise; they come in one by one and the heads show each as it arrives
+    let pics = PICTURES.get() || ui.get_home_picker();
+    let wanted: Vec<(String, String)> = if pics {
+        ids.iter().filter_map(|e| crate::pages::person_picture(&s.states[e]).map(|u| (e.clone(), u.to_string()))).collect()
+    } else {
+        Vec::new()
+    };
+    crate::avatars::want(&wanted);
+    // the pictures here now (set again only when one came or went: pictures compare by identity)
+    if PIC_IDS.with(|p| p.borrow().0 != crate::avatars::version()) {
+        let (ver, ready) = crate::avatars::ready();
+        let (list, pics): (Vec<String>, Vec<slint::Image>) = ready.into_iter().unzip();
+        ui.global::<PeoplePics>().set_pics(ModelRc::new(VecModel::from(pics)));
+        PIC_IDS.with(|p| *p.borrow_mut() = (ver, list));
+    }
+    let heads = crate::pages::people_groups(&s.states, &groups, |id| PIC_IDS.with(|p| p.borrow().1.iter().position(|x| x == id)));
     if !crate::same_rows(&ui.get_home_people(), &heads) {
         ui.set_home_people(ModelRc::new(VecModel::from(heads)));
     }
-    let ids = crate::pages::person_ids(&s.states);
     if PERSONS.with(|p| *p.borrow() != ids) {
         let names: Vec<SharedString> =
             ids.iter().map(|e| s.states[e].attrs.get("friendly_name").and_then(Value::as_str).unwrap_or(e.trim_start_matches("person.")).into()).collect();
@@ -720,6 +748,10 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             let open = !ui.get_home_picker();
             menus_off(ui);
             ui.set_home_picker(open);
+            // the People preview shows the profile pictures
+            if open {
+                crate::with_state(|s| refresh(ui, s));
+            }
         }
         "home.add-close" => ui.set_home_picker(false),
         // a preview picked: "kind:style:w:h:opts" (the sensor widget adds its sensor's place among the choices)
@@ -1011,23 +1043,34 @@ mod tests {
         assert_eq!(people_slot(&items[0]), 0);
         assert_eq!(people_slot(&items[1]), 1);
         assert_eq!(people_slot(&items[2]), 0);
-        assert_eq!(GROUPS.with(|g| g.borrow()[1].clone()), PeopleGroup { away: false, ids: vec!["person.ben".into()] });
+        assert_eq!(GROUPS.with(|g| g.borrow()[1].clone()), PeopleGroup { away: false, pics: true, ids: vec!["person.ben".into()] });
+        assert!(PICTURES.get());
         // a widget shows everyone: the panel follows everyone Home Assistant has
         let mut follow = people_entities(Some(&c));
         follow.sort();
         follow.dedup();
         assert_eq!(follow, ["person.anna", "person.ben", "person.cleo"]);
-        // only named ones: only those; no People widget: nobody
+        // only named ones: everyone still (the menu offers them all), the named ones even before Home Assistant's list;
+        // no People widget: nobody
         let named = json!({ "person_entities": ["person.anna", "person.ben"], "pages": [{ "kind": "home", "options": { "items": [
             { "kind": 10, "col": 0, "row": 0, "w": 2, "h": 1, "people": ["person.ben"] }] } }] });
-        assert_eq!(people_entities(Some(&named)), ["person.ben"]);
+        let mut follow = people_entities(Some(&named));
+        follow.sort();
+        follow.dedup();
+        assert_eq!(follow, ["person.anna", "person.ben"]);
+        let early = json!({ "pages": [{ "kind": "home", "options": { "items": [{ "kind": 10, "col": 0, "row": 0, "w": 2, "h": 1, "people": ["person.ben"] }] } }] });
+        assert_eq!(people_entities(Some(&early)), ["person.ben"]);
         assert!(people_entities(Some(&json!({ "person_entities": ["person.anna"], "pages": [{ "kind": "music" }] }))).is_empty());
         // the settings' old list: the default of a widget without its own, and the heads at the bottom
         let old = json!({ "people": ["person.cleo"], "show_people": true, "pages": [{ "kind": "home", "options": { "items": [
             { "kind": 10, "col": 0, "row": 0, "w": 2, "h": 1, "opts": 1 }] } }] });
         people_start(Some(&old));
+        assert!(!PICTURES.get());
         assert_eq!(people_slot(&old["pages"][0]["options"]["items"][0]), 1);
         assert_eq!(people_entities(Some(&old)), ["person.cleo", "person.cleo"]);
+        // the heads at the bottom alone, with the settings' list: its people only
+        let bottom = json!({ "people": ["person.cleo"], "show_people": true, "person_entities": ["person.anna", "person.cleo"] });
+        assert_eq!(people_entities(Some(&bottom)), ["person.cleo"]);
     }
 
     #[test]

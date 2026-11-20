@@ -660,16 +660,24 @@ pub fn people(states: &HashMap<String, EntityState>, wanted: &[String]) -> Vec<P
         .collect()
 }
 
-/// What a People widget shows: the people it names (none: everyone), and the ones away too or only the ones at home.
+/// What a People widget shows: the people it names (none: everyone), the ones away too or only the ones at home, and
+/// their profile pictures or only their initials.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PeopleGroup {
     pub away: bool,
+    pub pics: bool,
     pub ids: Vec<String>,
 }
 
+/// A person's profile picture in Home Assistant (`entity_picture`, a path on Home Assistant or an address), if any.
+pub fn person_picture(st: &EntityState) -> Option<&str> {
+    attr_str(st, "entity_picture").map(str::trim).filter(|u| !u.is_empty())
+}
+
 /// The People widgets' heads, group by group: each group's people in entity id order, each with its place in the
-/// group and the group's size (the widget lays them out in rows from these).
-pub fn people_groups(states: &HashMap<String, EntityState>, groups: &[PeopleGroup]) -> Vec<Person> {
+/// group and the group's size (the widget lays them out in rows from these); in a group with pictures, the ones
+/// `pic` has a picture of (by person id: its place among the pictures) show it.
+pub fn people_groups(states: &HashMap<String, EntityState>, groups: &[PeopleGroup], pic: impl Fn(&str) -> Option<usize>) -> Vec<Person> {
     let all = person_ids(states);
     let mut out = Vec::new();
     for (g, group) in groups.iter().enumerate() {
@@ -681,7 +689,8 @@ pub fn people_groups(states: &HashMap<String, EntityState>, groups: &[PeopleGrou
             .collect();
         let n = shown.len() as i32;
         for (at, (place, id)) in shown.into_iter().enumerate() {
-            out.push(Person { group: g as i32, at: at as i32, n, ..head(id, &states[id], place) });
+            let pic = if group.pics { pic(id).map_or(0, |k| k as i32 + 1) } else { 0 };
+            out.push(Person { group: g as i32, at: at as i32, n, pic, ..head(id, &states[id], place) });
         }
     }
     out
@@ -965,11 +974,11 @@ mod tests {
         let states = crowd();
         assert_eq!(person_ids(&states), ["person.anna", "person.ben", "person.cleo", "person.dora"]);
         let groups = [
-            PeopleGroup { away: true, ids: vec![] },
-            PeopleGroup { away: false, ids: vec![] },
-            PeopleGroup { away: true, ids: vec!["person.dora".into(), "person.cleo".into()] },
+            PeopleGroup { away: true, pics: false, ids: vec![] },
+            PeopleGroup { away: false, pics: false, ids: vec![] },
+            PeopleGroup { away: true, pics: false, ids: vec!["person.dora".into(), "person.cleo".into()] },
         ];
-        let heads = people_groups(&states, &groups);
+        let heads = people_groups(&states, &groups, |_| None);
         let of = |g: i32| heads.iter().filter(|p| p.group == g).map(|p| format!("{} {} {}/{}", p.initials, p.home, p.at, p.n)).collect::<Vec<_>>();
         // everyone, the ones away (and unknown) too, faint
         assert_eq!(of(0), ["A true 0/4", "BO false 1/4", "CB false 2/4", "D true 3/4"]);
@@ -985,6 +994,25 @@ mod tests {
         let bottom = people(&states, &["person.ben".to_string()]);
         assert_eq!(bottom.len(), 1);
         assert_eq!(bottom[0].initials, "BO");
+    }
+
+    #[test]
+    fn people_widgets_show_pictures_only_with_their_switch() {
+        let mut states = crowd();
+        states.get_mut("person.anna").unwrap().attrs.insert("entity_picture".into(), json!("/api/image/serve/abc/512x512"));
+        states.get_mut("person.ben").unwrap().attrs.insert("entity_picture".into(), json!(" "));
+        assert_eq!(person_picture(&states["person.anna"]), Some("/api/image/serve/abc/512x512"));
+        assert_eq!(person_picture(&states["person.ben"]), None);
+        assert_eq!(person_picture(&states["person.dora"]), None);
+        let groups = [PeopleGroup { away: true, pics: true, ids: vec![] }, PeopleGroup { away: true, pics: false, ids: vec![] }];
+        let heads = people_groups(&states, &groups, |id| (id == "person.anna").then_some(2));
+        let pics = |g: i32| heads.iter().filter(|p| p.group == g).map(|p| p.pic).collect::<Vec<_>>();
+        // with pictures: the one with a picture shows it (its place among the pictures + 1), the others their initials
+        assert_eq!(pics(0), [3, 0, 0, 0]);
+        // initials only
+        assert_eq!(pics(1), [0, 0, 0, 0]);
+        // heads without pictures compare equal (the model is set again only when something changed)
+        assert_eq!(people_groups(&states, &groups, |_| None), people_groups(&states, &groups, |_| None));
     }
 
     #[test]

@@ -10,6 +10,7 @@ mod alarms;
 mod alerts;
 mod artwork;
 mod auth;
+mod avatars;
 mod cal;
 mod cam;
 // Camera pictures: JPEG decode, frames through Home Assistant's camera proxy.
