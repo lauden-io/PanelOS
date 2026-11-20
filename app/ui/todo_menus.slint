@@ -1,0 +1,679 @@
+// The to-do page's menus (spec 40): the chip's list picker and the page settings (from the quick shade's page row), each
+// an object of the look, drawn as the children of a MenuHost (widgets.slint) from its motion clocks:
+// plain the brand card, receipt till paper printed out of a slot, terminal its own commands, label maker embossed tapes
+// on a dark card (every tape drawn by the app's tape drawer), notepad a page of the pad flipping down from its binding.
+// Rows to tap are at least 40 px; long names wrap; past y 468 a menu's rows scroll inside.
+import { Theme, Act, Words, Clock } from "theme.slint";
+import { Icon, Dropdown, Segmented, TextButton } from "widgets.slint";
+
+export struct TodoList {
+    name: string,
+    icon: string,
+    open: int,             // items still to do
+    tint: int,             // the list's colour in the label maker look: 0 red, 1 blue, 2 green, 3 black
+    tape: image,           // label maker menu: the name on its tape(s) in the list's colour (the shown one marked), drawn by the app
+    count-tape: image,     // label maker menu: what is left, on a small white tape
+}
+
+// ---------------------------------------------------------------- shared parts
+
+// dashes along a line (the receipt's rules and its dashed fields)
+component DashLine inherits Rectangle {
+    in property <color> ink;
+    in property <length> dash: 6px;
+    in property <length> gap: 4px;
+    in property <bool> vertical;
+    property <length> run: root.vertical ? root.height : root.width;
+    for i in Math.ceil(root.run / (root.dash + root.gap)): Rectangle {
+        x: root.vertical ? 0px : i * (root.dash + root.gap);
+        y: root.vertical ? i * (root.dash + root.gap) : 0px;
+        width: root.vertical ? root.width : Math.min(root.dash, root.run - i * (root.dash + root.gap));
+        height: root.vertical ? Math.min(root.dash, root.run - i * (root.dash + root.gap)) : root.height;
+        background: root.ink;
+    }
+}
+
+component DashFrame inherits Rectangle {
+    in property <color> ink;
+    in property <length> line: 1.5px;
+    DashLine { x: 0; y: 0; width: root.width; height: root.line; ink: root.ink; dash: 5px; gap: 3px; }
+    DashLine { x: 0; y: root.height - root.line; width: root.width; height: root.line; ink: root.ink; dash: 5px; gap: 3px; }
+    DashLine { x: 0; y: 0; width: root.line; height: root.height; ink: root.ink; dash: 5px; gap: 3px; vertical: true; }
+    DashLine { x: root.width - root.line; y: 0; width: root.line; height: root.height; ink: root.ink; dash: 5px; gap: 3px; vertical: true; }
+}
+
+// green phosphor letters with a soft glow (the terminal): four faint copies around the letters, drawn once into a layer
+component Phosphor inherits Rectangle {
+    in property <string> text;
+    in property <color> ink: #3dff74;
+    in property <color> glow: #3dff74;
+    in property <length> font-size: 15px;
+    in property <int> font-weight: 400;
+    in property <TextWrap> wrap: word-wrap;
+    in property <float> lh: 1;
+    in property <TextHorizontalAlignment> horizontal-alignment: left;
+    out property <length> text-h: t.preferred-height;
+    out property <length> text-w: t.preferred-width;
+    cache-rendering-hint: true;
+    for o in [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }]: Text {
+        x: o.x * 1.3px; y: o.y * 1.3px; width: root.width; height: root.height;
+        text: root.text; font-family: "DejaVu Sans Mono"; font-size: root.font-size; font-weight: root.font-weight; color: root.glow.with-alpha(0.22);
+        wrap: root.wrap; line-height-factor: root.lh; horizontal-alignment: root.horizontal-alignment; vertical-alignment: top;
+    }
+    t := Text {
+        x: 0; y: 0; width: root.width; height: root.height;
+        text: root.text; font-family: "DejaVu Sans Mono"; font-size: root.font-size; font-weight: root.font-weight; color: root.ink;
+        wrap: root.wrap; line-height-factor: root.lh; horizontal-alignment: root.horizontal-alignment; vertical-alignment: top;
+    }
+}
+
+// one row of a menu that comes out of the right edge like a printed label (the label maker: 70 ms, then a 1.5 px
+// knock); other looks show it at once
+component RevealRow inherits Rectangle {
+    in property <bool> printed;
+    in property <float> t: 100000;          // ms since this row's turn
+    property <float> u: !root.printed ? 1 : clamp(root.t / 70, 0, 1);
+    property <length> knock: root.printed && root.t > 70 && root.t < 120 ? 1.5px * Math.sin((root.t - 70) / 50 * 180deg) : 0px;
+    Rectangle {
+        x: root.width * (1 - root.u); y: 0; width: root.width * root.u; height: root.height; clip: root.u < 1;
+        Rectangle { x: -parent.x + root.knock; y: 0; width: root.width; height: root.height;
+            @children
+        }
+    }
+}
+
+// a tape the app drew, as a button (the label maker's Done): presses in like the 28.7 button
+component TapeButton inherits Rectangle {
+    in property <image> tape;
+    callback clicked;
+    width: root.tape.width * 1px;
+    height: root.tape.height * 1px;
+    property <float> sq: ta.pressed ? 0.96 : 1;
+    animate sq { duration: ta.pressed ? 60ms : 180ms; easing: cubic-bezier(0.34, 1.6, 0.64, 1); }
+    Image { x: root.width * (1 - root.sq) / 2; y: root.height * (1 - root.sq) / 2; width: root.width * root.sq; height: root.height * root.sq;
+        source: root.tape; image-fit: fill; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// The page settings' rows: Look (28.5 dropdown), Time format (28.4 segmented, panel-wide: 32.3) and Done (28.7), in the
+// look's letters and colours. A new look closes the menu and opens it again as the new look's menu (the app does it).
+component TodoSettingsBody inherits VerticalLayout {
+    in property <int> look;
+    in property <[string]> look-names;
+    // the labels
+    in property <string> label-font;
+    in property <length> label-size: 14px;
+    in property <int> label-weight: 500;
+    in property <color> label-color: Theme.muted;
+    in property <bool> label-caps;
+    in property <length> label-spacing: 0px;
+    in property <[image]> label-tapes;       // the label maker: "LOOK" and "TIME FORMAT" on the app's own tapes
+    // the controls in the look's colours (spec 32.0 tokens) and letters
+    in property <color> tk-raised: Theme.surface-raised;
+    in property <color> tk-line: Theme.outline;
+    in property <color> tk-text: Theme.text;
+    in property <color> tk-muted: Theme.muted;
+    in property <color> tk-on-text: Theme.background;
+    in property <color> tk-menu: Theme.surface-raised;
+    in property <color> tk-pressed: Theme.surface-pressed;
+    in property <color> tk-accent: Theme.accent;
+    in property <color> tk-pill: root.tk-text;
+    in property <length> field-radius: -1px;
+    in property <length> seg-radius: -1px;
+    in property <length> done-radius: -1px;
+    in property <string> ctl-font;
+    in property <length> ctl-size: 15px;
+    in property <int> ctl-weight: 500;
+    in property <bool> ctl-caps;
+    in property <bool> dashed;               // the receipt: a dashed field, a ruled frame round the pill
+    in property <color> frame-ink;
+    in property <image> done-tape;           // the label maker: Done is a red tape
+    in property <length> pad-x: 10px;
+    in property <length> pad-y: 8px;
+    // the label maker's rows come out after the head, 50 ms apart
+    in property <bool> printed;
+    in property <float> t-in: 100000;
+    alignment: start;
+    spacing: 0px;
+    property <bool> tapes: root.label-tapes.length >= 2;
+    property <length> lh: root.tapes ? Math.max(root.label-tapes[0].height, root.label-tapes[1].height) * 1px : lm.preferred-height;
+    property <bool> tape-done: root.done-tape.width > 0;
+    property <length> done-h: root.tape-done ? root.done-tape.height * 1px : 48px;
+    pure function cap(s: string) -> string { return root.label-caps ? s.to-uppercase() : s; }
+
+    RevealRow {
+        height: root.pad-y * 2 + root.lh + 6px + 48px; printed: root.printed; t: root.t-in - 60 - 50;
+        lm := Text { visible: false; text: "Look"; font-family: root.label-font; font-size: root.label-size; font-weight: root.label-weight; }
+        if root.tapes: Image { x: root.pad-x - 4px; y: root.pad-y; width: root.label-tapes[0].width * 1px; height: root.label-tapes[0].height * 1px; source: root.label-tapes[0]; }
+        if !root.tapes: Text { x: root.pad-x; y: root.pad-y; width: parent.width - 2 * root.pad-x; height: root.lh; text: root.cap("Look");
+            font-family: root.label-font; font-size: root.label-size; font-weight: root.label-weight; color: root.label-color; letter-spacing: root.label-spacing;
+            vertical-alignment: center; }
+        if root.dashed: DashFrame { x: root.pad-x; y: root.pad-y + root.lh + 6px; width: parent.width - 2 * root.pad-x; height: 48px; ink: root.frame-ink; }
+        Dropdown {
+            x: root.pad-x; y: root.pad-y + root.lh + 6px; width: parent.width - 2 * root.pad-x;
+            options: root.look-names; selected: root.look;
+            tk-raised: root.tk-raised; tk-line: root.tk-line; tk-text: root.tk-text; tk-muted: root.tk-muted; tk-menu: root.tk-menu;
+            tk-pressed: root.tk-pressed; tk-accent: root.tk-accent; tk-radius: root.field-radius;
+            tk-font: root.ctl-font; tk-font-size: root.ctl-size; tk-font-weight: root.ctl-weight; tk-caps: root.ctl-caps;
+            picked(i) => { Act.act("todo.look", i); }
+        }
+    }
+    RevealRow {
+        height: root.pad-y * 2 + root.lh + 6px + 40px; printed: root.printed; t: root.t-in - 60 - 100;
+        if root.tapes: Image { x: root.pad-x - 4px; y: root.pad-y; width: root.label-tapes[1].width * 1px; height: root.label-tapes[1].height * 1px; source: root.label-tapes[1]; }
+        if !root.tapes: Text { x: root.pad-x; y: root.pad-y; width: parent.width - 2 * root.pad-x; height: root.lh; text: root.cap("Time format");
+            font-family: root.label-font; font-size: root.label-size; font-weight: root.label-weight; color: root.label-color; letter-spacing: root.label-spacing;
+            vertical-alignment: center; }
+        Segmented {
+            x: root.pad-x; y: root.pad-y + root.lh + 6px; width: parent.width - 2 * root.pad-x;
+            options: ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
+            tk-raised: root.tk-raised; tk-text: root.tk-text; tk-on-text: root.tk-on-text; tk-accent: root.tk-accent; tk-pill: root.tk-pill;
+            tk-radius: root.seg-radius; tk-font: root.ctl-font; tk-font-size: root.ctl-size; tk-font-weight: root.ctl-weight; tk-caps: root.ctl-caps;
+            picked(i) => { Act.act("set.h24", i == 0 ? "true" : "false"); }
+        }
+        if root.dashed: Rectangle { x: root.pad-x; y: root.pad-y + root.lh + 6px; width: parent.width - 2 * root.pad-x; height: 40px;
+            border-width: 1.5px; border-color: root.frame-ink; }
+    }
+    RevealRow {
+        height: 6px + root.done-h + 8px; printed: root.printed; t: root.t-in - 60 - 150;
+        dt := Text { visible: false; text: root.ctl-caps ? "DONE" : "Done"; font-family: root.ctl-font; font-size: root.ctl-size + 1px; font-weight: Math.max(600, root.ctl-weight); }
+        if !root.tape-done: TextButton {
+            x: parent.width - root.pad-x - self.width; y: 6px; width: Math.max(96px, dt.preferred-width + 44px);
+            text: "Done"; primary: true;
+            tk-text: root.tk-text; tk-on-text: root.tk-on-text; tk-pressed: root.tk-pressed; tk-raised: root.tk-raised; tk-radius: root.done-radius;
+            tk-font: root.ctl-font; tk-font-size: root.ctl-size + 1px; tk-font-weight: Math.max(600, root.ctl-weight); tk-caps: root.ctl-caps;
+            clicked => { Act.act("todo.settings-close", ""); }
+        }
+        if root.tape-done: TapeButton { x: parent.width - root.pad-x - self.width + 4px; y: 6px; tape: root.done-tape;
+            clicked => { Act.act("todo.settings-close", ""); } }
+    }
+}
+
+// ---------------------------------------------------------------- 40.1 plain: the brand card (32.1, the 28.5 menu)
+// It opens in 140 ms from 0.96 with a fade, from the corner it hangs from (the picker the top right, the settings the
+// top middle); it fades out in 100 ms.
+component BrandMotion inherits Rectangle {
+    in property <float> t-in;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <bool> from-corner;
+    property <float> u: 1 - Math.pow(1 - clamp(root.t-in / 140, 0, 1), 3);
+    opacity: root.leaving ? 1 - clamp(root.t-out / 100, 0, 1) : root.u;
+    transform-scale-x: 0.96 + 0.04 * root.u;
+    transform-scale-y: 0.96 + 0.04 * root.u;
+    transform-origin: { x: root.from-corner ? root.width : root.width / 2, y: 0px };
+}
+
+export component TodoBrandPicker inherits BrandMotion {
+    in property <[TodoList]> lists;
+    in property <int> sel;
+    in property <length> max-h: 420px;
+    from-corner: true;
+    property <length> head-h: 30px;
+    height: Math.min(root.max-h, 12px + root.head-h + rows.preferred-height);
+    background: Theme.surface-raised;
+    border-width: 1px;
+    border-color: Theme.outline;
+    border-radius: 14px;
+    drop-shadow-blur: 32px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #00000073;
+    TouchArea { }
+    Text { x: 16px; y: 6px; height: root.head-h; text: "Lists"; font-size: 13px; font-weight: 600; color: Theme.muted; vertical-alignment: center; }
+    Flickable {
+        x: 6px; y: 6px + root.head-h; width: root.width - 12px; height: root.height - 12px - root.head-h;
+        interactive: rows.preferred-height > self.height;
+        content-height: rows.preferred-height;
+        rows := VerticalLayout {
+            x: 0; y: 0; width: parent.width; spacing: 0px; alignment: start;
+            for l[i] in root.lists: brow := Rectangle {
+                property <bool> on: i == root.sel;
+                height: Math.max(52px, nm.height + 16px);
+                border-radius: 10px;
+                background: ta.pressed ? Theme.surface-pressed : self.on ? Theme.accent.with-alpha(0.16) : transparent;
+                Icon { x: 10px; y: 0; width: 24px; height: parent.height; text: l.icon != "" ? l.icon : "\u{F0756}"; font-size: 22px;
+                    color: brow.on ? Theme.text : Theme.muted; }
+                nm := Text { x: 44px; y: (parent.height - self.height) / 2; width: parent.width - 44px - 10px - 30px - 30px; height: self.preferred-height;
+                    text: l.name; font-size: 15px; font-weight: brow.on ? 600 : 400; color: Theme.text; wrap: word-wrap; vertical-alignment: center; }
+                Text { x: parent.width - 30px - 34px; y: 0; width: 30px; height: parent.height; text: l.open > 0 ? l.open : "";
+                    font-size: 15px; color: Theme.muted; horizontal-alignment: right; vertical-alignment: center; }
+                if brow.on: Icon { x: parent.width - 30px; y: 0; width: 26px; height: parent.height; text: "\u{F012C}"; font-size: 20px; color: Theme.accent; }
+                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+            }
+        }
+    }
+}
+
+export component TodoBrandSettings inherits BrandMotion {
+    in property <int> look;
+    in property <[string]> look-names;
+    from-corner: false;
+    height: body.preferred-height + 12px + 40px;
+    background: Theme.surface;
+    border-width: 1px;
+    border-color: Theme.outline;
+    border-radius: 14px;
+    drop-shadow-blur: 32px;
+    drop-shadow-offset-y: 12px;
+    drop-shadow-color: #00000073;
+    TouchArea { }
+    Text { x: 16px; y: 6px + 10px; height: 26px; text: "To-do"; font-family: Theme.heading-family; font-size: 20px; font-weight: 500; color: Theme.text;
+        vertical-alignment: center; }
+    body := TodoSettingsBody { x: 6px; y: 6px + 40px; width: root.width - 12px; look: root.look; look-names: root.look-names; }
+}
+
+// ---------------------------------------------------------------- 40.2 receipt: till paper
+// The page's paper (#f4f1e8, ink #2b2a28), mono capitals, dashed rules, torn edges top and bottom. It feeds down out of a
+// slot under the status bar in four jerks (60 ms each, 40 ms pauses) and goes back up into it in 140 ms.
+component ReceiptSlip inherits Rectangle {
+    in property <length> paper-x;
+    in property <length> paper-w;
+    in property <length> paper-h;
+    in property <float> t-in;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <string> top-edge;
+    in property <string> bottom-edge;
+    // the slot: nothing shows above y 42 (the top teeth reach 6 px over the paper at y 48)
+    x: 0;
+    y: 42px;
+    width: 480px;
+    height: 438px;
+    clip: true;
+    pure function feed(t: float) -> float {
+        return t >= 360 ? 1 : t >= 300 ? 0.75 + 0.25 * (t - 300) / 60 : t >= 260 ? 0.75 : t >= 200 ? 0.5 + 0.25 * (t - 200) / 60
+            : t >= 160 ? 0.5 : t >= 100 ? 0.25 + 0.25 * (t - 100) / 60 : t >= 60 ? 0.25 : 0.25 * Math.max(0, t) / 60;
+    }
+    property <length> off: root.leaving ? (root.paper-h + 14px) * Math.pow(clamp(root.t-out / 140, 0, 1), 3) : (root.paper-h + 7px) * (1 - root.feed(root.t-in));
+    Rectangle {
+        x: root.paper-x; y: 6px - root.off; width: root.paper-w; height: root.paper-h;
+        background: #f4f1e8;
+        drop-shadow-blur: 28px; drop-shadow-offset-y: 14px; drop-shadow-color: #0000008c;
+        TouchArea { }
+        Path { x: 0; y: -6px; width: parent.width; height: 7px; viewbox-width: root.paper-w / 1px; viewbox-height: 7; fill: #f4f1e8; commands: root.top-edge; }
+        Path { x: 0; y: parent.height - 1px; width: parent.width; height: 7px; viewbox-width: root.paper-w / 1px; viewbox-height: 7; fill: #f4f1e8; commands: root.bottom-edge; }
+        @children
+    }
+}
+
+component ReceiptHead inherits VerticalLayout {
+    in property <string> title;
+    in property <string> stamp;
+    padding-top: 4px; padding-bottom: 8px; spacing: 2px;
+    alignment: start;
+    Text { text: root.title; font-family: "DejaVu Sans Mono"; font-size: 17px; font-weight: 700; letter-spacing: 1px; color: #2b2a28; horizontal-alignment: center; }
+    Text { text: root.stamp; font-family: "DejaVu Sans Mono"; font-size: 12px; color: #5d5b56; horizontal-alignment: center; }
+}
+
+component ReceiptRule inherits Rectangle {
+    height: 10px;
+    DashLine { x: 0; y: 2px; width: parent.width; height: 2px; ink: #2b2a2899; dash: 6px; gap: 4px; }
+}
+
+global ReceiptEdges {
+    out property <string> top-292: "M 0 7 L 292 7 L 292 4 L 290 6 L 285 1 L 280 6 L 275 1 L 270 6 L 265 1 L 260 6 L 255 1 L 250 6 L 245 1 L 240 6 L 235 1 L 230 6 L 225 1 L 220 6 L 215 1 L 210 6 L 205 1 L 200 6 L 195 1 L 190 6 L 185 1 L 180 6 L 175 1 L 170 6 L 165 1 L 160 6 L 155 1 L 150 6 L 145 1 L 140 6 L 135 1 L 130 6 L 125 1 L 120 6 L 115 1 L 110 6 L 105 1 L 100 6 L 95 1 L 90 6 L 85 1 L 80 6 L 75 1 L 70 6 L 65 1 L 60 6 L 55 1 L 50 6 L 45 1 L 40 6 L 35 1 L 30 6 L 25 1 L 20 6 L 15 1 L 10 6 L 5 1 L 0 6 Z";
+    out property <string> bottom-292: "M 0 0 L 292 0 L 292 3 L 290 1 L 285 6 L 280 1 L 275 6 L 270 1 L 265 6 L 260 1 L 255 6 L 250 1 L 245 6 L 240 1 L 235 6 L 230 1 L 225 6 L 220 1 L 215 6 L 210 1 L 205 6 L 200 1 L 195 6 L 190 1 L 185 6 L 180 1 L 175 6 L 170 1 L 165 6 L 160 1 L 155 6 L 150 1 L 145 6 L 140 1 L 135 6 L 130 1 L 125 6 L 120 1 L 115 6 L 110 1 L 105 6 L 100 1 L 95 6 L 90 1 L 85 6 L 80 1 L 75 6 L 70 1 L 65 6 L 60 1 L 55 6 L 50 1 L 45 6 L 40 1 L 35 6 L 30 1 L 25 6 L 20 1 L 15 6 L 10 1 L 5 6 L 0 1 Z";
+    out property <string> top-448: "M 0 7 L 448 7 L 448 3 L 445 1 L 440 6 L 435 1 L 430 6 L 425 1 L 420 6 L 415 1 L 410 6 L 405 1 L 400 6 L 395 1 L 390 6 L 385 1 L 380 6 L 375 1 L 370 6 L 365 1 L 360 6 L 355 1 L 350 6 L 345 1 L 340 6 L 335 1 L 330 6 L 325 1 L 320 6 L 315 1 L 310 6 L 305 1 L 300 6 L 295 1 L 290 6 L 285 1 L 280 6 L 275 1 L 270 6 L 265 1 L 260 6 L 255 1 L 250 6 L 245 1 L 240 6 L 235 1 L 230 6 L 225 1 L 220 6 L 215 1 L 210 6 L 205 1 L 200 6 L 195 1 L 190 6 L 185 1 L 180 6 L 175 1 L 170 6 L 165 1 L 160 6 L 155 1 L 150 6 L 145 1 L 140 6 L 135 1 L 130 6 L 125 1 L 120 6 L 115 1 L 110 6 L 105 1 L 100 6 L 95 1 L 90 6 L 85 1 L 80 6 L 75 1 L 70 6 L 65 1 L 60 6 L 55 1 L 50 6 L 45 1 L 40 6 L 35 1 L 30 6 L 25 1 L 20 6 L 15 1 L 10 6 L 5 1 L 0 6 Z";
+    out property <string> bottom-448: "M 0 0 L 448 0 L 448 4 L 445 6 L 440 1 L 435 6 L 430 1 L 425 6 L 420 1 L 415 6 L 410 1 L 405 6 L 400 1 L 395 6 L 390 1 L 385 6 L 380 1 L 375 6 L 370 1 L 365 6 L 360 1 L 355 6 L 350 1 L 345 6 L 340 1 L 335 6 L 330 1 L 325 6 L 320 1 L 315 6 L 310 1 L 305 6 L 300 1 L 295 6 L 290 1 L 285 6 L 280 1 L 275 6 L 270 1 L 265 6 L 260 1 L 255 6 L 250 1 L 245 6 L 240 1 L 235 6 L 230 1 L 225 6 L 220 1 L 215 6 L 210 1 L 205 6 L 200 1 L 195 6 L 190 1 L 185 6 L 180 1 L 175 6 L 170 1 L 165 6 L 160 1 L 155 6 L 150 1 L 145 6 L 140 1 L 135 6 L 130 1 L 125 6 L 120 1 L 115 6 L 110 1 L 105 6 L 100 1 L 95 6 L 90 1 L 85 6 L 80 1 L 75 6 L 70 1 L 65 6 L 60 1 L 55 6 L 50 1 L 45 6 L 40 1 L 35 6 L 30 1 L 25 6 L 20 1 L 15 6 L 10 1 L 5 6 L 0 1 Z";
+}
+
+export component TodoReceiptPicker inherits ReceiptSlip {
+    in property <[TodoList]> lists;
+    in property <int> sel;
+    in property <string> stamp;
+    in property <length> max-h: 420px;
+    paper-w: 292px;
+    top-edge: ReceiptEdges.top-292;
+    bottom-edge: ReceiptEdges.bottom-292;
+    property <length> fixed: 12px + head.preferred-height + 10px + 10px + foot.preferred-height + 14px;
+    paper-h: Math.min(root.max-h, root.fixed + rows.preferred-height);
+    property <length> iw: root.paper-w - 32px;
+    head := ReceiptHead { x: 16px; y: 12px; width: root.iw; title: "LISTS"; stamp: root.stamp; }
+    ReceiptRule { x: 16px; y: 12px + head.preferred-height; width: root.iw; }
+    Flickable {
+        x: 16px; y: 12px + head.preferred-height + 10px; width: root.iw; height: root.paper-h - root.fixed;
+        interactive: rows.preferred-height > self.height;
+        content-height: rows.preferred-height;
+        rows := VerticalLayout {
+            x: 0; y: 0; width: parent.width; spacing: 0px; alignment: start;
+            for l[i] in root.lists: rrow := Rectangle {
+                property <bool> on: i == root.sel;
+                height: Math.max(40px, nm.height + 16px);
+                background: ta.pressed ? #2b2a281a : transparent;
+                property <length> cw: cnt.preferred-width;
+                nm := Text { x: 18px; y: 8px; width: Math.min(self.preferred-width, parent.width - 18px - 6px - 12px - 6px - parent.cw - 2px);
+                    height: self.preferred-height; text: l.name.to-uppercase(); font-family: "DejaVu Sans Mono"; font-size: 14px;
+                    font-weight: rrow.on ? 700 : 400; color: #2b2a28; wrap: word-wrap; line-height-factor: 1.16; }
+                Text { x: 2px; y: 8px; width: 10px; text: rrow.on ? "*" : ""; font-family: "DejaVu Sans Mono"; font-size: 14px; font-weight: 700; color: #2b2a28; }
+                // the dotted leader to what is left (on the first line)
+                Image { x: nm.x + nm.width + 6px; y: 8px + 13px; width: Math.max(0px, cnt.x - 6px - self.x); height: 2px;
+                    source: @image-url("todo/leader-dot.png"); horizontal-tiling: repeat; }
+                cnt := Text { x: parent.width - 2px - self.preferred-width; y: 8px; text: l.open; font-family: "DejaVu Sans Mono"; font-size: 14px;
+                    font-weight: rrow.on ? 700 : 400; color: #2b2a28; }
+                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+            }
+        }
+    }
+    ReceiptRule { x: 16px; y: root.paper-h - 14px - foot.preferred-height - 10px; width: root.iw; }
+    foot := Text { x: 16px; y: root.paper-h - 14px - self.preferred-height; width: root.iw; text: root.lists.length == 1 ? "1 LIST" : root.lists.length + " LISTS";
+        font-family: "DejaVu Sans Mono"; font-size: 12px; color: #5d5b56; horizontal-alignment: center; }
+}
+
+export component TodoReceiptSettings inherits ReceiptSlip {
+    in property <int> look;
+    in property <[string]> look-names;
+    in property <string> stamp;
+    paper-x: 16px;
+    paper-w: 448px;
+    top-edge: ReceiptEdges.top-448;
+    bottom-edge: ReceiptEdges.bottom-448;
+    paper-h: 12px + head.preferred-height + 10px + body.preferred-height + 14px;
+    head := ReceiptHead { x: 16px; y: 12px; width: root.paper-w - 32px; title: "SETTINGS"; stamp: root.stamp; }
+    ReceiptRule { x: 16px; y: 12px + head.preferred-height; width: root.paper-w - 32px; }
+    body := TodoSettingsBody {
+        x: 14px; y: 12px + head.preferred-height + 10px; width: root.paper-w - 28px; pad-x: 2px;
+        look: root.look; look-names: root.look-names;
+        label-font: "DejaVu Sans Mono"; label-size: 12px; label-weight: 700; label-color: #2b2a28; label-caps: true; label-spacing: 1px;
+        tk-raised: transparent; tk-line: #2b2a2859; tk-text: #2b2a28; tk-muted: #5d5b56; tk-on-text: #f4f1e8; tk-menu: #f7f4ec;
+        tk-pressed: #2b2a2824; tk-accent: #2b2a28;
+        field-radius: 0px; seg-radius: 0px; done-radius: 0px;
+        ctl-font: "DejaVu Sans Mono"; ctl-size: 14px; ctl-weight: 700; ctl-caps: true;
+        dashed: true; frame-ink: #2b2a288c;
+    }
+}
+
+// ---------------------------------------------------------------- 40.3 terminal: its own commands
+// A black window with a 1 px phosphor rim; the command types itself at the look's own speed (40 characters a second),
+// then its output is there; no slide, and it goes at once. A tap on a list types `todo --list <name>` and shows it.
+// Settings: `todo --config`, the arrows or a tap change a line; time applies at once, a new look when the menu is left.
+component TermCommand inherits Rectangle {
+    in property <string> cmd;
+    in property <float> t;                   // ms since the command began to type
+    property <length> cell: 9.0308px;         // DejaVu Sans Mono at 15 px
+    property <length> lh: 22px;
+    property <string> prompt: "panel@home:~$ ";
+    property <int> per-line: Math.max(1, Math.floor(root.width / root.cell));
+    property <int> total: root.prompt.character-count + root.cmd.character-count;
+    property <int> shown: Math.min(root.total, root.prompt.character-count + Math.max(0, Math.floor(root.t / 25)));
+    property <int> lines: Math.ceil(root.total / root.per-line);
+    out property <bool> typed: root.shown >= root.total;
+    height: Math.max(1, root.lines) * root.lh + 6px;
+    for j in root.lines: Rectangle {
+        x: 0; y: j * root.lh; width: clamp(root.shown - j * root.per-line, 0, root.per-line) * root.cell; height: root.lh; clip: true;
+        Phosphor { x: 0; y: -j * root.lh; width: root.per-line * root.cell + 2px; height: root.lines * root.lh; text: root.prompt + root.cmd;
+            ink: #c8ffd6; font-size: 15px; font-weight: 700; wrap: char-wrap; lh: 1.26; }
+        // the prompt in the phosphor's own green
+        if j == 0: Rectangle { x: 0; y: 0; width: root.prompt.character-count * root.cell; height: root.lh; background: #020402;
+            Phosphor { x: 0; y: 0; width: parent.width + 2px; height: root.lh; text: root.prompt; font-size: 15px; font-weight: 700; wrap: no-wrap; lh: 1.26; } }
+    }
+    // the block cursor
+    Rectangle {
+        x: Math.mod(root.shown, root.per-line) * root.cell + 1px; y: Math.floor(root.shown / root.per-line) * root.lh + 3px;
+        width: 9px; height: 17px; background: #3dff74;
+        drop-shadow-blur: 6px; drop-shadow-color: #3dff74b3;
+    }
+}
+
+component TermWindow inherits Rectangle {
+    background: #020402;
+    border-width: 1px;
+    border-color: #3dff7459;
+    border-radius: 4px;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 14px;
+    drop-shadow-color: #000000b3;
+    TouchArea { }
+    Rectangle { x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px; border-radius: 3px; border-width: 1px; border-color: #3dff740f; }
+}
+
+export component TodoTermPicker inherits TermWindow {
+    in property <[TodoList]> lists;
+    in property <int> sel;
+    in property <float> t-in;
+    in property <length> max-h: 420px;
+    // a tap: its command types itself, then the list shows (and the menu goes)
+    property <int> pick: -1;
+    property <duration> p0;
+    property <bool> picking;
+    property <string> cmd: root.pick >= 0 ? "todo --list " + root.lists[root.pick].name : "todo --lists";
+    property <float> ct: root.pick >= 0 ? (animation-tick() - root.p0) / 1ms : root.t-in;
+    Timer { interval: (root.cmd.character-count * 25 + 220) * 1ms; running: root.picking;
+        triggered => { root.picking = false; Act.act("todo.pick", root.pick); } }
+    property <bool> body-on: root.pick >= 0 || root.t-in >= 12 * 25 + 60;
+    height: Math.min(root.max-h, 12px + cmd-line.height + rows.preferred-height + 12px);
+    cmd-line := TermCommand { x: 14px; y: 12px; width: root.width - 28px; cmd: root.cmd; t: root.ct; }
+    Flickable {
+        x: 14px; y: 12px + cmd-line.height; width: root.width - 28px; height: root.height - 24px - cmd-line.height;
+        visible: root.body-on;
+        interactive: rows.preferred-height > self.height;
+        content-height: rows.preferred-height;
+        rows := VerticalLayout {
+            x: 0; y: 0; width: parent.width; spacing: 0px; alignment: start;
+            for l[i] in root.lists: trow := Rectangle {
+                property <bool> on: i == root.sel;
+                height: Math.max(40px, nm.text-h + 16px);
+                background: ta.pressed || i == root.pick ? #3dff7429 : transparent;
+                Phosphor { x: 4px; y: 8px; width: 10px; height: 22px; text: trow.on ? "*" : " "; font-weight: trow.on ? 700 : 400; }
+                Phosphor { x: 24px; y: 8px; width: 20px; height: 22px; text: i + 1; ink: #3dff7499; }
+                nm := Phosphor { x: 48px; y: 8px; width: parent.width - 48px - 10px - cnt.text-w - 4px; height: self.text-h; text: l.name;
+                    font-weight: trow.on ? 700 : 400; lh: 1.16; }
+                cnt := Phosphor { x: parent.width - 4px - self.text-w; y: 8px; width: self.text-w + 2px; height: 22px; text: l.open; ink: #3dff7499; wrap: no-wrap; }
+                ta := TouchArea { enabled: root.pick < 0; clicked => { root.pick = i; root.p0 = animation-tick(); root.picking = true; } }
+            }
+        }
+    }
+}
+
+export component TodoTermSettings inherits TermWindow {
+    in property <int> look;
+    in property <int> pend-look;              // a look chosen here, applied when the menu is left (-1: none)
+    in property <[string]> look-names;
+    in property <float> t-in;
+    property <int> cur: root.pend-look >= 0 ? root.pend-look : root.look;
+    property <bool> body-on: root.t-in >= 13 * 25 + 60;
+    property <int> n: Math.max(1, root.look-names.length);
+    height: 12px + cmd-line.height + cfg.preferred-height + 12px;
+    cmd-line := TermCommand { x: 14px; y: 12px; width: root.width - 28px; cmd: "todo --config"; t: root.t-in; }
+    function step(d: int) { Act.act("todo.pend-look", Math.mod(root.cur + d + root.n, root.n)); }
+    cfg := VerticalLayout {
+        x: 14px; y: 12px + cmd-line.height; width: root.width - 28px; visible: root.body-on; spacing: 0px; alignment: start;
+        // look  < name >: a tap on the line takes the next one
+        Rectangle { height: Math.max(44px, lv.text-h + 22px);
+            background: lta.pressed ? #3dff741f : transparent;
+            lta := TouchArea { clicked => { root.step(1); } }
+            Phosphor { x: 4px; y: 11px; width: 60px; height: 22px; text: "look"; wrap: no-wrap; }
+            Rectangle { x: parent.width - 44px - 200px - 44px; width: 44px; height: 44px;
+                Phosphor { y: 11px; height: 22px; text: "<"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
+                TouchArea { clicked => { root.step(-1); } } }
+            lv := Phosphor { x: parent.width - 44px - 200px; y: 11px; width: 200px; height: self.text-h; text: root.look-names[root.cur].to-lowercase(); ink: #c8ffd6;
+                horizontal-alignment: center; lh: 1.26; }
+            Rectangle { x: parent.width - 44px; width: 44px; height: 44px;
+                Phosphor { y: 11px; height: 22px; text: ">"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
+                TouchArea { clicked => { root.step(1); } } }
+        }
+        // time  < 24h >: at once, panel-wide (32.3)
+        Rectangle { height: 44px;
+            background: tta.pressed ? #3dff741f : transparent;
+            tta := TouchArea { clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } }
+            Phosphor { x: 4px; y: 11px; width: 60px; height: 22px; text: "time"; wrap: no-wrap; }
+            Rectangle { x: parent.width - 44px - 200px - 44px; width: 44px; height: 44px;
+                Phosphor { y: 11px; height: 22px; text: "<"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
+                TouchArea { clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } } }
+            Phosphor { x: parent.width - 44px - 200px; y: 11px; width: 200px; height: 22px; text: Clock.h24 ? "24h" : "12h"; ink: #c8ffd6;
+                horizontal-alignment: center; wrap: no-wrap; }
+            Rectangle { x: parent.width - 44px; width: 44px; height: 44px;
+                Phosphor { y: 11px; height: 22px; text: ">"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
+                TouchArea { clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } } }
+        }
+        // [ save & exit ]
+        Rectangle { height: 44px;
+            background: eta.pressed ? #3dff741f : transparent;
+            eta := TouchArea { clicked => { Act.act("todo.settings-close", ""); } }
+            Rectangle { x: 4px; y: 10px; width: ex.text-w + 12px; height: 24px; border-width: 1px; border-color: #3dff7499;
+                ex := Phosphor { x: 6px; y: 1px; width: self.text-w + 2px; height: 22px; text: "[ save & exit ]"; wrap: no-wrap; } }
+        }
+    }
+}
+
+// ---------------------------------------------------------------- 40.4 label maker: embossed tapes on a dark card
+// Every tape (the heads, the lists, the counts, the labels, Done) is drawn by the app's own tape drawer, 1:1 with the
+// list's tapes. The card fades in (80 ms), then each tape comes out of the right edge like a printed label (70 ms, 50 ms
+// apart) with a small knock; it fades out in 100 ms.
+component TapeCard inherits Rectangle {
+    in property <float> t-in;
+    in property <float> t-out;
+    in property <bool> leaving;
+    opacity: root.leaving ? 1 - clamp(root.t-out / 100, 0, 1) : clamp(root.t-in / 80, 0, 1);
+    background: @linear-gradient(160deg, #2c2d31 0%, #212226 100%);
+    border-radius: 10px;
+    border-width: 1px;
+    border-color: #ffffff0f;
+    drop-shadow-blur: 30px;
+    drop-shadow-offset-y: 14px;
+    drop-shadow-color: #00000099;
+    TouchArea { }
+}
+
+export component TodoTapePicker inherits TapeCard {
+    in property <[TodoList]> lists;
+    in property <int> sel;
+    in property <image> head;                 // "LISTS" on black tape
+    in property <length> max-h: 420px;
+    property <length> head-h: root.head.height * 1px + 8px;
+    height: Math.min(root.max-h, 12px + root.head-h + rows.preferred-height + 14px);
+    RevealRow { x: 8px; y: 10px; width: root.width - 16px; height: root.head-h; printed: true; t: root.t-in - 60;
+        Image { x: 0; y: 0; width: root.head.width * 1px; height: root.head.height * 1px; source: root.head; } }
+    Flickable {
+        x: 8px; y: 10px + root.head-h; width: root.width - 16px; height: root.height - 24px - root.head-h;
+        interactive: rows.preferred-height > self.height;
+        content-height: rows.preferred-height;
+        rows := VerticalLayout {
+            x: 0; y: 0; width: parent.width; spacing: 0px; alignment: start;
+            for l[i] in root.lists: RevealRow {
+                printed: true; t: root.t-in - 60 - (i + 1) * 50;
+                height: Math.max(44px, Math.max(l.tape.height, l.count-tape.height) * 1px);
+                Rectangle { width: parent.width; height: parent.height; background: ta.pressed ? #ffffff14 : transparent; border-radius: 4px; }
+                Image { x: 0; y: (parent.height - self.height) / 2; width: l.tape.width * 1px; height: l.tape.height * 1px; source: l.tape; }
+                Image { x: l.tape.width * 1px - 4px; y: (parent.height - self.height) / 2; width: l.count-tape.width * 1px; height: l.count-tape.height * 1px;
+                    source: l.count-tape; }
+                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+            }
+        }
+    }
+}
+
+export component TodoTapeSettings inherits TapeCard {
+    in property <int> look;
+    in property <[string]> look-names;
+    in property <image> head;                 // "SETTINGS" on black tape
+    in property <[image]> label-tapes;
+    in property <image> done-tape;
+    property <length> head-h: root.head.height * 1px + 8px;
+    height: 10px + root.head-h + body.preferred-height + 14px;
+    RevealRow { x: 8px; y: 10px; width: root.width - 16px; height: root.head-h; printed: true; t: root.t-in - 60;
+        Image { x: 0; y: 0; width: root.head.width * 1px; height: root.head.height * 1px; source: root.head; } }
+    body := TodoSettingsBody {
+        x: 8px; y: 10px + root.head-h; width: root.width - 16px; pad-x: 4px;
+        look: root.look; look-names: root.look-names; label-tapes: root.label-tapes; done-tape: root.done-tape;
+        printed: true; t-in: root.t-in;
+        tk-raised: #111113; tk-line: #3a3b40; tk-text: #ffffff; tk-muted: #c9c9cf; tk-on-text: #ffffff; tk-menu: #26272b;
+        tk-pressed: #333438; tk-accent: #c62a2f; tk-pill: #c62a2f;
+        field-radius: 2px; seg-radius: 3px;
+        ctl-font: "Noto Sans"; ctl-size: 15px; ctl-weight: 800; ctl-caps: true;
+    }
+}
+
+// ---------------------------------------------------------------- 40.5 notepad: a page of the pad
+// The pad's yellow, its maroon binding, blue rules every 40 px and the red margin, written in blue pen (Caveat); each
+// name on a rule (wrapped lines on the next ones), what is left in pencil, the shown list circled in red pen. The page
+// flips down from its binding (240 ms, ease-out) and back up in 160 ms.
+component PadPage inherits Rectangle {
+    in property <float> t-in;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <length> rules-from: 64px;    // the first rule's line box (the rules run every 40 px under it)
+    // rotateX: the page seen from the front shows cos(angle) of its height, hinged at the binding
+    property <float> angle: root.leaving ? 90 * Math.pow(clamp(root.t-out / 160, 0, 1), 3) : 90 * Math.pow(1 - clamp(root.t-in / 240, 0, 1), 3);
+    transform-scale-y: Math.max(0.001, Math.cos(root.angle * 1deg));
+    transform-origin: { x: root.width / 2, y: 0px };
+    background: #f6edaa;
+    drop-shadow-blur: 28px;
+    drop-shadow-offset-y: 14px;
+    drop-shadow-color: #0000008c;
+    TouchArea { }
+    for k in Math.max(0, Math.floor((root.height - root.rules-from) / 40px)): Rectangle {
+        x: 0; y: root.rules-from + k * 40px + 39px; width: root.width; height: 1px; background: #7da0c899; }
+    Rectangle { x: 22px; y: 14px; width: 1.5px; height: root.height - 14px; background: #e05a5ab3; }
+    Rectangle { x: 0; y: 14px; width: root.width; height: 2px; background: #00000040; }
+    Rectangle { x: 0; y: 0; width: root.width; height: 14px; background: #6d1f24; }
+    @children
+    // the page turning away from the light while it flips
+    Rectangle { width: root.width; height: root.height; background: #000000; opacity: 0.35 * Math.sin(root.angle * 1deg); }
+}
+
+component PadHead inherits Rectangle {
+    in property <string> text;
+    height: 38px;
+    t := Text { x: 0; y: 2px; height: 30px; text: root.text; font-family: "Caveat"; font-size: 30px; font-weight: 700; color: #1f4fa8; vertical-alignment: center; }
+    Rectangle { x: 0; y: 2px + 30px + 3px; width: t.preferred-width; height: 2px; background: #1f4fa8; }
+}
+
+export component TodoPadPicker inherits PadPage {
+    in property <[TodoList]> lists;
+    in property <int> sel;
+    in property <length> max-h: 420px;
+    // lines of Caveat 25 px land 40 px apart (its natural line is 1.26 em)
+    property <float> lhf: 40 / (25 * 1.26);
+    rules-from: 64px;
+    height: Math.min(root.max-h, 64px + rows.preferred-height + 14px);
+    PadHead { x: 34px; y: 26px; width: root.width - 50px; text: "Lists"; }
+    Flickable {
+        x: 34px; y: 64px; width: root.width - 50px; height: root.height - 64px - 14px;
+        interactive: rows.preferred-height > self.height;
+        content-height: rows.preferred-height;
+        rows := VerticalLayout {
+            x: 0; y: 0; width: parent.width; spacing: 0px; alignment: start;
+            for l[i] in root.lists: prow := Rectangle {
+                property <bool> on: i == root.sel;
+                property <int> lines: Math.max(1, Math.round(nm.preferred-height / 40px));
+                height: self.lines * 40px;
+                background: ta.pressed ? #2456a614 : transparent;
+                nm := Text { x: 2px; y: 2px; width: Math.min(self.preferred-width, parent.width - 4px - 34px - 10px); height: self.preferred-height;
+                    text: l.name; font-family: "Caveat"; font-size: 25px; font-weight: 600; color: #1f4fa8; wrap: word-wrap; line-height-factor: root.lhf; }
+                // circled in red pen
+                if prow.on: ring := Path {
+                    // the ring (a 100 x 40 pen stroke) stretched round the name
+                    property <float> sx: self.width / 100px;
+                    property <float> sy: self.height / 40px;
+                    x: nm.x - 12px; y: 1px; width: nm.width + 24px; height: parent.height - 4px;
+                    viewbox-width: self.width / 1px; viewbox-height: self.height / 1px;
+                    stroke: #c0242a; stroke-width: 2.2px; stroke-line-cap: round; fill: transparent;
+                    MoveTo { x: 6 * ring.sx; y: 22 * ring.sy; }
+                    CubicTo { control-1-x: 4 * ring.sx; control-1-y: 9 * ring.sy; control-2-x: 38 * ring.sx; control-2-y: 3 * ring.sy; x: 62 * ring.sx; y: 5 * ring.sy; }
+                    CubicTo { control-1-x: 86 * ring.sx; control-1-y: 7 * ring.sy; control-2-x: 98 * ring.sx; control-2-y: 14 * ring.sy; x: 94 * ring.sx; y: 25 * ring.sy; }
+                    CubicTo { control-1-x: 90 * ring.sx; control-1-y: 36 * ring.sy; control-2-x: 58 * ring.sx; control-2-y: 37 * ring.sy; x: 36 * ring.sx; y: 35 * ring.sy; }
+                    CubicTo { control-1-x: 14 * ring.sx; control-1-y: 33 * ring.sy; control-2-x: 3 * ring.sx; control-2-y: 31 * ring.sy; x: 9 * ring.sx; y: 15 * ring.sy; }
+                }
+                Text { x: parent.width - 2px - 34px; y: parent.height - 40px + 6px; width: 34px; height: 30px; text: l.open > 0 ? l.open : "–";
+                    font-family: "Caveat"; font-size: 21px; font-weight: 500; color: #56565c; horizontal-alignment: right; vertical-alignment: center; }
+                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+            }
+        }
+    }
+}
+
+export component TodoPadSettings inherits PadPage {
+    in property <int> look;
+    in property <[string]> look-names;
+    rules-from: 64px;
+    height: 64px + body.preferred-height + 14px;
+    PadHead { x: 34px; y: 26px; width: root.width - 50px; text: "Settings"; }
+    body := TodoSettingsBody {
+        x: 30px; y: 64px; width: root.width - 46px; pad-x: 4px;
+        look: root.look; look-names: root.look-names;
+        label-font: "Caveat"; label-size: 23px; label-weight: 600; label-color: #56565c;
+        tk-raised: #2456a614; tk-line: #2456a659; tk-text: #1f4fa8; tk-muted: #56565c; tk-on-text: #f6edaa; tk-menu: #f8f1bd;
+        tk-pressed: #2456a629; tk-accent: #1f4fa8;
+        ctl-font: "Caveat"; ctl-size: 22px; ctl-weight: 700;
+    }
+}

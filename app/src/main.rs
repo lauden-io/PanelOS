@@ -1245,6 +1245,9 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_edit(false);
     ui.set_timers_edit_keyboard(false);
     ui.set_todo_picker(false);
+    ui.set_todo_settings(false);
+    ui.set_todo_pend_look(-1);
+    ui.set_todo_adding(false);
     ui.set_cam_settings(false);
     ui.set_cam_replies(false);
     ui.set_info_settings(false);
