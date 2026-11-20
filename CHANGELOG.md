@@ -2,14 +2,96 @@
 
 ## 0.0.7 (in development)
 
-### Connection
-- When Sendspin music stalls (its buffer runs dry), the Wi-Fi roam check runs during the music and moves to an access point at least 10 dB stronger; a panel that fell to a farther access point during music no longer stays there until the music ends.
+**Upgrading from 0.0.6**: put the new UI bundle on the panel (new fonts and pictures) and update the integration, then restart Home Assistant.
+
+### Menus
+- No more bottom sheets: every picker and page settings menu comes out of what opened it, as an object of the look (a record sleeve, a J-card, a recipe card with a magnet, a parchment scroll, an arcade screen, a split-flap board, a pager's LCD menu, a TV's on-screen menu, till paper, embossed tapes, a remote's sliding lid, a wall unit's hinged door …), each with its own motion. A tap beside a menu, its chip again or Done closes it; a look change reopens it as the new look's menu; leaving the page closes it.
+- The quick shade's second step has a page row that opens the settings of the page on screen in its look's menu.
+- Dropdown lists take taps and stay between the status bar and the bottom edge.
+
+### Music
+- "Play on" and the page's settings are menus of the look (brand card, record sleeve, J-card); long player names wrap.
+- A pause holds the time shown; after Next or Previous the page never flips back to the old track; a player switch leaves nothing of the old player on the page.
+- A flick across the time bar never seeks; the turntable's fader tells a flick from a tap.
+
+### Thermostat
+- The rooms, options and settings come out of each look as its own object (brand card, the remote's zone LCD and sliding lid, the wall unit's zone plate and hinged door, the neon arcade screen).
+- The dial's ring and the neon tube turn with the finger like the wall knob; a drag that starts on a ring or knob never turns the page.
+- The remote's LCD clock follows the time format, and a tap on it switches 12H / 24H.
+- The device chip says "No device" when the page has none.
+
+### Timers, alarms and stopwatch
+- The timers tab's menus are objects of its look; the grids show the four timers that end soonest; kitchen, hourglass and flip list every timer in chips and keep the round + whenever timers run.
+- Whenever the tab comes into view, every timer runs from zero to where it stands in its look's way; a timer's time rolls its changed digits.
+- A timer's label takes up to 60 characters; the keyboard counts them, shakes at the limit and keeps the end in view.
+- Alarms can be added, edited and switched in every alarm look; the clock radio's preset keys add, switch and edit (hold) alarms, with a 12H / 24H switch on its body.
+- Each alarm look rings in its own way; a snoozed alarm shows in the next-alarm line.
+- Every stopwatch look lists its laps.
+- After a ring or a view shown for some seconds, the panel goes back to the page it was on, also from a temporary page.
+
+### Calendar
+- Every look has its own menus: the chip's picker (calendars shown or hidden, and the view in the plain look), settings, a day's list, the week's departures on the board, an event's details and an edit form with time drums in place.
+- Events can be edited and deleted from the panel (calendars that allow it); a delete can be taken back for 5 s.
+- Picking Day or 3 days in the view list works.
+- Six-week months on the wall calendar end above the page dots.
+
+### Cameras
+- The page's settings are a card under the status bar (Picture, Show); the picture follows its setting (Fill the screen by default).
+- Replies at the door: with a speaker at the door, the visitor window's microphone opens up to four replies; a tap has Home Assistant say one on that speaker in the chosen language.
+
+### Notifications
+- The settings open in each look's own menu with the look, the time format and, for the pager, its finish; in the plain look a tapped notification opens in the notification window's card, which grows out of its row.
+- The pager's and the TV news clock turn exactly on the minute.
+- The status strip runs under the status bar, which stays visible; its × closes it (a critical alert's strip has none); long titles wrap to two lines.
+
+### To-do
+- The chip's list picker and the page settings are the look's own menus (brand card, till paper, the terminal's commands, embossed tapes, a page of the pad).
+- A new item lands at the top of its list and opens in 250 ms; a ticked item stays struck through for 1.5 s, then folds away.
+
+### Quick controls
+- A long press shows a control's details in every look (a card grown from the tile, the desk channel's rack unit, the deck switch's overhead panel), including colour, colour temperature, effect and cover keys.
+- Flight deck: painted group frames, automatic, off or custom, set in the integration; a colour light's lamp lights in its own colour at the throw, also after a restart.
+- Mixing desk / flight deck: long names fit their tape or plate in smaller letters or two lines.
+
+### Home and weather
+- Editing a custom page on the panel (long press, lock, move, resize, remove, settings, add, background), switched on in the integration ("Allow editing on the panel"); the edit mode's menus are objects of the look.
+- New widgets: Sensor, Timer, People and Details (wind, humidity, chance of rain, sunrise and sunset).
+- Weather details page: a background and weather widgets on the custom page's grid, edited the same way.
+- Hourly and daily forecasts show as many cards as fit; the chance of rain reads on the light ground.
+- Rain on the glass: drops land on the glass over the photo backgrounds while it rains, merge and run down with a wet streak; the wind bends their path, and they dry up after the rain. A finger stroke up or down wipes them away. Rain on the glass and Lightning are switches of the panel, on by default.
+- Synthwave: cars drive on nine lanes, and a tap on the road asks for a car on the line under the finger; the Cars switch takes the cars off the road; the space scene has its ringed planet, nebula and cyan mountains by day, by night and at dawn, with shooting stars at any time; the timers' random scene is ready before the page opens and never changes on screen.
+
+### Display and settings
+- Time format (24-hour / 12-hour) for every clock time: on the panel's Display page, in the integration and on the looks' own keys; a change anywhere applies everywhere.
+- Auto theme switches by the light in the room, by sunset and sunrise, or between set times; a change Auto makes by itself blends over 3 s.
+- Wake distance near / medium / far, and a calibration started from the integration that shows how far the panel wakes.
+- Child lock (a switch in Home Assistant): touches do nothing until the lock is held for 3 s; it locks again after a minute without a touch.
+- The settings list opens Wi-Fi, Home Assistant, Display, Voice, Sound and About; a new Wi-Fi network is tried first and kept only when Home Assistant answers on it, otherwise the panel goes back to its network.
+- Touch calibration has a Cancel button, and only touches near the point count.
+- A press that moved a little no longer leaves the pages a few pixels off.
+
+### Voice
+- When a timer starts ringing during a voice run, the run's sentence stops the ring only when it is a stop phrase by itself; any other sentence goes on to the assistant.
+- The oscilloscope voice view shows "not understood" as a question mark drawn by the beam; the voice view measures the microphone only while it shows.
+- Voice assistants can set, list and cancel a panel's alarms.
 
 ### Music Assistant
-- Asking a panel for music by voice ("play Queen") plays on the player picked on its music page, or on the panel itself, as next, pause, stop and volume already did; a command that names a kind of device ("pause the TV") goes to Home Assistant's own handler.
+- Asking a panel for music by voice ("play Queen") plays on the player picked on its music page, or on the panel itself, as next, pause, stop and volume already did; a command that names a kind of device ("pause the TV") goes to Home Assistant's own handler. A command the chosen player cannot do gets Home Assistant's "not supported" reply; an unavailable player leaves it to Home Assistant; the media commands keep following the panel after reloads.
+- The panel's sound keeps working whatever the length of a sound's last piece while Music Assistant plays. A host that has not paired with the panel can only pair: it cannot start, stop, clear or feed the music. A new Music Assistant connection starts the music's clock afresh, and a silent connection ends after 30 s.
+
+### Connection
+- When Sendspin music stalls (its buffer runs dry), the Wi-Fi roam check runs during the music and moves to an access point at least 10 dB stronger.
+- Wi-Fi roaming can be switched off in the integration (on by default); the link watch keeps working.
+- The connection log has wpa_supplicant's own link events: beacon losses, disconnects with their reason, connections; the roam check asks for the network by its real name.
 
 ### Home Assistant
-- HACS and the Marketplace install the integration from `panelos.zip` on the release (2 MB) instead of the whole repository (about 90 MB, close to the Marketplace's 100 MB download limit).
+- The integration's switches, segmented controls, weekday rows and checkboxes have the panel's jelly motion, with the mouse and with touch.
+- The widget picker shows each widget with live content (clock, date, weather, forecasts, next event, music, sensors, people).
+- The Voice section follows the satellite's wake words and shows option names instead of ids.
+- The first click after the live screen's pause is no longer lost; the sound sheets' ⓘ bubbles open and close in place.
+- A reload keeps the panel's last states and the 30 s reconnect grace.
+- The calendar page keeps the calendars hidden on the panel; the cameras page card has Speaker at the door, up to four replies and their language.
+- HACS and the Marketplace install the integration from `panelos.zip` on the release (2 MB) instead of the whole repository.
 
 ## 0.0.6
 
