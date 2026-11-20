@@ -2,63 +2,13 @@
 // Views: agenda (default; the home page's date widget opens it at today), day (timeline), 3 days, week (seven columns) and
 // month (grid with event labels; a tap on a day opens that day). A tap on any event opens its details (the home page's
 // next-event widget too), with Edit where the calendar allows it. The panel keeps the last view, across restarts too.
-// Weeks start on Monday, times are 24-hour; the app writes every label (relative times like "in 4 h 15 min" too).
-import { Theme, Act, Words } from "theme.slint";
-import { Icon, Toggle, Crawl, DragSheet, Dropdown } from "widgets.slint";
-import { Keyboard } from "overlays.slint";
-
-export struct CalEvent {
-    title: string,
-    time: string,          // "18:00–20:15", or "All day"
-    t1: string,            // agenda: the start ("18:00", "All day") and the end ("20:15")
-    t2: string,
-    cal: string,           // the calendar's name
-    tint: color,           // the calendar's colour
-    all-day: bool,
-    start: int,            // minutes from midnight (timed events; day and week grids)
-    end: int,
-    lane: int,             // side by side when events overlap: which lane, of how many (the app lays them out)
-    lanes: int,
-    day: int,              // week view: 0 Monday … 6 Sunday
-    past: bool,
-    now: bool,             // happening now
-    progress: float,       // now: how far along
-    rel: string,           // "in 4 h 15 min", "now", "" (the app writes it)
-    note: string,          // the description
-    place: string,         // the location
-    editable: bool,        // the calendar lets the panel change it (HA: update / delete supported)
-}
-
-export struct CalDay {
-    label: string,         // "Today · Sat 14 Nov", "Tomorrow", "Mon 16 Nov"
-    events: [CalEvent],
-    free: string,          // no events that day (the app picks the text)
-}
-
-export struct CalBoard {
-    time: string,          // departure board: "18:00", "--:--" (the app pads and cuts every field to its cells)
-    what: string,          // 16 cells, capitals
-    gate: string,          // 2 cells: the calendar's code
-    status: string,        // 8 cells: DEPARTED, BOARDING, ON TIME, SUN 15 …
-    state: int,            // 0 today, 1 boarding (now), 2 departed (past), 3 a later day
-}
-
-export struct WallCell {
-    num: int,
-    other-month: bool,
-    sunday: bool,
-    today: bool,           // circled in red (drawn on when the page opens, 25.K4)
-    notes: image,          // wall calendar: the day's events written in pen (today circled), drawn by the app
-}
-
-export struct CalCell {
-    num: int,
-    other-month: bool,
-    today: bool,
-    labels: [string],      // up to two events as small labels (the app picks them), their colours, how many more
-    tints: [color],
-    more: int,
-}
+// Weeks start on Monday; times follow the panel's time format (24-hour or 12-hour); the app writes every label (relative
+// times like "in 4 h 15 min" too). The chip opens its picker, the quick shade's page row the settings; a day's list, an
+// event's details and its edit form are the look's own menus (cal_menus.slint).
+import { Theme, Act, Words, Clock } from "theme.slint";
+import { Icon, Crawl, PageMenu } from "widgets.slint";
+import { CalEvent, CalDay, CalBoard, WallCell, CalCell, CalItem, CalMenus } from "cal_menus.slint";
+export { CalEvent, CalDay, CalBoard, WallCell, CalCell, CalItem }
 
 // agenda: one event as a card (colour pill, start / end, title, calendar · when)
 component AgendaRow inherits Rectangle {
@@ -68,13 +18,14 @@ component AgendaRow inherits Rectangle {
     border-width: root.ev.now ? 2px : 0px; border-color: Theme.accent;
     opacity: root.ev.past ? 0.45 : 1;
     Rectangle { x: 12px; y: 12px; width: 4px; height: parent.height - 24px; border-radius: 2px; background: root.ev.tint; }
-    Text { x: 26px; y: 10px; width: 58px; height: 20px; text: root.ev.t1; font-size: root.ev.all-day ? 13px : 15px; font-weight: 600; color: Theme.text;
+    property <length> tx: Clock.h24 ? 88px : 104px;      // the times' column (12-hour times are wider)
+    Text { x: 26px; y: 10px; width: root.tx - 30px; height: 20px; text: root.ev.t1; font-size: root.ev.all-day ? 13px : 15px; font-weight: 600; color: Theme.text;
         vertical-alignment: center; overflow: elide; }
-    Text { x: 26px; y: 31px; width: 58px; height: 18px; text: root.ev.t2; font-size: 13px; color: Theme.muted; vertical-alignment: center; }
-    Text { x: 88px; y: 9px; width: parent.width - 102px; height: 22px; text: root.ev.title; font-size: 16px; color: Theme.text; vertical-alignment: center; overflow: elide; }
-    Text { x: 88px; y: 31px; width: parent.width - 102px; height: 18px; font-size: 13px; vertical-alignment: center; overflow: elide;
+    Text { x: 26px; y: 31px; width: root.tx - 30px; height: 18px; text: root.ev.t2; font-size: 13px; color: Theme.muted; vertical-alignment: center; }
+    Text { x: root.tx; y: 9px; width: parent.width - root.tx - 14px; height: 22px; text: root.ev.title; font-size: 16px; color: Theme.text; vertical-alignment: center; overflow: elide; }
+    Text { x: root.tx; y: 31px; width: parent.width - root.tx - 14px; height: 18px; font-size: 13px; vertical-alignment: center; overflow: elide;
         text: root.ev.cal + (root.ev.rel != "" ? "  ·  " + root.ev.rel : ""); color: root.ev.now ? Theme.accent : Theme.muted; }
-    if root.ev.now: Rectangle { x: 88px; y: parent.height - 7px; width: (parent.width - 102px) * root.ev.progress; height: 3px; border-radius: 1.5px; background: Theme.accent; }
+    if root.ev.now: Rectangle { x: root.tx; y: parent.height - 7px; width: (parent.width - root.tx - 14px) * root.ev.progress; height: 3px; border-radius: 1.5px; background: Theme.accent; }
 }
 
 // ---------------------------------------------------------------- departure board look (agenda as split-flap rows)
@@ -88,7 +39,8 @@ component FlapText inherits Rectangle {
     height: 26px; width: root.cells * 13px - 1px;
     Image { x: 0; y: 0; width: parent.width; height: 26px;
         source: root.cells == 2 ? @image-url("cal/board-2.png") : root.cells == 5 ? @image-url("cal/board-5.png")
-            : root.cells == 8 ? @image-url("cal/board-8.png") : @image-url("cal/board-16.png"); }
+            : root.cells == 6 ? @image-url("cal/board-6.png") : root.cells == 8 ? @image-url("cal/board-8.png") : root.cells == 9 ? @image-url("cal/board-9.png")
+            : root.cells == 15 ? @image-url("cal/board-15.png") : @image-url("cal/board-16.png"); }
     Text { x: 1px; y: 0; width: parent.width + 13px; height: 26px; text: root.text; font-family: "DejaVu Sans Mono"; font-size: 17px; font-weight: 700;
         letter-spacing: 2.77px; color: root.ink; vertical-alignment: center; }
 }
@@ -106,7 +58,9 @@ component CalBoardLook inherits Rectangle {
     Icon { x: 16px; y: 50px; width: 26px; height: 28px; text: "\u{F05D5}"; font-size: 24px; color: #f4f4f2; }
     Text { x: 48px; y: 50px; height: 28px; text: "DEPARTURES"; font-size: 19px; font-weight: 800; letter-spacing: 3px; color: #f4f4f2; vertical-alignment: center; }
     Text { x: 48px; y: 74px; height: 16px; text: root.date; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #9a9aa0; vertical-alignment: center; }
-    FlapText { x: 396px; y: 52px; cells: 5; text: root.clock; ink: #f4f4f2; }
+    FlapText { x: 461px - self.width; y: 52px; cells: Clock.h24 ? 5 : 6; text: root.clock; ink: #f4f4f2; }
+    // a tap on the head: the week's departures (the board has no days)
+    TouchArea { x: 14px; y: 46px; width: 360px; height: 46px; clicked => { Act.act("cal.board-week", ""); } }
     for c in [{ t: "TIME", x: 19 }, { t: "EVENT", x: 97 }, { t: "CAL", x: 318 }, { t: "STATUS", x: 357 }]: Text {
         x: c.x * 1px; y: 94px; height: 14px; text: c.t; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; vertical-alignment: center; }
     for r[i] in root.rows: br := Rectangle { x: 19px; y: 112px + i * 33px; width: 442px; height: 26px;
@@ -118,8 +72,8 @@ component CalBoardLook inherits Rectangle {
         changed boarding => { if br.boarding { br.blink-t0 = animation-tick(); br.blinking = true; } }
         Timer { interval: 1200ms; running: br.blinking; triggered => { br.blinking = false; } }
         property <bool> now-on: br.blinking && Math.mod(Math.floor((animation-tick() - br.blink-t0) / 200ms), 2) == 0;
-        FlapText { x: 0; y: 0; cells: 5; text: r.time; ink: parent.ink; }
-        FlapText { x: 78px; y: 0; cells: 16; text: r.what; ink: parent.ink; }
+        FlapText { x: 0; y: 0; cells: Clock.h24 ? 5 : 6; text: r.time; ink: parent.ink; }
+        FlapText { x: Clock.h24 ? 78px : 91px; y: 0; cells: Clock.h24 ? 16 : 15; text: r.what; ink: parent.ink; }
         FlapText { x: 299px; y: 0; cells: 2; text: r.gate; ink: parent.ink; }
         FlapText { x: 338px; y: 0; cells: 8; text: br.blinking ? (br.now-on ? "NOW" : "") : r.status; ink: br.blinking ? #ffb21e : r.state == 1 ? #4cd964 : r.state == 3 ? #f4f4f2 : parent.ink; }
         TouchArea { y: -4px; height: parent.height + 8px; clicked => { Act.act("cal.board", i); } }
@@ -180,7 +134,7 @@ component CalTearLook inherits Rectangle {
     Rectangle { x: 112px; y: 300px; width: 256px; height: 1px; background: #d9d6cc; }
     VerticalLayout { x: 112px; y: 306px; width: 256px; spacing: 0px; alignment: start;
         for e in root.events: HorizontalLayout { height: 24px; spacing: 10px; opacity: e.past ? 0.4 : 1;
-            Text { width: 44px; text: e.all-day ? "—" : e.t1; font-size: 14px; font-weight: 700; color: #1d1d20; vertical-alignment: center; }
+            Text { width: Clock.h24 ? 44px : 66px; text: e.all-day ? "—" : e.t1; font-size: 14px; font-weight: 700; color: #1d1d20; vertical-alignment: center; }
             Text { text: e.title; font-size: 14px; color: #33332f; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; } }
         if root.more != "": Text { height: 20px; text: root.more; font-size: 12px; color: #8a8880; vertical-alignment: center; }
         if root.events.length == 0: Text { height: 24px; text: root.free; font-size: 14px; color: #8a8880; horizontal-alignment: center; vertical-alignment: center; }
@@ -201,6 +155,8 @@ component CalTearLook inherits Rectangle {
             commands: "M " + (396 - 2.4 * root.ck) + " 436 L 396 " + (436 - 2.4 * root.ck); }
     }
     for e[i] in root.events: TouchArea { x: 104px; y: 306px + i * 24px; width: 272px; height: 24px; clicked => { Act.act("cal.tear", i); } }
+    callback more-tapped();
+    if root.more != "": TouchArea { x: 104px; y: 306px + root.events.length * 24px; width: 272px; height: 24px; clicked => { root.more-tapped(); } }
     Text { x: 104px; y: 400px; width: 272px; height: 34px; text: root.line; font-size: 12px; color: #6f6d66; horizontal-alignment: center;
         vertical-alignment: center; wrap: word-wrap; overflow: elide; }
 }
@@ -242,12 +198,14 @@ component CalWallLook inherits Rectangle {
         if c.today && root.cp > 0.01: Path { x: 0; y: 0; width: 64px; height: 46px; viewbox-width: 64; viewbox-height: 46; fill: transparent;
             stroke: #c0242a; stroke-width: 1.7px; stroke-line-cap: round; stroke-line-join: round;
             commands: "M " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.0000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.0000, root.cp) * 6.7332) * 1rad) + 0 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.0250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.0250, root.cp) * 6.7332) * 1rad) + 1 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.0500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.0500, root.cp) * 6.7332) * 1rad) + 2 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.0750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.0750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.0750, root.cp) * 6.7332) * 1rad) + 3 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.1000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.1000, root.cp) * 6.7332) * 1rad) + 4 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.1250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.1250, root.cp) * 6.7332) * 1rad) + 5 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.1500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.1500, root.cp) * 6.7332) * 1rad) + 6 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.1750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.1750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.1750, root.cp) * 6.7332) * 1rad) + 7 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.2000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.2000, root.cp) * 6.7332) * 1rad) + 8 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.2250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.2250, root.cp) * 6.7332) * 1rad) + 9 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.2500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.2500, root.cp) * 6.7332) * 1rad) + 10 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.2750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.2750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.2750, root.cp) * 6.7332) * 1rad) + 11 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.3000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.3000, root.cp) * 6.7332) * 1rad) + 12 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.3250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.3250, root.cp) * 6.7332) * 1rad) + 13 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.3500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.3500, root.cp) * 6.7332) * 1rad) + 14 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.3750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.3750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.3750, root.cp) * 6.7332) * 1rad) + 15 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.4000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.4000, root.cp) * 6.7332) * 1rad) + 16 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.4250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.4250, root.cp) * 6.7332) * 1rad) + 17 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.4500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.4500, root.cp) * 6.7332) * 1rad) + 18 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.4750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.4750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.4750, root.cp) * 6.7332) * 1rad) + 19 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.5000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.5000, root.cp) * 6.7332) * 1rad) + 20 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.5250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.5250, root.cp) * 6.7332) * 1rad) + 21 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.5500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.5500, root.cp) * 6.7332) * 1rad) + 22 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.5750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.5750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.5750, root.cp) * 6.7332) * 1rad) + 23 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.6000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.6000, root.cp) * 6.7332) * 1rad) + 24 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.6250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.6250, root.cp) * 6.7332) * 1rad) + 25 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.6500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.6500, root.cp) * 6.7332) * 1rad) + 26 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.6750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.6750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.6750, root.cp) * 6.7332) * 1rad) + 27 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.7000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.7000, root.cp) * 6.7332) * 1rad) + 28 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.7250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.7250, root.cp) * 6.7332) * 1rad) + 29 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.7500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.7500, root.cp) * 6.7332) * 1rad) + 30 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.7750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.7750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.7750, root.cp) * 6.7332) * 1rad) + 31 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.8000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.8000, root.cp) * 6.7332) * 1rad) + 32 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.8250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.8250, root.cp) * 6.7332) * 1rad) + 33 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.8500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.8500, root.cp) * 6.7332) * 1rad) + 34 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.8750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.8750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.8750, root.cp) * 6.7332) * 1rad) + 35 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.9000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.9000, root.cp) * 6.7332) * 1rad) + 36 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.9250, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9250, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.9250, root.cp) * 6.7332) * 1rad) + 37 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.9500, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9500, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.9500, root.cp) * 6.7332) * 1rad) + 38 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(0.9750, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(0.9750, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(0.9750, root.cp) * 6.7332) * 1rad) + 39 * 0.05) + " L " + (10 + 13 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(1.0000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.cos((-1.9 + min(1.0000, root.cp) * 6.7332) * 1rad)) + " " + (7.5 + 9.5 * (1 + 0.04 * Math.sin((3 * (-1.9 + min(1.0000, root.cp) * 6.7332) + -1.9) * 1rad)) * Math.sin((-1.9 + min(1.0000, root.cp) * 6.7332) * 1rad) + 40 * 0.05); }
-        TouchArea { clicked => { Act.act("cal.wall-day", i); } } }
+        TouchArea { clicked => { root.day-tapped(i); } } }
+    callback day-tapped(int);
     Rectangle { x: 464px; y: 200px; width: 1px; height: 276px; background: #d8d8d4; }
 }
 
 export component CalendarPage inherits Rectangle {
     in property <bool> live: true;         // on screen (the board's crawl runs only then)
+    in property <bool> on-screen;          // the page shown (not a neighbour in a swipe, no screensaver)
     in property <int> view;                // 0 agenda, 1 day, 2 week, 3 month, 4 three days (plain look)
     in property <int> look;                // 0 plain, 1 departure board, 2 tear-off, 3 wall calendar
     // 25.K1: a tapped event lifts (its shadow grows, 120 ms) before its details open
@@ -300,31 +258,66 @@ export component CalendarPage inherits Rectangle {
     // month
     in property <[string]> month-names;    // "M" …
     in property <[CalCell]> month-cells;   // 42
-    // editing an event
+    // the menus: the chip's picker (the calendars of the page, shown or not), the settings
+    in property <bool> picker;
+    in property <[CalItem]> cals;
+    in property <[string]> clock-cells;    // the board's clock in its flap cells
+    in property <string> desk-line;        // the tear-off pad's cardboard back
+    in property <bool> settings;
+    // a day's events as a list (the app fills it; the board's head: the week's departures)
+    in property <bool> day-sheet;
+    in property <string> day-sheet-title;
+    in property <string> day-sheet-caps;
+    in property <string> day-sheet-short;
+    in property <bool> day-sheet-week;
+    in property <[CalDay]> day-sheet-days;
+    in property <string> day-sheet-free;
+    // editing an event (the details turn into the form; the times are drums in place)
     in property <bool> edit;
     in property <string> edit-title;
     in property <string> edit-cal;
+    in property <string> edit-code;
     in property <color> edit-tint;
     in property <string> edit-day;         // "Tue 17 Nov"
-    in property <string> edit-start;
-    in property <string> edit-end;
-    in property <bool> edit-allday;
+    in-out property <bool> edit-allday;
+    in-out property <int> edit-start-min;  // minutes from the event's day's midnight
+    in-out property <int> edit-end-min;
+    in-out property <int> edit-open;       // the drums open under: 0 none, 1 the start, 2 the end
     in property <bool> edit-typing;        // the title being typed (keyboard)
     in property <bool> edit-can-delete;
-    in property <int> edit-picker;         // 0 none, 1 start, 2 end: the time wheel
-    in property <[string]> edit-hours;     // the wheel's five visible rows (the middle one picked)
-    in property <[string]> edit-mins;
-    // sheets
-    in property <bool> settings;
-    // a day's events as a list (the app fills it)
-    in property <bool> day-sheet;
-    in property <string> day-sheet-title;
-    in property <[CalEvent]> day-sheet-events;
-    in property <string> day-sheet-free;
+    in property <int> kb-layer;
+    in property <int> kb-layout;
+    // a deleted event's undo strip
+    in property <bool> undo;
+    in property <string> undo-text;
     // a tap on an event opens its details here (the page sets them itself)
     in-out property <bool> detail;
     in-out property <CalEvent> detail-ev;
     in-out property <string> detail-when;      // "Today · 18:00–20:15"
+
+    // the tapped day (a list grows out of it; the wall card stays beside it)
+    property <length> src-x;
+    property <length> src-y;
+    property <length> src-w;
+    property <length> src-h;
+    function day-at(x: length, y: length, w: length, h: length) { root.src-x = x; root.src-y = y; root.src-w = w; root.src-h = h; }
+    // the quick shade's page row ("Calendar settings · Tear-off") asks the page on screen to open its settings
+    function name-menu() {
+        PageMenu.title = "Calendar settings";
+        PageMenu.look = Words.line("ui.looks.calendar." + root.look);
+        PageMenu.icon = root.look == 1 ? "\u{F05D5}" : root.look == 2 ? "\u{F1A30}" : root.look == 3 ? "\u{F0E18}" : "\u{F00ED}";
+        PageMenu.has-settings = true;
+    }
+    init => { if root.on-screen { root.name-menu(); } }
+    changed on-screen => { if root.on-screen { root.name-menu(); } else { Act.act("cal.close-all", ""); } }
+    changed look => { if root.on-screen { root.name-menu(); } }
+    property <int> menu-request: PageMenu.open-request;
+    changed menu-request => { if root.on-screen { Act.act("cal.settings", ""); } }
+    // 12-hour hour labels of the timelines ("9 AM")
+    pure function hour-label(h: int, long: bool) -> string {
+        if Clock.h24 { return (h < 10 ? "0" : "") + h + (long ? ":00" : ""); }
+        return (Math.mod(h, 12) == 0 ? 12 : Math.mod(h, 12)) + (h < 12 ? " AM" : " PM");
+    }
 
     property <length> hh: 44px;            // day view: an hour
     property <length> wh: 24px;            // week view: an hour
@@ -339,8 +332,10 @@ export component CalendarPage inherits Rectangle {
     if root.look == 1: CalBoardPage { live: root.live; rows: root.board-rows; clock: root.board-clock; date: root.board-date; ticker: root.board-ticker;
         ticker-epoch: root.board-epoch; empty: root.board-empty; }
     if root.look == 2: CalTearLook { month: root.tear-month; day: root.tear-day; weekday: root.tear-weekday; sunday: root.tear-sunday; info: root.tear-info;
-        events: root.tear-events; more: root.tear-more; line: root.tear-line; free: root.day-free; }
-    if root.look == 3: CalWallLook { month: root.wall-month; year: root.wall-year; photo: root.wall-photo; names: root.week-names; cells: root.wall-cells; }
+        events: root.tear-events; more: root.tear-more; line: root.tear-line; free: root.day-free;
+        more-tapped => { root.day-at(104px, 306px + root.tear-events.length * 24px, 272px, 24px); Act.act("cal.tear-more", ""); } }
+    if root.look == 3: CalWallLook { month: root.wall-month; year: root.wall-year; photo: root.wall-photo; names: root.week-names; cells: root.wall-cells;
+        day-tapped(i) => { root.day-at(16px + Math.mod(i, 7) * 64px, 200px + Math.floor(i / 7) * 46px, 64px, 46px); Act.act("cal.wall-day", i); } }
     if root.look == 0: Text { x: 16px; y: 46px; width: 330px; height: 34px; text: root.title; font-size: 24px; font-weight: 600; color: Theme.text; vertical-alignment: center; overflow: elide; }
     if root.look == 0: Text { x: 16px; y: 80px; width: 330px; height: 20px; text: root.sub; font-size: 14px; color: Theme.muted; vertical-alignment: center; overflow: elide; }
     Rectangle {
@@ -353,7 +348,7 @@ export component CalendarPage inherits Rectangle {
             vertical-alignment: center; overflow: elide;
             text: root.chip; }
         Icon { x: parent.width - 26px; y: 0; width: 18px; height: parent.height; text: "\u{F0140}"; font-size: 18px; color: root.look == 1 ? #ffffffb0 : Theme.muted; }
-        TouchArea { x: -6px; y: -6px; width: parent.width + 12px; height: parent.height + 12px; clicked => { Act.act("cal.settings", ""); } }
+        TouchArea { x: -6px; y: -6px; width: parent.width + 12px; height: parent.height + 12px; clicked => { Act.act("cal.picker", ""); } }
     }
     if root.look == 0 && root.view != 0: Rectangle { x: 372px; y: 52px; width: 40px; height: 40px; border-radius: 20px; background: Theme.surface-raised;
         Icon { text: "\u{F0141}"; font-size: 24px; color: Theme.text; }
@@ -401,7 +396,7 @@ export component CalendarPage inherits Rectangle {
         content-width: root.width; content-height: 24 * root.hh + 40px; content-y: -root.scroll;
         for h in 25: Rectangle { x: 0; y: h * root.hh; width: root.width; height: 1px;
             Rectangle { x: 60px; y: 0; width: root.width - 76px; height: 1px; background: Theme.outline; }
-            if h < 24: Text { x: 12px; y: -8px; width: 40px; height: 16px; text: (h < 10 ? "0" : "") + h + ":00"; font-size: 12px; color: Theme.muted;
+            if h < 24: Text { x: 4px; y: -8px; width: 48px; height: 16px; text: root.hour-label(h, true); font-size: Clock.h24 ? 12px : 11px; color: Theme.muted;
                 horizontal-alignment: right; vertical-alignment: center; } }
         for e in root.day-events: db := Rectangle {
             x: 66px + e.lane * (398px / max(1, e.lanes)); width: 398px / max(1, e.lanes) - 4px;
@@ -435,7 +430,7 @@ export component CalendarPage inherits Rectangle {
     // Overlapping events sit side by side; past three lanes (week) or four (3 days) the app folds the rest into a "+n" block.
     if root.look == 0 && (root.view == 2 || root.view == 4): Rectangle { x: 0; y: 100px; width: root.width; height: 44px;
         for n[i] in root.week-names: Rectangle { x: root.wx + i * root.gw; y: 0; width: root.gw; height: 44px;
-            TouchArea { clicked => { Act.act("cal.week-day", i); } }
+            TouchArea { clicked => { root.day-at(root.wx + i * root.gw, 100px, root.gw, 380px); Act.act("cal.week-day", i); } }
             Text { x: 0; y: 0; width: parent.width; height: 16px; text: n; font-size: 11px; font-weight: 600; color: i == root.week-today ? Theme.accent : Theme.muted;
                 horizontal-alignment: center; vertical-alignment: center; }
             Text { x: 0; y: 16px; width: parent.width; height: 26px; text: root.week-nums[i]; font-size: 15px; font-weight: 600;
@@ -454,7 +449,7 @@ export component CalendarPage inherits Rectangle {
             animate x { duration: 300ms; easing: ease-in-out; } }
         for h in 25: Rectangle { x: 0; y: h * root.gh; width: root.width; height: 1px;
             Rectangle { x: root.wx; y: 0; width: root.gn * root.gw; height: 1px; background: Theme.outline; }
-            if h < 24 && Math.mod(h, root.view == 4 ? 1 : 2) == 0: Text { x: 8px; y: -8px; width: 40px; height: 16px; text: (h < 10 ? "0" : "") + h; font-size: 11px;
+            if h < 24 && Math.mod(h, root.view == 4 ? 1 : 2) == 0: Text { x: 2px; y: -8px; width: 46px; height: 16px; text: root.hour-label(h, false); font-size: Clock.h24 ? 11px : 10px;
                 color: Theme.muted; horizontal-alignment: right; vertical-alignment: center; } }
         for i in root.gn + 1: Rectangle { x: root.wx + i * root.gw; y: 0; width: 1px; height: 24 * root.gh; background: Theme.outline.with-alpha(0.6); }
         for e in root.week-events: wb := Rectangle {
@@ -469,6 +464,7 @@ export component CalendarPage inherits Rectangle {
                     root.detail-ev = e; root.detail-when = root.week-names[e.day] + " " + root.week-nums[e.day] + " · " + e.time;
                     root.lift-key = e.title + "|" + e.start + "|" + e.day; root.lift-t0 = animation-tick(); root.lifting = true;
                 } else {
+                    root.day-at(root.wx + e.day * root.gw, 100px, root.gw, 380px);
                     Act.act("cal.week-day", e.day);
                 }
             } }
@@ -491,7 +487,7 @@ export component CalendarPage inherits Rectangle {
         for n[i] in root.month-names: Text { x: 16px + i * 64px; y: 0; width: 64px; height: 18px; text: n; font-size: 11px; font-weight: 600; color: Theme.muted;
             horizontal-alignment: center; vertical-alignment: center; }
         for c[i] in root.month-cells: Rectangle { x: 16px + Math.mod(i, 7) * 64px; y: 20px + Math.floor(i / 7) * 56px; width: 64px; height: 56px;
-            TouchArea { clicked => { Act.act("cal.month-day", i); } }
+            TouchArea { clicked => { root.day-at(16px + Math.mod(i, 7) * 64px, 122px + Math.floor(i / 7) * 56px, 64px, 56px); Act.act("cal.month-day", i); } }
             Rectangle { x: 0; y: 0; width: parent.width; height: 1px; background: Theme.outline; }
             Text { x: 3px; y: 4px; width: 22px; height: 22px; text: c.num; font-size: 13px; font-weight: c.today ? 700 : 500;
                 color: c.today ? Theme.accent : c.other-month ? Theme.faint : Theme.text; horizontal-alignment: center; vertical-alignment: center; }
@@ -503,129 +499,16 @@ export component CalendarPage inherits Rectangle {
                 Text { x: 4px; y: 0; width: parent.width - 6px; height: parent.height; text: t; font-size: 10px; font-weight: 600; color: Theme.text;
                     vertical-alignment: center; overflow: elide; } } } }
 
-    // ---------------------------------------------------------------- the page's sheet: the view
-    // the settings: a sheet that follows the finger (DragSheet)
-    property <length> settings-need: 68px + (root.look == 0 ? 2 : 1) * 56px + 12px;
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.settings; need: root.settings-need;
-        close => { Act.act("cal.settings-close", ""); }
-        Text { x: 24px; y: 24px; height: 28px; text: "Calendar"; font-size: 18px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Icon { x: 110px; y: 24px; width: 28px; height: 28px; text: "\u{F02FD}"; font-size: 20px; color: Theme.muted; }
-        Text { x: parent.width - 24px - self.preferred-width; y: 24px; height: 28px; text: "Done"; font-size: 16px; font-weight: 600; color: Theme.text; vertical-alignment: center;
-            TouchArea { x: -12px; y: -10px; width: parent.width + 24px; height: parent.height + 20px; clicked => { Act.act("cal.settings-close", ""); } } }
-        Dropdown { x: 24px; y: 68px; width: parent.width - 48px;
-            options: [Words.line("ui.looks.calendar.0"), Words.line("ui.looks.calendar.1"), Words.line("ui.looks.calendar.2"), Words.line("ui.looks.calendar.3")];
-            selected: root.look; picked(i) => { Act.act("cal.look", i); } }
-        // the start view of the plain look (its index order: agenda 0, day 1, week 2, month 3, 3 days 4)
-        if root.look == 0: Dropdown { x: 24px; y: 68px + 56px; width: parent.width - 48px;
-            options: ["Agenda", "Day", "3 days", "Week", "Month"];
-            selected: root.view == 0 ? 0 : root.view == 1 ? 1 : root.view == 4 ? 2 : root.view == 2 ? 3 : 4;
-            picked(i) => { Act.act("cal.view", i == 0 ? "0" : i == 1 ? "1" : i == 2 ? "4" : i == 3 ? "2" : "3"); } }
-    }
-
-    // ---------------------------------------------------------------- a day's events (a tap on a day in the month grid, the wall calendar
-    // or a week column): a list sized to its content, a tap on one opens its details over it
-    property <length> day-content: 72px + max(40px, dsr.preferred-height) + 20px;
-    property <length> day-need: min(424px, root.day-content);
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.day-sheet; need: root.day-need; content-need: root.day-content;
-        close => { Act.act("cal.day-sheet-close", ""); }
-        Text { x: 24px; y: 24px; width: parent.width - 48px; height: 28px; text: root.day-sheet-title; font-size: 18px; font-weight: 600; color: Theme.text;
-            vertical-alignment: center; overflow: elide; }
-        Flickable { x: 24px; y: 64px; width: parent.width - 48px; height: root.day-need - 64px - 12px; content-height: dsr.preferred-height;
-            dsr := VerticalLayout { width: parent.width; spacing: 6px; alignment: start;
-                for e in root.day-sheet-events: Rectangle { height: 52px; border-radius: 12px; background: Theme.surface-raised; opacity: e.past ? 0.55 : 1;
-                    TouchArea { clicked => { root.detail-ev = e; root.detail-when = root.day-sheet-title + " · " + e.time; root.detail = true; } }
-                    Rectangle { x: 10px; y: 10px; width: 4px; height: parent.height - 20px; border-radius: 2px; background: e.tint; }
-                    Text { x: 24px; y: 6px; width: parent.width - 32px; height: 22px; text: e.title; font-size: 15px; font-weight: 600; color: Theme.text;
-                        vertical-alignment: center; overflow: elide; }
-                    Text { x: 24px; y: 27px; width: parent.width - 32px; height: 18px; text: e.time + "  ·  " + e.cal; font-size: 12px; color: Theme.muted;
-                        vertical-alignment: center; overflow: elide; } }
-                if root.day-sheet-events.length == 0: Text { height: 40px; text: root.day-sheet-free; font-size: 15px; color: Theme.muted; vertical-alignment: center; }
-            }
-        }
-    }
-
-    // ---------------------------------------------------------------- an event's details (tap on an event, or the home page's next-event widget)
-    // the detail: a sheet that follows the finger (DragSheet)
-    property <length> detail-need: dl.preferred-height + 24px;
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.detail; need: root.detail-need;
-        close => { root.detail = false; }
-        dl := VerticalLayout { x: 24px; y: 24px; width: parent.width - 48px; spacing: 6px; alignment: start;
-            HorizontalLayout { spacing: 8px; height: 20px; alignment: start;
-                VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.detail-ev.tint; } }
-                Text { text: root.detail-ev.cal; font-size: 13px; font-weight: 600; color: Theme.muted; vertical-alignment: center; overflow: elide; } }
-            Text { text: root.detail-ev.title; font-size: 21px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
-            HorizontalLayout { spacing: 8px; alignment: start; padding-top: 4px;
-                Icon { width: 20px; text: "\u{F0150}"; font-size: 18px; color: Theme.muted; }
-                Text { text: root.detail-when; font-size: 15px; color: Theme.text; vertical-alignment: center; overflow: elide; } }
-            if root.detail-ev.rel != "": Text { text: root.detail-ev.rel; font-size: 14px; font-weight: 600; color: Theme.accent; }
-            if root.detail-ev.place != "": HorizontalLayout { spacing: 8px; alignment: start;
-                Icon { width: 20px; text: "\u{F07D9}"; font-size: 18px; color: Theme.muted; }
-                Text { text: root.detail-ev.place; font-size: 15px; color: Theme.text; vertical-alignment: center; overflow: elide; } }
-            if root.detail-ev.note != "": Rectangle { height: min(nt.preferred-height, 60px); clip: true;
-                nt := Text { x: 0; y: 0; width: parent.width; height: parent.height; text: root.detail-ev.note; font-size: 14px; color: Theme.muted; wrap: word-wrap; overflow: elide; } }
-            if root.detail-ev.editable: HorizontalLayout { padding-top: 8px; alignment: start;
-                Rectangle { width: 120px; height: 44px; border-radius: 22px; background: Theme.text;
-                    HorizontalLayout { alignment: center; spacing: 8px;
-                        Icon { width: 20px; text: "\u{F0CB6}"; font-size: 18px; color: Theme.background; }
-                        Text { text: "Edit"; font-size: 15px; font-weight: 600; color: Theme.background; vertical-alignment: center; } } } }
-            if !root.detail-ev.editable: HorizontalLayout { padding-top: 6px; spacing: 6px; alignment: start;
-                Icon { width: 18px; text: "\u{F0341}"; font-size: 16px; color: Theme.faint; }
-                Text { text: "Read-only calendar"; font-size: 13px; color: Theme.faint; vertical-alignment: center; } }
-            Rectangle { height: 8px; }
-        }
-    }
-
-    // ---------------------------------------------------------------- editing an event (only calendars that allow it)
-    if root.edit: Rectangle {
-        background: Theme.background;
-        Rectangle { x: 16px; y: 46px; width: 40px; height: 40px; border-radius: 20px; background: Theme.surface-raised;
-            Icon { text: "\u{F0156}"; font-size: 22px; color: Theme.text; } }
-        Text { x: 68px; y: 46px; width: 300px; height: 40px; text: "Edit event"; font-size: 20px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Rectangle { x: 384px; y: 46px; width: 80px; height: 40px; border-radius: 20px; background: Theme.text;
-            Text { text: "Save"; font-size: 15px; font-weight: 600; color: Theme.background; horizontal-alignment: center; vertical-alignment: center; } }
-        Rectangle { x: 16px; y: 102px; width: 10px; height: 10px; border-radius: 5px; background: root.edit-tint; }
-        Text { x: 32px; y: 96px; width: 300px; height: 22px; text: root.edit-cal; font-size: 13px; font-weight: 600; color: Theme.muted; vertical-alignment: center; }
-        Rectangle { x: 16px; y: 122px; width: 448px; height: 46px; border-radius: 14px; background: Theme.surface;
-            border-width: root.edit-typing ? 2px : 1px; border-color: root.edit-typing ? Theme.accent : Theme.outline;
-            Rectangle { x: 14px; y: 0; width: parent.width - 28px; height: parent.height; clip: true;
-                et := Text { x: min(0px, parent.width - 4px - self.preferred-width); y: 0; width: self.preferred-width; height: parent.height;
-                    text: root.edit-title; font-size: 17px; color: Theme.text; vertical-alignment: center; }
-                if root.edit-typing: Rectangle { x: et.x + et.preferred-width + 1px; y: 11px; width: 2px; height: 24px; background: Theme.accent; } } }
-        if !root.edit-typing: VerticalLayout { x: 16px; y: 182px; width: 448px; spacing: 8px; alignment: start;
-            for r in [{ l: "Day", v: root.edit-day, show: true }, { l: "Starts", v: root.edit-start, show: !root.edit-allday },
-                      { l: "Ends", v: root.edit-end, show: !root.edit-allday }]: Rectangle {
-                height: r.show ? 48px : 0px; visible: r.show; border-radius: 14px; background: Theme.surface;
-                Text { x: 16px; y: 0; height: parent.height; text: r.l; font-size: 15px; color: Theme.text; vertical-alignment: center; }
-                Rectangle { x: parent.width - 12px - self.width; y: 8px; height: 32px; width: vt.preferred-width + 28px; border-radius: 16px; background: Theme.surface-raised;
-                    vt := Text { x: 14px; y: 0; width: self.preferred-width; height: parent.height; text: r.v; font-size: 15px; font-weight: 600; color: Theme.text;
-                        vertical-alignment: center; } } }
-            Rectangle { height: 48px; border-radius: 14px; background: Theme.surface;
-                Text { x: 16px; y: 0; height: parent.height; text: "All day"; font-size: 15px; color: Theme.text; vertical-alignment: center; }
-                Toggle { x: parent.width - 12px - self.width; y: 8px; on: root.edit-allday; } }
-        }
-        if !root.edit-typing && root.edit-can-delete: Text { x: 16px; y: 406px; width: 448px; height: 36px; text: "Delete event"; font-size: 15px; font-weight: 600;
-            color: Theme.danger; horizontal-alignment: center; vertical-alignment: center; }
-        if root.edit-typing: Keyboard { x: Theme.pad; y: Theme.keyboard-top; width: root.width - 2 * Theme.pad; enter-label: "Done"; }
-    }
-    if root.edit && root.edit-picker > 0: Rectangle { background: #00000080; }
-    if root.edit && root.edit-picker > 0: Rectangle {
-        property <length> need: 72px + 5 * 40px + 20px;
-        x: 0; y: root.height - self.need; width: root.width; height: self.need + 24px; border-radius: 24px; background: Theme.surface;
-        Rectangle { x: (parent.width - 36px) / 2; y: 8px; width: 36px; height: 4px; border-radius: 2px; background: Theme.faint; }
-        Text { x: 24px; y: 24px; height: 28px; text: root.edit-picker == 1 ? "Starts" : "Ends"; font-size: 18px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Text { x: parent.width - 24px - self.preferred-width; y: 24px; height: 28px; text: "Done"; font-size: 16px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        // the wheel: the picked row in a band in the middle, the others fading away from it
-        Rectangle { x: 120px; y: 68px + 2 * 40px; width: 240px; height: 40px; border-radius: 12px; background: Theme.surface-raised; }
-        for hv[i] in root.edit-hours: Text { x: 140px; y: 68px + i * 40px; width: 80px; height: 40px; text: hv; horizontal-alignment: center; vertical-alignment: center;
-            font-size: i == 2 ? 26px : 20px; font-weight: i == 2 ? 600 : 400; color: i == 2 ? Theme.text : Theme.muted.with-alpha(i == 1 || i == 3 ? 0.8 : 0.4); }
-        Text { x: 220px; y: 68px + 2 * 40px; width: 40px; height: 40px; text: ":"; font-size: 26px; font-weight: 600; color: Theme.text; horizontal-alignment: center; vertical-alignment: center; }
-        for mv[i] in root.edit-mins: Text { x: 260px; y: 68px + i * 40px; width: 80px; height: 40px; text: mv; horizontal-alignment: center; vertical-alignment: center;
-            font-size: i == 2 ? 26px : 20px; font-weight: i == 2 ? 600 : 400; color: i == 2 ? Theme.text : Theme.muted.with-alpha(i == 1 || i == 3 ? 0.8 : 0.4); }
+    // ---------------------------------------------------------------- the look's menus
+    CalMenus {
+        look: root.look; view: root.view; cals: root.cals; clock-cells: root.clock-cells; desk-line: root.desk-line;
+        picker: root.picker; settings: root.settings;
+        day-open: root.day-sheet; day-title: root.day-sheet-title; day-caps: root.day-sheet-caps; day-short: root.day-sheet-short; day-week: root.day-sheet-week;
+        days: root.day-sheet-days; day-free: root.day-sheet-free; src-x: root.src-x; src-y: root.src-y; src-w: root.src-w; src-h: root.src-h;
+        detail <=> root.detail; ev <=> root.detail-ev; when <=> root.detail-when;
+        edit: root.edit; edit-title: root.edit-title; edit-day: root.edit-day; edit-code: root.edit-code; edit-cal: root.edit-cal; edit-tint: root.edit-tint;
+        edit-typing: root.edit-typing; edit-can-delete: root.edit-can-delete; edit-allday <=> root.edit-allday; edit-start-min <=> root.edit-start-min;
+        edit-end-min <=> root.edit-end-min; edit-open <=> root.edit-open; kb-layer: root.kb-layer; kb-layout: root.kb-layout;
+        undo: root.undo; undo-text: root.undo-text;
     }
 }
