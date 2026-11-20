@@ -100,6 +100,8 @@ const TIMER_FUNCTIONS = [["timer", "Timers"], ["alarm", "Alarms"], ["stopwatch",
 const SW_LOOKS = [[0, "Plain"], [1, "Chronograph"], [2, "Timing tower"], [3, "LCD watch"], [4, "Nixie"]];
 const ALARM_LOOKS = [[0, "Plain"], [1, "Twin-bell"], [2, "Sunrise"], [3, "Clock radio"], [4, "24-hour dial"]];
 const VOICE_LOOKS = ["Plain", "Terminal", "Comic", "Oscilloscope"];
+// Option ids of the selects Home Assistant makes for a voice satellite, by the names Home Assistant shows for them
+const VOICE_OPTION_NAMES = { preferred: "Preferred", default: "Default", relaxed: "Relaxed", aggressive: "Aggressive", no_wake_word: "No wake word" };
 
 // Sounds. Stored values: "auto" (the place's default), "lib:<id>" (a PanelOS sound, {STATIC}/sounds/<id>.mp3
 // here), "own:<id>" (uploaded once for every panel, house.sounds). The last two PanelOS sounds are for
@@ -323,6 +325,60 @@ function svgNode(markup, cls) {
 }
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
+
+// ---------------------------------------------------------------- live widget previews (the widget picker)
+// Home Assistant's weather conditions by the names the panel shows (app/src/pages.rs condition_text).
+const WX_NAMES = { "clear-night": "Clear", "partlycloudy": "Partly cloudy", "lightning": "Thunder", "lightning-rainy": "Thunderstorm", "snowy-rainy": "Sleet", "windy-variant": "Windy", "pouring": "Pouring" };
+const wxName = (c) => WX_NAMES[c] || (c ? c.charAt(0).toUpperCase() + c.slice(1) : "");
+// The weather icons of the previews: line drawings on a 24-unit grid, in the text colour.
+const WX_CLOUD = "M7.5 19h9.5a4 4 0 0 0 .4-7.98 5.5 5.5 0 0 0-10.6 1.2A3.4 3.4 0 0 0 7.5 19z";
+const WX_SUN = '<circle cx="12" cy="12" r="4.2"/>' + [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<path d="M12 4.2V2" transform="rotate(${a} 12 12)"/>`).join("");
+function wxIcon(cond, x, y, size, ink) {
+  const up = `<path d="${WX_CLOUD}" transform="translate(0 -3.5)"/>`;
+  const drops = (n) => [9, 13, 17, 11, 15].slice(0, n).map((dx, i) => `<path d="M${dx} ${17.5 + (i > 2 ? 2 : 0)}l-1 2.6"/>`).join("");
+  const shapes = {
+    "sunny": WX_SUN,
+    "clear-night": '<path d="M15.5 3.6a8.4 8.4 0 1 0 4.9 13.3A7 7 0 0 1 15.5 3.6z"/>',
+    "partlycloudy": `<g transform="translate(-3.2 -3.6) scale(.7)">${WX_SUN}</g><path d="${WX_CLOUD}" transform="translate(1.5 .5) scale(.92)"/>`,
+    "cloudy": `<path d="${WX_CLOUD}" transform="translate(0 -1.5)"/>`,
+    "rainy": up + drops(3),
+    "pouring": up + drops(5),
+    "snowy": up + [9, 13, 17].map((dx) => `<circle cx="${dx}" cy="19.5" r=".7"/>`).join(""),
+    "snowy-rainy": up + '<circle cx="10" cy="19.5" r=".7"/><path d="M15 17.5l-1 2.6"/>',
+    "hail": up + [9, 13, 17].map((dx) => `<circle cx="${dx}" cy="19" r="1.1"/>`).join(""),
+    "lightning": up + '<path d="M13 15l-2 3.5h3l-2 3.5"/>',
+    "lightning-rainy": up + '<path d="M12 15l-2 3.5h3l-2 3.5M16.5 16.5l-1 2.6"/>',
+    "fog": '<path d="M4 9h16M6 13h14M4 17h14"/>',
+    "windy": '<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5M3 13h15a2.5 2.5 0 1 1-2.5 2.5M3 17h8"/>',
+    "windy-variant": '<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5M3 13h15a2.5 2.5 0 1 1-2.5 2.5M3 17h8"/>',
+  };
+  const body = shapes[cond] || shapes.cloudy;
+  return `<g transform="translate(${x} ${y}) scale(${size / 24})" fill="none" stroke="${ink}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
+}
+// A text cut to a width at a font size (the panel elides its widget texts the same way).
+function fitText(t, width, size) {
+  const s = String(t || "");
+  const most = Math.max(1, Math.floor(width / (size * 0.56)));
+  return s.length <= most ? s : `${s.slice(0, Math.max(1, most - 1)).trimEnd()}…`;
+}
+
+// ---------------------------------------------------------------- jelly motion (spec 28.15)
+// The switch, the segmented control, the weekday row and the checkbox move as on the panel. Each motion is a
+// closed-form function of the time t since the change: J-edge(t; τ, T) = 1 − e^(−t/τ)·(cos ωt + sin ωt / (ωτ)),
+// ω = 2π/T (it starts at rest, overshoots and rings out); a wobble that keeps the area, sx = 1 + A·e^(−t/τ)·cos(2πt/T),
+// sy = 1/sx; an overshoot past a target softly capped at cap·tanh(x/cap).
+const J_TAU = Math.PI * 2;
+const jEdge = (t, tau, T) => (t <= 0 ? 0 : 1 - Math.exp(-t / tau) * (Math.cos((J_TAU * t) / T) + (T / (J_TAU * tau)) * Math.sin((J_TAU * t) / T)));
+const jWob = (t, A, tau = 150, T = 170) => (t < 0 ? 1 : 1 + A * Math.exp(-t / tau) * Math.cos((J_TAU * t) / T));
+const jSoft = (x, cap) => (x <= 0 ? x : cap * Math.tanh(x / cap));
+const jEo = (u) => 1 - Math.pow(1 - Math.min(1, Math.max(0, u)), 3);
+const J_LEAD = [90, 240];
+const J_TRAIL = [130, 340];
+const J_LAG = 30;
+// reduced motion: no overshoot or wobble, 150 ms ease-out
+const jReduce = () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+const jScale = (el, sx, sy) => { if (el) el.style.transform = `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`; };
+const J_TICK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/></svg>';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const mb = (bytes) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -685,11 +741,17 @@ button { cursor: pointer; }
 .below { padding: 0 0 14px; margin-top: -4px; }
 
 /* controls */
-.seg { display: inline-flex; flex-wrap: wrap; background: var(--raised); border-radius: 20px; padding: 3px; gap: 2px; max-width: 100%; }
-.seg button { border: 0; background: none; font-size: 14px; padding: 7px 15px; border-radius: 999px; color: var(--muted); text-align: center; }
+.seg { position: relative; display: inline-flex; flex-wrap: wrap; background: var(--raised); border-radius: 20px; padding: 3px; gap: 2px; max-width: 100%; }
+.seg button { position: relative; z-index: 1; border: 0; background: none; font-size: 14px; font-weight: 500; padding: 7px 15px; border-radius: 999px; color: var(--muted); text-align: center; transition: color .16s; }
 .seg button:hover { color: var(--text); }
 .seg button.on { background: var(--text); color: var(--ground); }
 .seg button:disabled { opacity: .4; cursor: default; }
+.seg .pill { position: absolute; left: 0; top: 0; display: none; border-radius: 999px; background: var(--text); pointer-events: none; }
+.seg.jm .pill { display: block; }
+.seg.jm button.on { background: none; }
+.seg.jm.jpre button { transition: none; }
+.seg.jm.jpre button.on { color: var(--muted); }
+.seg.jm.jpre button.jwas { color: var(--ground); }
 .sel { position: relative; max-width: 100%; min-width: 0; flex: 0 1 auto; display: inline-block; }
 .sel.disabled { opacity: .45; pointer-events: none; }
 .sel select { appearance: none; -webkit-appearance: none; max-width: 100%; font-size: 14px; color: var(--text); background: var(--raised); border: 1px solid transparent; border-radius: 12px; padding: 9px 36px 9px 14px; }
@@ -699,14 +761,16 @@ button { cursor: pointer; }
 .inp { font-size: 14px; background: var(--raised); border: 1px solid transparent; border-radius: 12px; padding: 9px 13px; color: var(--text); min-width: 0; width: 100%; }
 .inp.time { width: 112px; font-variant-numeric: tabular-nums; }
 .inp.short { width: 200px; max-width: 100%; }
-.switch { position: relative; width: 48px; height: 28px; flex: none; display: inline-block; }
-.switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; }
-.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); transition: background .15s; }
-.switch span::after { content: ""; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; border-radius: 50%; background: var(--faint); transition: transform .15s, background .15s; }
-.switch input:checked + span { background: var(--signal); border-color: var(--signal); }
-.switch input:checked + span::after { transform: translateX(20px); background: #F5F3EE; }
+.switch { --swW: 48px; --swH: 28px; --kn: 20px; position: relative; width: var(--swW); height: var(--swH); flex: none; display: inline-block; touch-action: pan-y; }
+.switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; touch-action: pan-y; }
+.switch span { --on: 0; position: absolute; inset: 0; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.switch span::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--signal); opacity: var(--on); }
+.switch span i { position: absolute; left: 4px; top: 4px; width: var(--kn); height: var(--kn); border-radius: 999px; background: color-mix(in srgb, #F5F3EE calc(var(--on) * 100%), var(--faint)); }
+.switch input:checked + span { --on: 1; }
+.switch input:checked + span i { left: calc(var(--swW) - 4px - var(--kn)); }
 .switch input:disabled { cursor: default; }
 .switch input:disabled + span { opacity: .45; }
+.switch input:focus-visible + span { outline: 2px solid var(--signal); outline-offset: 2px; }
 .slider { display: flex; align-items: center; gap: 12px; min-width: 0; }
 input[type=range] { -webkit-appearance: none; appearance: none; width: 220px; max-width: 46vw; height: 28px; background: transparent; cursor: pointer; margin: 0; }
 input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--signal) var(--fill, 0%), var(--raised) var(--fill, 0%)); }
@@ -752,27 +816,37 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .ddr .sp { width: 18px; flex: none; }
 .ddr .t { min-width: 0; overflow-wrap: anywhere; }
 .ddr:disabled { opacity: .4; }
-.ddr .cb { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--faint); flex: none; display: grid; place-items: center; transition: background .16s, border-color .16s; }
-.ddr .cb.on { background: var(--signal); border-color: var(--signal); animation: cbpop .23s cubic-bezier(.34,1.6,.64,1); }
-.ddr .cb .mdi { --mdc-icon-size: 14px; color: #F5F3EE; }
-@keyframes cbpop { from { transform: scale(.6); } to { transform: none; } }
+.jck { position: relative; width: 18px; height: 18px; flex: none; display: block; color: #F5F3EE; }
+.jck .bw { position: absolute; inset: 0; display: block; }
+.jck .bx { position: absolute; inset: 0; border-radius: 5px; border: 1.5px solid var(--faint); transition: background .08s, border-color .08s; }
+.jck.round .bx { border-radius: 50%; }
+.jck svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.jck path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.jck.on .bx { background: var(--signal); border-color: var(--signal); }
+.jck.on path { stroke-dashoffset: 0; }
 .ddbar { display: flex; gap: 4px; padding: 0 0 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
 .dds { margin-bottom: 6px; }
 .dddone { display: none; padding-top: 6px; justify-content: flex-end; }
 .wdays { display: flex; gap: 6px; flex-wrap: wrap; }
-.wd { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--raised); color: var(--muted); font-size: 13px; font-weight: 500; display: grid; place-items: center; padding: 0; transition: background .16s, color .16s; }
-.wd.on { background: var(--text); color: var(--ground); animation: cbpop .23s cubic-bezier(.34,1.6,.64,1); }
+.wd { position: relative; width: 32px; height: 32px; border-radius: 50%; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 500; display: grid; place-items: center; padding: 0; transition: color .08s; }
+.wd .base, .wd .blob { position: absolute; inset: 0; border-radius: 50%; display: block; }
+.wd .base { background: var(--raised); }
+.wd .blob { background: var(--text); transform: scale(0); }
+.wd span { position: relative; }
+.wd.on { color: var(--ground); }
+.wd.on .blob { transform: none; }
+.wdays .wd.jl { color: var(--muted); }
+.wdays .wd.jl.lit { color: var(--ground); }
 /* the touch density (the Home Assistant app on a phone): the panel's sizes (spec 28) */
 @media (pointer: coarse) {
   .dd { height: 48px; font-size: 15px; border-radius: 14px; }
   .ddr { min-height: 48px; font-size: 15px; }
-  .ddr .cb { width: 22px; height: 22px; border-radius: 6px; }
+  .jck { width: 22px; height: 22px; }
+  .jck .bx { border-radius: 6px; }
   .dddone { display: flex; }
   .seg { padding: 2px; border-radius: 20px; }
   .seg button { min-height: 36px; font-size: 15px; padding: 8px 16px; }
-  .switch { width: 56px; height: 32px; }
-  .switch span::after { width: 24px; height: 24px; left: 3px; top: 3px; }
-  .switch input:checked + span::after { transform: translateX(24px); }
+  .switch { --swW: 56px; --swH: 32px; --kn: 24px; }
   .btn { min-height: 48px; font-size: 16px; font-weight: 600; padding: 0 22px; }
   .btn.small { min-height: 36px; font-size: 14px; padding: 0 16px; }
   .wd { width: 40px; height: 40px; }
@@ -838,6 +912,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .cat-item .pic { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #000; }
 .cat-item .pic.wicon { display: grid; place-items: center; background: var(--raised); color: var(--muted); aspect-ratio: 2; }
 .cat-item .pic.wicon .mdi { --mdc-icon-size: 34px; }
+.cat-item .pic.wicon .wpv { width: 100%; height: 100%; }
 .cat-item > b { font-weight: 600; font-size: 14.5px; overflow-wrap: anywhere; }
 .cat-item > small { color: var(--muted); font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
 .cat-item:disabled { opacity: .5; cursor: default; }
@@ -941,7 +1016,9 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .group > .row:first-child { border-top: 0; }
 .opt { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); cursor: pointer; min-width: 0; }
 .opt:first-child { border-top: 0; }
-.opt input[type=checkbox], .opt input[type=radio] { width: 20px; height: 20px; accent-color: var(--signal); flex: none; margin: 0; cursor: pointer; }
+.opt { position: relative; }
+.opt input[type=checkbox], .opt input[type=radio] { position: absolute; left: 0; top: 50%; width: 22px; height: 22px; margin: -11px 0 0; opacity: 0; cursor: pointer; }
+.opt input:focus-visible + .jck { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 6px; }
 .opt .t { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
 .opt .t small { color: var(--muted); font-size: 12.5px; }
 .opt.disabled { cursor: default; opacity: .6; }
@@ -1132,16 +1209,35 @@ class PanelOSPage extends HTMLElement {
     // Use of the page keeps the live preview going: only while this is the active window (a pointer over a window in
     // the background does not count), and making the window active again counts as use.
     this._use = { at: Date.now(), paused: false };
-    this._onUse = () => {
+    this._onUse = (ev) => {
       if (document.visibilityState !== "visible" || !document.hasFocus()) return;
       const now = Date.now();
       if (!this._use.paused && now - this._use.at < 1000) return;
       this._use.at = now;
       if (this._use.paused) {
         this._use.paused = false;
-        this._requestRender();
+        this._resumeRender(ev);
         this._schedulePicture(0);
       }
+    };
+    // The page drawn again after the pause, not under a press that is starting: this listener (on the window) runs
+    // before the press is noted (_onPointerDown), so a redraw now would replace the element under the pointer and its
+    // click would be lost. After a press or a touch the redraw waits until the press is noted (and then until it ends);
+    // after a key until the key is up (Space clicks a button on key up).
+    this._resumeRender = (ev) => {
+      const type = ev?.type;
+      if (type === "pointerdown" || type === "touchstart" || type === "mousedown") {
+        setTimeout(() => this._render(), 0);
+      } else if (type === "keydown") {
+        let timer = null;
+        const go = () => {
+          window.removeEventListener("keyup", go, true);
+          clearTimeout(timer);
+          setTimeout(() => this._render(), 0);
+        };
+        timer = setTimeout(go, 1500);
+        window.addEventListener("keyup", go, true);
+      } else this._requestRender();
     };
     this._resize = new ResizeObserver(() => this._fit());
     this._onClick = (ev) => {
@@ -1153,6 +1249,21 @@ class PanelOSPage extends HTMLElement {
       }
       this._endPress();
     };
+    // In a still sheet (_render leaves it alone) a click anywhere but on a bubble or an ⓘ closes the open bubble in
+    // place, before the click's own handler (a row that is picked, a play button: they keep the click to themselves).
+    this._onClickCapture = (ev) => {
+      if (!this._ui.info || !this._stillSheet()) return;
+      if (ev.composedPath().some((n) => n.classList && (n.classList.contains("pop") || n.classList.contains("info")))) return;
+      this._closePopsInPlace();
+    };
+    // the jelly controls (spec 28.15): bound once, so the listeners can be added and removed
+    this._jRuns = new Map();
+    this._jShapes = new Map();
+    this._jDown = (ev) => this._jPointerDown(ev);
+    this._jMove = (ev) => this._jPointerMove(ev);
+    this._jUp = (ev) => this._jPointerUp(ev);
+    this._jClick = (ev) => this._jOnClick(ev);
+    this._jChange = (ev) => this._jOnChange(ev);
     this._onKey = (ev) => {
       if (ev.key !== "Escape") return;
       if (this._menu) this._closeMenu();
@@ -1195,6 +1306,7 @@ class PanelOSPage extends HTMLElement {
     }
     if (first && this.isConnected) this._start();
     this._liveSoon();
+    this._watchSat(hass);
   }
 
   get hass() {
@@ -1224,6 +1336,15 @@ class PanelOSPage extends HTMLElement {
     for (const ev of USE_EVENTS) window.addEventListener(ev, this._onUse, { capture: true, passive: true });
     this.shadowRoot.addEventListener("scroll", this._onUse, { capture: true, passive: true });
     this.shadowRoot.addEventListener("click", this._onClick);
+    this.shadowRoot.addEventListener("click", this._onClickCapture, true);
+    // the jelly controls: their press, drag and change, before the controls' own handlers (a handler may draw the
+    // page again at once)
+    this.shadowRoot.addEventListener("pointerdown", this._jDown, true);
+    this.shadowRoot.addEventListener("pointermove", this._jMove, true);
+    this.shadowRoot.addEventListener("click", this._jClick, true);
+    this.shadowRoot.addEventListener("change", this._jChange, true);
+    window.addEventListener("pointerup", this._jUp, true);
+    window.addEventListener("pointercancel", this._jUp, true);
     this.shadowRoot.addEventListener("focusout", this._onFocusOut);
     this.shadowRoot.addEventListener("pointerdown", this._onPointerDown, true);
     window.addEventListener("pointerup", this._onPointerUp, true);
@@ -1243,6 +1364,8 @@ class PanelOSPage extends HTMLElement {
     window.removeEventListener("keydown", this._onKey);
     window.removeEventListener("pointerup", this._onPointerUp, true);
     window.removeEventListener("pointercancel", this._onPointerUp, true);
+    window.removeEventListener("pointerup", this._jUp, true);
+    window.removeEventListener("pointercancel", this._jUp, true);
     this._resize.disconnect();
     this._stopSound();
     clearTimeout(this._pic.timer);
@@ -2246,12 +2369,14 @@ class PanelOSPage extends HTMLElement {
 
   // -- controls ----------------------------------------------------------------------
 
+  // (the jelly of the switch, the segmented control, the weekday row and the checkbox: see _jDown and the ones after)
   _toggle(checked, onchange, { label = "On", disabled = false } = {}) {
-    return h("label", { class: "switch" }, h("input", { type: "checkbox", role: "switch", checked, disabled, "aria-label": label, onchange: (e) => onchange(e.target.checked) }), h("span"));
+    return h("label", { class: "switch", "data-jelly": "sw", "data-jl": label }, h("input", { type: "checkbox", role: "switch", checked, disabled, "aria-label": label, onchange: (e) => onchange(e.target.checked) }), h("span", null, h("i")));
   }
 
   _seg(options, value, onchange, { label = null } = {}) {
-    return h("div", { class: "seg", role: "radiogroup", "aria-label": label },
+    return h("div", { class: "seg", role: "radiogroup", "aria-label": label, "data-jelly": "seg", "data-jl": label || options.map((o) => o[1]).join("|") },
+      h("span", { class: "pill", "aria-hidden": "true" }),
       options.map(([v, text, dis]) => h("button", {
         class: v === value ? "on" : "", role: "radio", "aria-checked": v === value ? "true" : "false",
         disabled: Boolean(dis), title: typeof dis === "string" ? dis : null, onclick: () => onchange(v),
@@ -2309,7 +2434,7 @@ class PanelOSPage extends HTMLElement {
         this._btn("None", () => rows.filter((r) => r.on).forEach((r) => r.onclick()), { cls: "small ghost" })) : null,
       h("div", { class: "ddl" }, shown.map((r) => h("button", { class: `ddr${(multi ? r.on : r.value === current) ? " on" : ""}`, type: "button", role: "option", disabled: Boolean(r.disabled),
         "aria-selected": (multi ? r.on : r.value === current) ? "true" : "false", onclick: () => pick(r) },
-        multi ? h("span", { class: `cb${r.on ? " on" : ""}` }, r.on ? icon("check") : null) : (r.value === current ? icon("check") : h("span", { class: "sp" })),
+        multi ? this._ckBox(r.on, String(r.label)) : (r.value === current ? icon("check") : h("span", { class: "sp" })),
         h("span", { class: "t" }, r.label)))),
       multi ? h("div", { class: "dddone" }, this._btn("Done", close, { cls: "primary" })) : null) : null;
     return h("div", { class: `ddw${full ? " full" : ""}`, "data-dd": id }, field, menu);
@@ -2354,10 +2479,488 @@ class PanelOSPage extends HTMLElement {
     return { on: Boolean(on), label, onclick };
   }
 
+  // -- jelly motion (spec 28.15) -------------------------------------------------------
+  // A control's motion survives the page being drawn again: it is kept by the control's place (its kind, its label
+  // and its position among the controls of that kind and label, in the page or in the sheet), and each frame draws it
+  // on whichever element stands there now.
+
+  _jScope(el) {
+    return this._layer.contains(el) ? this._layer : this.shadowRoot.querySelector(".app");
+  }
+
+  _jSame(scope, kind, label) {
+    return [...scope.querySelectorAll(`[data-jelly="${kind}"]`)].filter((x) => (x.dataset.jl || "") === label);
+  }
+
+  _jKey(el) {
+    const scope = el && this._jScope(el);
+    if (!scope) return null;
+    const kind = el.dataset.jelly;
+    const label = el.dataset.jl || "";
+    const n = this._jSame(scope, kind, label).indexOf(el);
+    return n < 0 ? null : JSON.stringify([scope === this._layer ? "L" : "A", kind, label, n]);
+  }
+
+  _jFind(key) {
+    const [sc, kind, label, n] = JSON.parse(key);
+    const scope = sc === "L" ? this._layer : this.shadowRoot.querySelector(".app");
+    return scope ? this._jSame(scope, kind, label)[n] || null : null;
+  }
+
+  // One motion per control part. frame(el, t, done) draws it at t ms since the start and returns its shape (kept for a
+  // motion that starts during this one: it goes on from the shape, without a jump) or null (back at rest).
+  _jRun(el, part, dur, frame) {
+    const key = this._jKey(el);
+    if (!key) return;
+    const id = `${key}#${part}`;
+    const old = this._jRuns.get(id);
+    if (old) cancelAnimationFrame(old.raf);
+    const rec = { el, t0: performance.now(), raf: 0 };
+    this._jRuns.set(id, rec);
+    const step = (now) => {
+      if (this._jRuns.get(id) !== rec) return;
+      if (!rec.el.isConnected) rec.el = this._jFind(key) || rec.el;
+      const t = Math.max(0, now - rec.t0);
+      const done = t >= dur;
+      if (rec.el.isConnected) {
+        const shape = frame(rec.el, done ? dur : t, done);
+        if (shape === null) this._jShapes.delete(id);
+        else if (shape !== undefined) this._jShapes.set(id, shape);
+      }
+      if (done) this._jRuns.delete(id);
+      else rec.raf = requestAnimationFrame(step);
+    };
+    rec.raf = requestAnimationFrame(step);
+  }
+
+  _jShape(el, part) {
+    const key = this._jKey(el);
+    return key ? this._jShapes.get(`${key}#${part}`) || null : null;
+  }
+
+  // A press holds its squashed shape until the change takes over or the press ends without one (then it springs back).
+  _jHold(el, relax) {
+    this._jHeld = { el, relax };
+  }
+
+  _jPointerDown(ev) {
+    if (ev.button > 0) return;
+    const t = ev.target;
+    const sw = t.closest?.(".switch[data-jelly]");
+    if (sw) {
+      const input = sw.querySelector("input");
+      if (input.disabled) return;
+      this._jPress = { sw, sx: ev.clientX, flipped: false };
+      this._jSwPress(sw);
+      return;
+    }
+    const day = t.closest?.(".wdays[data-jelly] > .wd");
+    if (day) { this._jDayPress(day); return; }
+    const opt = t.closest?.(".opt, .ddr");
+    const box = opt && !opt.disabled && opt.querySelector(".jck[data-jelly]");
+    if (box && !opt.querySelector("input:disabled")) this._jBoxPress(box);
+  }
+
+  // a sideways drag of 30 % of the switch's width flips it before the release
+  _jPointerMove(ev) {
+    const pr = this._jPress;
+    if (!pr || pr.flipped || !pr.sw.isConnected) return;
+    const input = pr.sw.querySelector("input");
+    const d = ev.clientX - pr.sx;
+    const w = pr.sw.offsetWidth || 48;
+    if ((d > w * 0.3 && !input.checked) || (d < -w * 0.3 && input.checked)) {
+      pr.flipped = true;
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      this._jNoClick = { sw: pr.sw, until: Date.now() + 800 };
+    }
+  }
+
+  _jPointerUp() {
+    this._jPress = null;
+    const held = this._jHeld;
+    if (!held) return;
+    // the click (and its change) comes right after the release; without one the press springs back
+    setTimeout(() => { if (this._jHeld === held) { this._jHeld = null; held.relax(); } }, 150);
+  }
+
+  _jOnClick(ev) {
+    const t = ev.target;
+    // the click after a drag that flipped the switch already: it does not flip it back
+    const nc = this._jNoClick;
+    if (nc) {
+      this._jNoClick = null;
+      if (Date.now() < nc.until && nc.sw.contains(t)) { ev.preventDefault(); return; }
+    }
+    const b = t.closest?.(".seg[data-jelly] > button");
+    if (b && !b.disabled && !b.classList.contains("on")) { this._jSegGo(b.parentElement, b); return; }
+    const day = t.closest?.(".wdays[data-jelly] > .wd");
+    if (day) { this._jDayToggle(day); return; }
+    const row = t.closest?.(".ddr");
+    const box = row && !row.disabled && row.querySelector(".jck[data-jelly]");
+    if (box) this._jBoxTick(box, !box.classList.contains("on"));
+  }
+
+  _jOnChange(ev) {
+    const input = ev.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const sw = input.closest(".switch[data-jelly]");
+    if (sw) { this._jSwFlip(sw); return; }
+    const opt = input.closest(".opt");
+    const box = opt && opt.querySelector(".jck[data-jelly]");
+    if (!box) return;
+    this._jBoxTick(box, input.checked);
+    // a radio: the one that was chosen in the same group lets go
+    if (input.type === "radio" && input.name) {
+      this._jScope(input)?.querySelectorAll(`.opt input[type=radio][name="${CSS.escape(input.name)}"]`).forEach((o) => {
+        const ob = o !== input && o.closest(".opt")?.querySelector(".jck.on");
+        if (ob) this._jBoxTick(ob, false);
+      });
+    }
+  }
+
+  // ---- switch (28.3): the knob flattens 7 px toward its travel on a press; on a flip its leading edge races to the
+  // far end (J-edge 90/240 ms) and presses flat against the track's inner wall, the trailing edge follows 30 ms later
+  // (130/340 ms); the height keeps the area (kn² / w, 0.7 kn … the track's height − 4 px), the width at least 0.72 kn;
+  // the track crossfades over 160 ms. Sizes come from the design values (--swW, --swH, --kn), never from the layout box.
+  _jSwGeo(sw) {
+    const cs = getComputedStyle(sw);
+    const kn = parseFloat(cs.getPropertyValue("--kn")) || 20;
+    const W = parseFloat(cs.getPropertyValue("--swW")) || 48;
+    const H = parseFloat(cs.getPropertyValue("--swH")) || 28;
+    return { kn, W, H, minL: 4, maxR: W - 4 };
+  }
+
+  _jSwRest(g, on) {
+    return on ? { L: g.maxR - g.kn, R: g.maxR } : { L: g.minL, R: g.minL + g.kn };
+  }
+
+  _jSwPut(sw, g, L, R, k) {
+    const knob = sw.querySelector("span > i");
+    const track = sw.querySelector("span");
+    if (!knob || !track) return;
+    const w = Math.max(1, R - L);
+    const hh = Math.min(g.H - 4, Math.max(g.kn * 0.7, (g.kn * g.kn) / w));
+    knob.style.left = `${L}px`;
+    knob.style.width = `${w}px`;
+    knob.style.height = `${hh}px`;
+    knob.style.top = `${(g.H - hh) / 2}px`;
+    if (k != null) track.style.setProperty("--on", k.toFixed(3));
+  }
+
+  _jSwClear(sw) {
+    const knob = sw.querySelector("span > i");
+    const track = sw.querySelector("span");
+    if (knob) knob.style.cssText = "";
+    if (track) track.style.removeProperty("--on");
+    return null;
+  }
+
+  _jSwPress(sw) {
+    if (jReduce()) return;
+    const on = sw.querySelector("input").checked;
+    const g = this._jSwGeo(sw);
+    const r = this._jSwRest(g, on);
+    const s0 = this._jShape(sw, "m") || r;
+    this._jRun(sw, "m", 90, (el, t) => {
+      const u = jEo(t / 90);
+      const L = on ? s0.L + (r.L - 7 - s0.L) * u : s0.L + (r.L - s0.L) * u;
+      const R = on ? s0.R + (r.R - s0.R) * u : s0.R + (r.R + 7 - s0.R) * u;
+      this._jSwPut(el, g, L, R, null);
+      return { L, R, k: on ? 1 : 0 };
+    });
+    this._jHold(sw, () => this._jSwRelax(sw));
+  }
+
+  _jSwFlip(sw) {
+    if (this._jHeld?.el === sw) this._jHeld = null;
+    const to = sw.querySelector("input").checked;
+    const g = this._jSwGeo(sw);
+    const e = this._jSwRest(g, to);
+    const s0 = this._jShape(sw, "m") || { ...this._jSwRest(g, !to), k: to ? 0 : 1 };
+    const k0 = s0.k ?? (to ? 0 : 1);
+    const k1 = to ? 1 : 0;
+    const kAt = (t) => k0 + (k1 - k0) * Math.min(1, t / 160);
+    if (jReduce()) {
+      this._jRun(sw, "m", 150, (el, t, done) => {
+        if (done) return this._jSwClear(el);
+        const u = jEo(t / 150);
+        const L = s0.L + (e.L - s0.L) * u;
+        const R = s0.R + (e.R - s0.R) * u;
+        this._jSwPut(el, g, L, R, kAt(t));
+        return { L, R, k: kAt(t) };
+      });
+      return;
+    }
+    this._jRun(sw, "m", 700, (el, t, done) => {
+      if (done) return this._jSwClear(el);
+      let L;
+      let R;
+      if (to) {
+        R = Math.min(g.maxR, s0.R + (e.R - s0.R) * jEdge(t, ...J_LEAD));
+        L = s0.L + (e.L - s0.L) * jEdge(t - J_LAG, ...J_TRAIL);
+      } else {
+        L = Math.max(g.minL, s0.L + (e.L - s0.L) * jEdge(t, ...J_LEAD));
+        R = s0.R + (e.R - s0.R) * jEdge(t - J_LAG, ...J_TRAIL);
+      }
+      if (R - L < g.kn * 0.72) { if (to) L = R - g.kn * 0.72; else R = L + g.kn * 0.72; }
+      this._jSwPut(el, g, L, R, kAt(t));
+      return { L, R, k: kAt(t) };
+    });
+  }
+
+  // let go without a flip: back to rest with a small wobble (J-edge 70/220)
+  _jSwRelax(sw) {
+    if (!sw.isConnected) return;
+    const s0 = this._jShape(sw, "m");
+    if (!s0) return;
+    const g = this._jSwGeo(sw);
+    const e = this._jSwRest(g, sw.querySelector("input").checked);
+    this._jRun(sw, "m", jReduce() ? 150 : 500, (el, t, done) => {
+      if (done) return this._jSwClear(el);
+      const a = jReduce() ? jEo(t / 150) : jEdge(t, 70, 220);
+      const L = s0.L + (e.L - s0.L) * a;
+      const R = s0.R + (e.R - s0.R) * a;
+      this._jSwPut(el, g, L, R, null);
+      return { L, R, k: s0.k };
+    });
+  }
+
+  // ---- segmented (28.4): one pill travels. Its leading edge races (J-edge 90/240) and may pass the target by at most
+  // 0.28 × its height (soft cap), the trailing edge follows 30 ms later (130/340, cap 0.21 ×); the pill thins while
+  // stretched and bulges when squashed (H·√(w₀/w), 0.8 H … H + 2·padding − 2), never under 0.6 w₀ wide; done in
+  // 750 ms. The labels change colour over 160 ms, 70 ms after the tap. A choice on another row of a wrapped control
+  // moves at once.
+  _jSegBox(seg, b) {
+    const r = seg.getBoundingClientRect();
+    const x = b.getBoundingClientRect();
+    return { l: x.left - r.left, r: x.right - r.left, t: x.top - r.top, h: x.height };
+  }
+
+  _jSegGo(seg, b) {
+    const btns = [...seg.querySelectorAll(":scope > button")];
+    const was = seg.querySelector(":scope > button.on");
+    const from = btns.indexOf(was);
+    if (from < 0) return;
+    const e1 = this._jSegBox(seg, b);
+    const e0 = this._jSegBox(seg, was);
+    if (Math.abs(e1.t - e0.t) > 1 || e1.h < 1) return;
+    const s0 = this._jShape(seg, "pill") || { L: e0.l, R: e0.r };
+    const H = e1.h;
+    const pad = parseFloat(getComputedStyle(seg).paddingTop) || 3;
+    const W = seg.clientWidth;
+    const cy = e1.t + H / 2;
+    const l1 = e1.l;
+    const r1 = e1.r;
+    const w0 = r1 - l1;
+    const right = l1 > s0.L;
+    const cap = H * 0.28;
+    const reduce = jReduce();
+    const put = (el, L, R) => {
+      const pill = el.querySelector(":scope > .pill");
+      if (!pill) return;
+      const w = Math.max(1, R - L);
+      const hh = H * Math.min((H + 2 * pad - 2) / H, Math.max(0.8, Math.sqrt(w0 / w)));
+      pill.style.left = `${L}px`;
+      pill.style.width = `${w}px`;
+      pill.style.height = `${hh}px`;
+      pill.style.top = `${cy - hh / 2}px`;
+    };
+    this._jRun(seg, "pill", reduce ? 150 : 750, (el, t, done) => {
+      if (done) {
+        el.classList.remove("jm", "jpre");
+        el.querySelectorAll(":scope > button.jwas").forEach((x) => x.classList.remove("jwas"));
+        const pill = el.querySelector(":scope > .pill");
+        if (pill) pill.style.cssText = "";
+        return null;
+      }
+      el.classList.add("jm");
+      el.classList.toggle("jpre", t < 70);
+      el.querySelectorAll(":scope > button").forEach((x, i) => x.classList.toggle("jwas", i === from));
+      let L;
+      let R;
+      if (reduce) {
+        const u = jEo(t / 150);
+        L = s0.L + (l1 - s0.L) * u;
+        R = s0.R + (r1 - s0.R) * u;
+      } else {
+        const a = jEdge(t, ...J_LEAD);
+        const c = jEdge(t - J_LAG, ...J_TRAIL);
+        if (right) {
+          R = r1 + jSoft(s0.R + (r1 - s0.R) * a - r1, cap);
+          L = l1 + jSoft(s0.L + (l1 - s0.L) * c - l1, cap * 0.75);
+        } else {
+          L = l1 - jSoft(l1 - (s0.L + (l1 - s0.L) * a), cap);
+          R = r1 - jSoft(r1 - (s0.R + (r1 - s0.R) * c), cap * 0.75);
+        }
+        L = Math.max(pad, L);
+        R = Math.min(W - pad, R);
+        if (R - L < w0 * 0.6) { if (right) L = R - w0 * 0.6; else R = L + w0 * 0.6; }
+      }
+      put(el, L, R);
+      return { L, R };
+    });
+  }
+
+  // ---- weekday row (28.10): a press squashes the day (1.08 × 0.92); choosing it pops the text-colour disc from 0.4
+  // (J-edge 90/260) with a wobble (A 0.20), the day's ground wobbles (A 0.10) and its neighbours ripple (A 0.05, 40 ms
+  // later); un-choosing swells the disc to 1.08 (60 ms), then drops it into the centre (120 ms) while the ground
+  // wobbles (A 0.08, from 60 ms) and the neighbours ripple (A 0.04, from 100 ms). The letter turns when the disc
+  // passes 0.6.
+  _jDayPress(day) {
+    if (jReduce()) return;
+    const row = day.parentElement;
+    const k = [...row.children].indexOf(day);
+    this._jRun(row, `b${k}`, 90, (el, t) => {
+      const u = jEo(t / 90);
+      jScale(el.children[k]?.querySelector(".base"), 1 + 0.08 * u, 1 - 0.08 * u);
+      return { sx: 1 + 0.08 * u };
+    });
+    this._jHold(row, () => {
+      if (!row.isConnected) return;
+      this._jRun(row, `b${k}`, 150, (el, t, done) => {
+        const base = el.children[k]?.querySelector(".base");
+        if (done) { if (base) base.style.transform = ""; return null; }
+        const s = 1 + 0.08 * (1 - jEo(t / 150));
+        jScale(base, s, 2 - s);
+        return { sx: s };
+      });
+    });
+  }
+
+  _jDayToggle(day) {
+    if (this._jHeld?.el === day.parentElement) this._jHeld = null;
+    const row = day.parentElement;
+    const n = row.children.length;
+    const k = [...row.children].indexOf(day);
+    const on = day.getAttribute("aria-pressed") !== "true";
+    const base = (el, i) => el.children[i]?.querySelector(".base");
+    const blob = (el) => el.children[k]?.querySelector(".blob");
+    const letter = (el, lit, done) => {
+      const d = el.children[k];
+      if (!d) return;
+      if (done) { d.classList.remove("jl", "lit"); return; }
+      d.classList.add("jl");
+      d.classList.toggle("lit", lit);
+    };
+    const wobble = (i, A, lag, dur) => this._jRun(row, `b${i}`, dur, (el, t, done) => {
+      const b = base(el, i);
+      if (done) { if (b) b.style.transform = ""; return null; }
+      const w = jWob(t - lag, A);
+      jScale(b, w, 1 / w);
+      return { sx: w };
+    });
+    if (jReduce()) {
+      this._jRun(row, `o${k}`, 150, (el, t, done) => {
+        const bl = blob(el);
+        if (done) { if (bl) bl.style.transform = ""; letter(el, on, true); return null; }
+        const u = jEo(t / 150);
+        const s = on ? u : 1 - u;
+        jScale(bl, s, s);
+        letter(el, s > 0.6, false);
+        return { s };
+      });
+      return;
+    }
+    if (on) {
+      this._jRun(row, `o${k}`, 750, (el, t, done) => {
+        const bl = blob(el);
+        if (done) { if (bl) bl.style.transform = ""; letter(el, true, true); return null; }
+        const s = 0.4 + 0.6 * jEdge(t, 90, 260);
+        const w = jWob(t, 0.2);
+        jScale(bl, s * w, s / w);
+        letter(el, s > 0.6, false);
+        return { s };
+      });
+      wobble(k, 0.1, 0, 750);
+      if (k > 0) wobble(k - 1, 0.05, 40, 800);
+      if (k < n - 1) wobble(k + 1, 0.05, 40, 800);
+    } else {
+      this._jRun(row, `o${k}`, 180, (el, t, done) => {
+        const bl = blob(el);
+        if (done) { if (bl) bl.style.transform = ""; letter(el, false, true); return null; }
+        const s = Math.max(0, t < 60 ? 1 + 0.08 * jEo(t / 60) : 1.08 * (1 - ((t - 60) / 120) ** 2));
+        jScale(bl, s, s);
+        letter(el, s > 0.6, false);
+        return { s };
+      });
+      wobble(k, 0.08, 60, 800);
+      if (k > 0) wobble(k - 1, 0.04, 100, 800);
+      if (k < n - 1) wobble(k + 1, 0.04, 100, 800);
+    }
+  }
+
+  // ---- checkbox (28.8): a press squashes it (1.12 × 0.88); ticking fills it at once, pops it from 0.6 (J-edge
+  // 90/230) with an area-keeping wobble (A 0.22, 140 / 160 ms) while the tick draws (150 ms, from 60 ms); unticking
+  // dips it (1 − 0.12·sin(π·min(1, t/120))) with a wobble (A 0.12) while the tick retracts (100 ms).
+  _jBoxPress(box) {
+    if (jReduce()) return;
+    this._jRun(box, "j", 90, (el, t) => {
+      const u = jEo(t / 90);
+      jScale(el.querySelector(".bw"), 1 + 0.12 * u, 1 - 0.12 * u);
+      return { sx: 1 + 0.12 * u };
+    });
+    this._jHold(box, () => {
+      if (!box.isConnected) return;
+      this._jRun(box, "j", 150, (el, t, done) => {
+        const bw = el.querySelector(".bw");
+        if (done) { if (bw) bw.style.transform = ""; return null; }
+        const s = 1 + 0.12 * (1 - jEo(t / 150));
+        jScale(bw, s, 2 - s);
+        return { sx: s };
+      });
+    });
+  }
+
+  _jBoxTick(box, on) {
+    if (this._jHeld?.el === box) this._jHeld = null;
+    const reduce = jReduce();
+    const end = (el) => {
+      const bw = el.querySelector(".bw");
+      const path = el.querySelector("path");
+      if (bw) bw.style.transform = "";
+      if (path) path.style.strokeDashoffset = "";
+      return null;
+    };
+    this._jRun(box, "j", reduce ? 150 : on ? 700 : 600, (el, t, done) => {
+      if (done) return end(el);
+      // the fill follows the change at once (the page may not be drawn again yet)
+      el.classList.toggle("on", on);
+      const bw = el.querySelector(".bw");
+      const path = el.querySelector("path");
+      if (reduce) {
+        if (bw) bw.style.transform = "";
+        if (path) path.style.strokeDashoffset = String(on ? 1 - jEo(t / 150) : jEo(t / 150));
+        return {};
+      }
+      let k;
+      let w;
+      if (on) {
+        k = 0.6 + 0.4 * jEdge(t, 90, 230);
+        w = jWob(t, 0.22, 140, 160);
+        if (path) path.style.strokeDashoffset = String(1 - jEo((t - 60) / 150));
+      } else {
+        k = 1 - 0.12 * Math.sin(Math.PI * Math.min(1, t / 120));
+        w = jWob(t, 0.12, 140, 160);
+        if (path) path.style.strokeDashoffset = String(jEo(t / 100));
+      }
+      jScale(bw, k * w, k / w);
+      return {};
+    });
+  }
+
   // A weekday row (spec 28.10): seven round toggles with two-letter names
   _weekdays(days, onchange) {
-    return h("div", { class: "wdays", role: "group", "aria-label": "Days" }, DAY_NAMES.map((n, k) => h("button", {
-      class: `wd${days[k] ? " on" : ""}`, type: "button", "aria-pressed": days[k] ? "true" : "false", "aria-label": n, onclick: () => onchange(k) }, n.slice(0, 2))));
+    return h("div", { class: "wdays", role: "group", "aria-label": "Days", "data-jelly": "wd", "data-jl": "Days" }, DAY_NAMES.map((n, k) => h("button", {
+      class: `wd${days[k] ? " on" : ""}`, type: "button", "aria-pressed": days[k] ? "true" : "false", "aria-label": n, onclick: () => onchange(k) },
+      h("b", { class: "base" }), h("i", { class: "blob" }), h("span", null, n.slice(0, 2)))));
+  }
+
+  // The checkbox of spec 28.8 (a box and a drawn tick); in an option list it stands beside its own input.
+  _ckBox(on, label, { round = false } = {}) {
+    const bw = h("i", { class: "bw" }, h("i", { class: "bx" }));
+    bw.insertAdjacentHTML("beforeend", J_TICK);
+    return h("span", { class: `jck${on ? " on" : ""}${round ? " round" : ""}`, "data-jelly": "ck", "data-jl": label, "aria-hidden": "true" }, bw);
   }
 
   // The letters' weight: a slider over the four weights (the nearest one to a stored value).
@@ -2410,9 +3013,37 @@ class PanelOSPage extends HTMLElement {
   _infoBtn(key, text) {
     const open = this._ui.info === key || this._ui.allInfo;
     return [
-      h("button", { class: "ib info", "aria-label": "More about this", "aria-expanded": open ? "true" : "false", onclick: (e) => { e.stopPropagation(); this._ui.info = open ? null : key; this._render(); if (this._ui.sheet && STILL_SHEETS.has(this._ui.sheet.kind)) this._renderLayer(); } }, icon("information-outline")),
+      h("button", { class: "ib info", "aria-label": "More about this", "aria-expanded": open ? "true" : "false", onclick: (e) => {
+        e.stopPropagation();
+        if (this._stillSheet() && this._layer.contains(e.currentTarget)) { this._infoInPlace(e.currentTarget, key, text); return; }
+        this._ui.info = open ? null : key;
+        this._render();
+      } }, icon("information-outline")),
       open && this._ui.info === key ? h("div", { class: "pop", role: "note", onclick: (e) => e.stopPropagation() }, text) : null,
     ];
+  }
+
+  // A sheet that background redraws leave alone (a list under the finger) is open.
+  _stillSheet() {
+    return Boolean(this._ui.sheet && STILL_SHEETS.has(this._ui.sheet.kind));
+  }
+
+  // In a still sheet the ⓘ opens and closes its bubble in place: the sheet is not drawn again, so a scrolled list
+  // stays where it is.
+  _infoInPlace(btn, key, text) {
+    const wasOpen = this._ui.info === key;
+    this._closePopsInPlace();
+    if (wasOpen) return;
+    this._ui.info = key;
+    btn.setAttribute("aria-expanded", "true");
+    btn.after(h("div", { class: "pop", role: "note", onclick: (e) => e.stopPropagation() }, text));
+    this._placePops();
+  }
+
+  _closePopsInPlace() {
+    this._ui.info = null;
+    this._layer.querySelectorAll(".pop").forEach((p) => p.remove());
+    this._layer.querySelectorAll(".ib.info[aria-expanded=true]").forEach((b) => b.setAttribute("aria-expanded", "false"));
   }
 
   _card(title, opts, ...body) {
@@ -2733,12 +3364,22 @@ class PanelOSPage extends HTMLElement {
       }
     }
     if (node && !this._ui.sheetFresh) node.classList.add("noanim");
+    // the same sheet drawn again keeps its scroll (a pick, an upload, a search result)
+    const oldBody = this._layer.querySelector(".sheet-body");
+    const keepScroll = node && !this._ui.sheetFresh && this._layerSheet === sh && oldBody ? oldBody.scrollTop : 0;
+    this._layerSheet = node ? sh : null;
     this._ui.sheetFresh = false;
     // a field being typed in keeps the focus and the caret when the sheet is drawn again (a search's results)
     const a = this.shadowRoot && this.shadowRoot.activeElement;
     const keep = a && a.tagName === "INPUT" && this._layer.contains(a) && a.getAttribute("aria-label")
       ? { label: a.getAttribute("aria-label"), start: a.selectionStart, end: a.selectionEnd } : null;
     this._layer.replaceChildren(node || "");
+    if (keepScroll) {
+      const body = this._layer.querySelector(".sheet-body");
+      if (body) body.scrollTop = keepScroll;
+    }
+    // an open bubble is placed by its button again
+    if (this._ui.info && this._layer.querySelector(".pop")) this._placePops();
     if (keep) {
       const n = [...this._layer.querySelectorAll("input")].find((x) => x.getAttribute("aria-label") === keep.label);
       if (n) {
@@ -3782,6 +4423,7 @@ class PanelOSPage extends HTMLElement {
         this._row("Comes through", null, { stack: true, sub: changed ? "Changed from the default" : "The default" }),
         h("div", { class: "group", style: { marginBottom: "12px" } }, DND_ITEMS.map((it) => h("label", { class: `opt${it.locked ? " disabled" : ""}` },
           h("input", { type: "checkbox", checked: it.locked ? true : dnd.allow[it.id], disabled: Boolean(it.locked), onchange: (e) => setDnd({ allow: { [it.id]: e.target.checked } }) }),
+          this._ckBox(it.locked ? true : dnd.allow[it.id], it.name),
           h("span", { class: "t" }, h("span", null, it.name), it.locked ? h("small", null, "Always") : null)))),
         changed ? h("div", { class: "below" }, this._btn("Back to the default", () => setDnd({ allow: { ...DND_DEFAULT_ALLOW } }), { cls: "small ghost", icon: "restore" })) : null),
       this._card("New notifications", { info: "The window shows in the middle, in the notifications page's look. Until answered keeps the newest in front until it is confirmed or dismissed on the panel." },
@@ -3804,14 +4446,47 @@ class PanelOSPage extends HTMLElement {
 
   // -- voice ----------------------------------------------------------------------------
 
-  // A voice satellite's wake words as the satellite itself has them (its select entities can lag behind).
-  _loadSatCfg(sat) {
-    if (this._satCfgLoading === sat) return;
+  // A voice satellite's wake words as the satellite itself has them (its select entities can lag behind). Asked
+  // again when the satellite or its wake word selects change in Home Assistant (_watchSat), at most every 30 s while
+  // the Voice section is shown, and 10 s after a failed try. A failed try keeps the last answer; without one the rows
+  // say that it could not be read (never "No wake word"). The page is drawn again only when the answer changed.
+  _loadSatCfg(sat, force = false) {
+    const had = this._satCfg[sat];
+    if (this._satCfgLoading === sat) {
+      if (force) this._satCfgAgain = true;
+      return;
+    }
+    if (!force && had && Date.now() - had.at < (had.failed ? 10000 : 30000)) return;
     this._satCfgLoading = sat;
+    const words = (c) => JSON.stringify([c?.available_wake_words || [], c?.active_wake_words || [], Boolean(c?.failed && !c?.active_wake_words)]);
     this._hass.callWS({ type: "assist_satellite/get_configuration", entity_id: sat })
-      .then((cfg) => { this._satCfg[sat] = cfg; })
-      .catch(() => { this._satCfg[sat] = { available_wake_words: [], active_wake_words: [] }; })
-      .finally(() => { this._satCfgLoading = null; this._render(); });
+      .then((cfg) => { this._satCfg[sat] = { ...cfg, at: Date.now() }; })
+      .catch(() => { this._satCfg[sat] = { ...(had && had.active_wake_words ? had : {}), failed: true, at: Date.now() }; })
+      .finally(() => {
+        this._satCfgLoading = null;
+        if (this._satCfgAgain) {
+          this._satCfgAgain = false;
+          this._loadSatCfg(sat, true);
+          return;
+        }
+        if (words(had) !== words(this._satCfg[sat])) this._render();
+      });
+  }
+
+  // While the Voice section is shown: a change of the satellite or of its wake word selects (on the panel, through
+  // the selects, another browser) asks the satellite again, once at once and once 2 s later (the satellite takes the
+  // new words in the background); otherwise the answer is renewed when it is old (_loadSatCfg).
+  _watchSat(hass) {
+    const w = this._satWatch;
+    if (!w || this._route().view !== "voice") return;
+    const now = w.ids.map((id) => hass?.states?.[id]);
+    const changed = now.some((s, k) => s !== w.states[k]);
+    w.states = now;
+    if (changed) {
+      this._loadSatCfg(w.sat, true);
+      clearTimeout(this._satAgainTimer);
+      this._satAgainTimer = setTimeout(() => this._loadSatCfg(w.sat, true), 2000);
+    } else this._loadSatCfg(w.sat);
   }
 
   // The voice satellite's device (ESPHome), shown as connected via the panel's device.
@@ -3826,6 +4501,11 @@ class PanelOSPage extends HTMLElement {
     const ids = new Set(devices.map((d) => d.id));
     const ents = Object.values(this._entityReg).filter((e) => ids.has(e.device_id) && !e.hidden && !e.hidden_by && !e.disabled_by && /^(select|switch|number)\./.test(e.entity_id) && this._hass.states[e.entity_id]);
     const sat = Object.values(this._entityReg).find((e) => ids.has(e.device_id) && e.entity_id.startsWith("assist_satellite."))?.entity_id;
+    // the satellite and its wake word selects: a change of one asks the satellite again (_watchSat)
+    if (sat) {
+      const watch = [sat, ...ents.map((e) => e.entity_id).filter((x) => /^select\..*_wake_word(_2)?$/.test(x))];
+      if (this._satWatch?.sat !== sat || this._satWatch.ids.join() !== watch.join()) this._satWatch = { sat, ids: watch, states: watch.map((x) => this._hass.states[x]) };
+    } else this._satWatch = null;
     const control = (e) => {
       const id = e.entity_id;
       const s = this._hass.states[id];
@@ -3836,10 +4516,8 @@ class PanelOSPage extends HTMLElement {
       const wk = /_wake_word(_2)?$/.exec(id);
       if (domain === "select" && wk && sat) {
         const cfg = this._satCfg[sat];
-        if (!cfg) {
-          this._loadSatCfg(sat);
-          return h("span", { class: "muted" }, "…");
-        }
+        this._loadSatCfg(sat);
+        if (!cfg || !cfg.active_wake_words) return h("span", { class: "muted" }, cfg?.failed ? "Could not be read from the panel" : "…");
         const k = wk[1] ? 1 : 0;
         const names = Object.fromEntries((cfg.available_wake_words || []).map((w) => [w.id, w.wake_word]));
         const active = cfg.active_wake_words || [];
@@ -3848,12 +4526,16 @@ class PanelOSPage extends HTMLElement {
           const next = [active[0] || "", active[1] || ""];
           next[k] = v;
           const ids = next.filter((x, i) => x && next.indexOf(x) === i);
+          // shown at once; the satellite's own answer follows
+          this._satCfg[sat] = { ...cfg, active_wake_words: ids, at: Date.now() };
+          this._render();
           this._hass.callWS({ type: "assist_satellite/set_wake_words", entity_id: sat, wake_word_ids: ids })
-            .then(() => this._loadSatCfg(sat))
-            .catch((err) => this._toast(err.message || String(err), null, true));
+            .then(() => this._loadSatCfg(sat, true))
+            .catch((err) => { this._toast(err.message || String(err), null, true); this._loadSatCfg(sat, true); });
         }, { label: this._ename(id) });
       }
-      if (domain === "select") return this._choice((s.attributes.options || []).map((o) => [o, o === "no_wake_word" ? "No wake word" : o]), s.state, (v) => call("select_option", { option: v }), { label: this._ename(id) });
+      // the satellite selects' own ids (assistant, finished speaking detection, wake word) by their names
+      if (domain === "select") return this._choice((s.attributes.options || []).map((o) => [o, VOICE_OPTION_NAMES[o] || o]), s.state, (v) => call("select_option", { option: v }), { label: this._ename(id) });
       const a = s.attributes;
       const v = Number(s.state);
       return this._slider(Number.isNaN(v) ? a.min || 0 : v, a.min ?? 0, a.max ?? 100, a.step ?? 1, (x) => call("set_value", { value: x }), (x) => `${x}${a.unit_of_measurement ? ` ${a.unit_of_measurement}` : ""}`, { label: this._ename(id), disabled: s.state === "unavailable" });
@@ -4262,8 +4944,228 @@ class PanelOSPage extends HTMLElement {
         this._ui.sheet = null;
         this._ui.sel = items.length - 1;
         this._saveItems(p, sh.page, items, { toast: `${w.name} added` });
-      } }, h("div", { class: "pic wicon" }, this._lookPic(p, `widget-${kind}`, () => icon(w.icon), { fit: "contain" })), h("b", null, w.name), h("small", null, spot ? `${w.def[0]} × ${w.def[1]}` : small ? "Smaller, to fit" : "On top of the others"));
+      } }, h("div", { class: "pic wicon" }, this._widgetPreview(p, page, kind) || this._lookPic(p, `widget-${kind}`, () => icon(w.icon), { fit: "contain" })), h("b", null, w.name), h("small", null, spot ? `${w.def[0]} × ${w.def[1]}` : small ? "Smaller, to fit" : "On top of the others"));
     })), null, { wide: true });
+  }
+
+  // -- live widget previews -------------------------------------------------------------
+  // The widget picker draws each widget as the panel does, at its first size, with the live content of the panel's
+  // Home Assistant: the time and date (in Home Assistant's time zone, the clock running), the weather now and its
+  // forecasts (the page's weather, else the panel's), the next event of the page's calendars, the music of the page's
+  // player (else the panel's). A widget without data shows the panel's own picture with demo content (null here).
+
+  // The panel's time format (24-hour unless the panel's settings say 12-hour).
+  _h24(p) {
+    const st = this._settings(p);
+    return !(st.time_format === "12" || st.time_format === "12h" || st.h24 === false);
+  }
+
+  // Now in Home Assistant's time zone: hour, minute, second, weekday, day, month.
+  _hassNow(at = Date.now()) {
+    const opts = { hour: "2-digit", minute: "2-digit", second: "2-digit", weekday: "long", day: "numeric", month: "long", hourCycle: "h23" };
+    let f;
+    try {
+      f = new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: this._hass?.config?.time_zone || undefined });
+    } catch (_e) {
+      f = new Intl.DateTimeFormat("en-GB", opts);
+    }
+    const o = Object.fromEntries(f.formatToParts(new Date(at)).map((x) => [x.type, x.value]));
+    return { h: Number(o.hour) % 24, m: Number(o.minute), s: Number(o.second), weekday: o.weekday, day: Number(o.day), month: o.month };
+  }
+
+  _clockText(p, n) {
+    const hh = this._h24(p) ? String(n.h).padStart(2, "0") : String(((n.h + 11) % 12) + 1);
+    return [hh, String(n.m).padStart(2, "0")];
+  }
+
+  // A weather entity's forecast (hourly / daily) once, through Home Assistant's own subscription: kept 10 minutes; the
+  // picker is drawn again when it arrives. null until it is there.
+  _forecast(entity, type) {
+    const key = `${entity}|${type}`;
+    const cache = (this._fc = this._fc || {});
+    const c = cache[key];
+    if (c && (c.loading || Date.now() - c.at < 600000)) return c.list || null;
+    cache[key] = { list: c?.list || null, loading: true, at: Date.now() };
+    let unsub = null;
+    let done = false;
+    const finish = (list) => {
+      if (done) return;
+      done = true;
+      cache[key] = { list, at: Date.now() };
+      if (unsub) unsub.then((u) => u()).catch(() => {});
+      if (this._ui.sheet?.kind === "addWidget") this._renderLayer();
+    };
+    try {
+      unsub = this._hass.connection.subscribeMessage((msg) => finish(Array.isArray(msg?.forecast) ? msg.forecast : []),
+        { type: "weather/subscribe_forecast", entity_id: entity, forecast_type: type });
+      unsub.catch(() => finish([]));
+      setTimeout(() => finish(c?.list || []), 8000);
+    } catch (_e) {
+      finish([]);
+    }
+    return c?.list || null;
+  }
+
+  // The data a page's widgets show (as the panel picks it).
+  _widgetData(p, page) {
+    const st = this._settings(p);
+    const ents = page.entities || [];
+    const pick = (domain, fallback) => ents.find((e) => e.startsWith(`${domain}.`)) || fallback || "";
+    const usable = (id) => { const s = id && this._hass?.states?.[id]; return s && !["unavailable", "unknown"].includes(s.state) ? s : null; };
+    return {
+      wx: pick("weather", st.weather_entity),
+      wxState: usable(pick("weather", st.weather_entity)),
+      calendars: ents.filter((e) => e.startsWith("calendar.")),
+      player: usable(pick("media_player", st.media_player_entity)),
+    };
+  }
+
+  // The next (or current) event of the calendars, from their own states (as app/src/cal.rs next_event).
+  _nextEvent(p, calendars) {
+    const tints = ["#3d9bff", "#ff7a3d", "#2fd27a", "#c86bfa", "#ffb21e", "#ff4fa0"];
+    const now = Date.now();
+    let best = null;
+    calendars.forEach((id, i) => {
+      const a = this._hass?.states?.[id]?.attributes || {};
+      const start = Date.parse(String(a.start_time || "").replace(" ", "T"));
+      const end = Date.parse(String(a.end_time || "").replace(" ", "T"));
+      if (!a.message || Number.isNaN(start) || Number.isNaN(end) || end <= now) return;
+      if (!best || start < best.start) best = { start, end, title: String(a.message), allDay: Boolean(a.all_day), tint: tints[i % tints.length] };
+    });
+    if (!best) return null;
+    const day = (t) => { const n = this._hassNow(t); return `${n.month} ${n.day}`; };
+    const hm = (t) => this._clockText(p, this._hassNow(t)).join(":");
+    let rel;
+    if (best.start <= now) rel = "now";
+    else if (day(best.start) === day(now)) {
+      const d = Math.round((best.start - now) / 60000);
+      rel = d >= 60 ? `in ${Math.floor(d / 60)} h ${d % 60} min` : `in ${Math.max(1, d)} min`;
+    } else if (day(best.start) === day(now + 86400000)) rel = "Tomorrow";
+    else if (best.start < now + 7 * 86400000) rel = this._hassNow(best.start).weekday;
+    else rel = `${this._hassNow(best.start).day} ${this._hassNow(best.start).month}`;
+    return { ...best, rel, time: best.allDay ? "All day" : `${hm(best.start)} – ${hm(best.end)}` };
+  }
+
+  _widgetPreview(p, page, kind) {
+    const dark = this._lookMode(p) !== "light";
+    const c = {
+      bg: dark ? "#000000" : "#F5F3EF", ink: dark ? "#FFFFFF" : "#101114", card: dark ? "#1F1F1F" : "#D9D7D3",
+      soft: dark ? "rgba(255,255,255,.75)" : "rgba(16,17,20,.72)", acc: "#FF4A1C", accText: dark ? "#FF8466" : "#C2401F",
+      track: dark ? "rgba(255,255,255,.2)" : "rgba(16,17,20,.18)", rain: dark ? "#86B8FF" : "#3E7FD6",
+    };
+    const d = this._widgetData(p, page);
+    const W = WIDGETS[kind].def[0] === 4 ? 460 : 236;
+    const font = 'font-family="PanelOS Text, Noto Sans, sans-serif"';
+    const T = (x, y, size, fill, text, { weight = 400, anchor = "start", attrs = "" } = {}) =>
+      `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}" ${font} ${attrs}>${esc(text)}</text>`;
+    const card = `<rect x="6" y="6" width="${W - 12}" height="98" rx="14" fill="${c.card}"/>`;
+    const deg = (v) => (v == null || Number.isNaN(Number(v)) ? "–" : `${Math.round(Number(v))}°`);
+    const now = this._hassNow();
+    let body = null;
+    if (kind === 0) {
+      const [hh, mm] = this._clockText(p, now);
+      body = `<text x="${W / 2}" y="76" font-size="56" font-weight="600" fill="${c.ink}" text-anchor="middle" ${font} data-wpv="clock"><tspan>${hh}</tspan><tspan fill="${c.acc}">:</tspan><tspan>${mm}</tspan></text>`
+        + `<rect x="${W / 2 - 87}" y="90" width="174" height="3" rx="1.5" fill="${c.track}"/>`
+        + `<rect x="${W / 2 - 87}" y="90" width="174" height="3" rx="1.5" fill="${c.acc}" data-wpv="sec" style="transform-box: fill-box; transform-origin: left; transform: scaleX(${(now.s / 60).toFixed(3)})"/>`;
+    } else if (kind === 1) {
+      body = T(18, 46, 17, c.accText, now.weekday, { weight: 500, attrs: 'data-wpv="weekday"' }) + T(18, 82, 27, c.ink, `${now.day} ${now.month}`, { weight: 600, attrs: 'data-wpv="daymonth"' });
+    } else if (kind === 2) {
+      const s = d.wxState;
+      if (!s) return null;
+      body = wxIcon(s.state, 46, 30, 40, c.ink) + T(98, 66, 40, c.ink, deg(s.attributes?.temperature), { weight: 600 }) + T(100, 90, 15, c.soft, fitText(wxName(s.state), W - 112, 15));
+    } else if (kind === 3) {
+      const ev = this._nextEvent(p, d.calendars);
+      if (!ev) return null;
+      body = card + `<rect x="22" y="26" width="4" height="58" rx="2" fill="${ev.tint}"/>`
+        + T(38, 46, 14, c.soft, fitText(`${ev.rel}  ·  ${ev.time}`, W - 60, 14)) + T(38, 80, 24, c.ink, fitText(ev.title, W - 60, 24), { weight: 600 });
+    } else if (kind === 4 || kind === 5 || kind === 6) {
+      const s = d.wxState;
+      if (!s) return null;
+      const list = this._forecast(d.wx, kind === 6 ? "daily" : "hourly");
+      if (!list || !list.length) return null;
+      const lab = (f) => {
+        const n = this._hassNow(Date.parse(f.datetime));
+        if (kind === 6) return n.day === now.day && n.month === now.month ? "Today" : n.weekday.slice(0, 3);
+        return this._h24(p) ? String(n.h).padStart(2, "0") : `${((n.h + 11) % 12) + 1}${n.h < 12 ? "a" : "p"}`;
+      };
+      const rain = (f) => (f.precipitation_probability == null ? "" : `${Math.round(f.precipitation_probability)}%`);
+      if (kind === 4) {
+        const pts = [{ t: s.attributes?.temperature, l: "Now", r: null }, ...list.slice(0, 5).map((f) => ({ t: f.temperature, l: lab(f), r: f.precipitation_probability }))];
+        const ts = pts.map((x) => Number(x.t)).filter((v) => !Number.isNaN(v));
+        if (ts.length < 2) return null;
+        const lo = Math.min(...ts);
+        const hi = Math.max(...ts);
+        const xs = pts.map((x, i) => 34 + (i * (W - 68)) / (pts.length - 1));
+        const ys = pts.map((x) => 40 + (hi === lo ? 12 : ((hi - Number(x.t)) / (hi - lo)) * 26));
+        let path = `M${xs[0]} ${ys[0]}`;
+        for (let i = 1; i < xs.length; i++) {
+          const mx = (xs[i - 1] + xs[i]) / 2;
+          path += ` C${mx} ${ys[i - 1]} ${mx} ${ys[i]} ${xs[i]} ${ys[i]}`;
+        }
+        body = card + `<path d="${path}" fill="none" stroke="${c.ink}" stroke-width="2.2"/>`
+          + pts.map((x, i) => `<circle cx="${xs[i]}" cy="${ys[i]}" r="${i ? 3.6 : 4.4}" fill="${i ? c.ink : c.acc}"/>` + T(xs[i], ys[i] - 9, 14, c.ink, deg(x.t), { weight: 600, anchor: "middle" })
+            + (x.r == null ? "" : `<rect x="${xs[i] - 9}" y="78" width="18" height="2" rx="1" fill="${c.rain}" opacity="${(0.3 + (0.7 * Math.min(100, Number(x.r) || 0)) / 100).toFixed(2)}"/>`)
+            + T(xs[i], 96, 13, c.soft, x.l, { anchor: "middle" })).join("");
+      } else {
+        const n = kind === 5 ? 7 : 5;
+        const gap = kind === 5 ? 6 : 8;
+        const cw = (W - 12 - gap * (n - 1)) / n;
+        const lo = (f) => (f.templow == null ? "" : deg(f.templow));
+        body = list.slice(0, n).map((f, i) => {
+          const x = 6 + i * (cw + gap);
+          const cx = x + cw / 2;
+          const temp = kind === 6 && f.templow != null
+            ? `<text x="${cx}" y="76" font-size="15" text-anchor="middle" ${font}><tspan font-weight="600" fill="${c.ink}">${esc(deg(f.temperature))}</tspan><tspan fill="${c.soft}" dx="4">${esc(lo(f))}</tspan></text>`
+            : T(cx, 76, 15, c.ink, deg(f.temperature), { weight: 600, anchor: "middle" });
+          return `<rect x="${x}" y="8" width="${cw}" height="94" rx="12" fill="${c.card}"/>` + T(cx, 27, 13, c.soft, lab(f), { anchor: "middle" })
+            + wxIcon(f.condition, cx - 10, 34, 20, c.ink) + temp + T(cx, 95, 12, c.rain, rain(f), { anchor: "middle" });
+        }).join("");
+      }
+    } else if (kind === 7) {
+      const m = d.player;
+      const a = m?.attributes || {};
+      if (!m || !a.media_title) return null;
+      const dur = Number(a.media_duration) || 0;
+      let pos = Number(a.media_position) || 0;
+      if (m.state === "playing" && a.media_position_updated_at) pos += (Date.now() - Date.parse(a.media_position_updated_at)) / 1000;
+      pos = Math.max(0, Math.min(dur || pos, pos));
+      const mmss = (v) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, "0")}`;
+      const clip = `wpvc${++artId}`;
+      const cover = a.entity_picture
+        ? `<clipPath id="${clip}"><rect x="18" y="22" width="64" height="64" rx="6"/></clipPath><image href="${esc(a.entity_picture)}" x="18" y="22" width="64" height="64" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>`
+        : `<rect x="18" y="22" width="64" height="64" rx="6" fill="${c.track}"/><path d="M53 40v18.5a5 5 0 1 1-3-4.6V44l-10 2v15a5 5 0 1 1-3-4.6V42z" fill="${c.soft}"/>`;
+      const play = m.state === "playing"
+        ? '<rect x="379" y="41" width="5" height="18" rx="1.5" fill="#fff"/><rect x="388" y="41" width="5" height="18" rx="1.5" fill="#fff"/>'
+        : '<path d="M381 40l15 10-15 10z" fill="#fff"/>';
+      body = card + cover + T(100, 43, 17, c.ink, fitText(a.media_title, 226, 17), { weight: 600 }) + T(100, 63, 14, c.soft, fitText(a.media_artist || a.media_album_name || "", 226, 14))
+        + `<rect x="100" y="71" width="226" height="3" rx="1.5" fill="${c.track}"/>` + (dur ? `<rect x="100" y="71" width="${(226 * pos) / dur}" height="3" rx="1.5" fill="${c.acc}"/>` : "")
+        + T(100, 92, 12, c.soft, mmss(pos)) + T(213, 92, 12, c.soft, fitText(a.friendly_name || "", 110, 12), { anchor: "middle" }) + (dur ? T(326, 92, 12, c.soft, `-${mmss(Math.max(0, dur - pos))}`, { anchor: "end" }) : "")
+        + `<path d="M342 43v14M356 43l-10 7 10 7z" fill="${c.ink}" stroke="${c.ink}" stroke-width="2.4" stroke-linejoin="round"/>`
+        + `<circle cx="386" cy="50" r="22" fill="${c.acc}"/>${play}`
+        + `<path d="M430 43v14M416 43l10 7-10 7z" fill="${c.ink}" stroke="${c.ink}" stroke-width="2.4" stroke-linejoin="round"/>`;
+    }
+    if (body == null) return null;
+    const node = svgNode(`<svg viewBox="0 0 ${W} 110" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect width="${W}" height="110" fill="${c.bg}"/>${body}</svg>`, "art wpv");
+    if (kind === 0 || kind === 1) this._wpvRun(p);
+    return node;
+  }
+
+  // The clock and the date of the open picker go on live (every second, in place; stops with the picker).
+  _wpvRun(p) {
+    if (this._wpvTimer) return;
+    this._wpvTimer = setInterval(() => {
+      const els = this._layer.querySelectorAll("[data-wpv]");
+      if (!els.length || this._ui.sheet?.kind !== "addWidget") { clearInterval(this._wpvTimer); this._wpvTimer = null; return; }
+      const n = this._hassNow();
+      const [hh, mm] = this._clockText(p, n);
+      els.forEach((e) => {
+        const k = e.dataset.wpv;
+        if (k === "clock") { const ts = e.querySelectorAll("tspan"); if (ts[0].textContent !== hh) ts[0].textContent = hh; if (ts[2].textContent !== mm) ts[2].textContent = mm; }
+        else if (k === "sec") e.style.transform = `scaleX(${(n.s / 60).toFixed(3)})`;
+        else if (k === "weekday" && e.textContent !== n.weekday) e.textContent = n.weekday;
+        else if (k === "daymonth" && e.textContent !== `${n.day} ${n.month}`) e.textContent = `${n.day} ${n.month}`;
+      });
+    }, 1000);
   }
 
   _sheet_widget(sh, p) {
@@ -4834,7 +5736,7 @@ class PanelOSPage extends HTMLElement {
         this._renderLayer();
       })))),
       page ? null : h("div", { class: "sec" }, h("h3", null, "What"), h("div", { class: "group" }, items.map(([k, l]) => h("label", { class: "opt" },
-        h("input", { type: "checkbox", checked: Boolean(sh.what[k]), onchange: (e) => { sh.what[k] = e.target.checked; this._renderLayer(); } }), h("span", { class: "t" }, h("span", null, l)))))),
+        h("input", { type: "checkbox", checked: Boolean(sh.what[k]), onchange: (e) => { sh.what[k] = e.target.checked; this._renderLayer(); } }), this._ckBox(Boolean(sh.what[k]), l), h("span", { class: "t" }, h("span", null, l)))))),
       page ? null : sh.what.pages ? h("p", { class: "note", style: { margin: 0 } }, "Copying the pages replaces the pages of the panels it goes to.") : null,
       tos.map((to) => {
         const plan = this._copyPlan(from, to, sh.what, sh.page);
@@ -4905,8 +5807,8 @@ class PanelOSPage extends HTMLElement {
     } else {
       body = [steps,
         h("div", { class: "sec" }, h("h3", null, "Start with"), h("div", { class: "group" },
-          h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "defaults", onchange: () => { sh.start = "defaults"; this._renderLayer(); } }), h("span", { class: "t" }, h("span", null, "PanelOS defaults"), h("small", null, "The usual pages, ready to change"))),
-          this._panels.length ? h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "copy", onchange: () => { sh.start = "copy"; this._renderLayer(); } }), h("span", { class: "t" }, h("span", null, "A copy of another panel"), h("small", null, "Pages, display, voice, do not disturb, notifications, dashboard"))) : null)),
+          h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "defaults", onchange: () => { sh.start = "defaults"; this._renderLayer(); } }), this._ckBox(sh.start === "defaults", "PanelOS defaults", { round: true }), h("span", { class: "t" }, h("span", null, "PanelOS defaults"), h("small", null, "The usual pages, ready to change"))),
+          this._panels.length ? h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "copy", onchange: () => { sh.start = "copy"; this._renderLayer(); } }), this._ckBox(sh.start === "copy", "A copy of another panel", { round: true }), h("span", { class: "t" }, h("span", null, "A copy of another panel"), h("small", null, "Pages, display, voice, do not disturb, notifications, dashboard"))) : null)),
         sh.start === "copy" ? h("div", { class: "sec" }, h("h3", null, "Copy from"), this._choice(this._panels.map((x) => [x.entry_id, this._pname(x)]), sh.copyFrom, (v) => { sh.copyFrom = v; this._renderLayer(); }, { label: "Copy from" })) : null,
         sh.error ? h("p", { class: "note", role: "alert", style: { margin: 0, color: "var(--bad)" } }, sh.error) : null];
       foot = [this._btn("Back", () => { sh.step = 1; this._renderLayer(); }, { cls: "ghost" }), this._btn(sh.busy ? "Adding…" : `Add ${sh.panelId.trim()}`, () => this._finishAdd(sh), { cls: "primary", icon: "check", disabled: sh.busy })];
