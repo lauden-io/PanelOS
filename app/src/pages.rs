@@ -106,9 +106,37 @@ fn model<T: Clone + 'static>(v: Vec<T>) -> ModelRc<T> {
 
 // ---------------------------------------------------------------- pages
 
+/// A page's own background (options.theme 0..9), if it has one.
+fn own_theme(page: &Value) -> Option<i32> {
+    page.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64).map(|t| t.clamp(0, 9) as i32)
+}
+
+/// Whether a page shows a widget layout of its own (an index into `home_layouts`): the custom pages after the first
+/// that have their own widgets (the first one's are `home_items`), and every weather details page that has its own
+/// (one without shows the panel's weather widgets, `weather_items`). `homes_before`: custom pages before this one.
+fn has_own_layout(page: &Value, homes_before: usize) -> bool {
+    let has_items = page.get("options").and_then(|o| o.get("items")).and_then(Value::as_array).is_some();
+    match page.get("kind").and_then(Value::as_str) {
+        Some("home") => has_items && homes_before > 0,
+        Some("weather") => has_items,
+        _ => false,
+    }
+}
+
+/// The pages of the integration's list that the panel knows, in their order.
+fn known_pages(config: Option<&Value>) -> Vec<&Value> {
+    config
+        .and_then(|c| c.get("pages"))
+        .and_then(Value::as_array)
+        .map(|a| a.iter().filter(|p| p.get("kind").and_then(Value::as_str).is_some_and(|k| KINDS.contains(&k))).collect())
+        .unwrap_or_default()
+}
+
 /// The pages in their order. Until the integration sets a list: the home page
 /// (living weather + widgets), the weather, music and timers.
 pub fn page_slots(config: Option<&Value>) -> Vec<PageSlot> {
+    // a weather details page without a background of its own has the first custom page's
+    let first_home_theme = known_pages(config).into_iter().find(|p| p.get("kind").and_then(Value::as_str) == Some("home")).and_then(own_theme).unwrap_or(-1);
     let list: Vec<PageSlot> = config
         .and_then(|c| c.get("pages"))
         .and_then(Value::as_array)
@@ -120,10 +148,10 @@ pub fn page_slots(config: Option<&Value>) -> Vec<PageSlot> {
                     KINDS.contains(&kind).then(|| PageSlot {
                         kind: kind.into(),
                         variant: p.get("variant").and_then(Value::as_i64).unwrap_or(0) as i32,
-                        theme: if kind == "home" {
-                            opts.and_then(|o| o.get("theme")).and_then(Value::as_i64).map(|t| t.clamp(0, 9) as i32).unwrap_or(-1)
-                        } else {
-                            -1
+                        theme: match kind {
+                            "home" => own_theme(p).unwrap_or(-1),
+                            "weather" => own_theme(p).unwrap_or(first_home_theme),
+                            _ => -1,
                         },
                         layout: -1,
                         // drawn, line and plain backgrounds: the panel's setting, or always light / dark
@@ -138,18 +166,17 @@ pub fn page_slots(config: Option<&Value>) -> Vec<PageSlot> {
         })
         .unwrap_or_default();
     if !list.is_empty() {
-        // the weather pages after the first with widgets of their own: their layout's index
+        // the pages with widgets of their own: their layout's index
         let mut n = 0;
         let mut list = list;
-        let pages = config.and_then(|c| c.get("pages")).and_then(Value::as_array);
         let mut homes = 0;
-        for (slot, p) in list.iter_mut().zip(pages.into_iter().flatten().filter(|p| p.get("kind").and_then(Value::as_str).is_some_and(|k| KINDS.contains(&k)))) {
+        for (slot, p) in list.iter_mut().zip(known_pages(config)) {
+            if has_own_layout(p, homes) {
+                slot.layout = n;
+                n += 1;
+            }
             if slot.kind == "home" {
                 homes += 1;
-                if homes > 1 && p.get("options").and_then(|o| o.get("items")).and_then(Value::as_array).is_some() {
-                    slot.layout = n;
-                    n += 1;
-                }
             }
         }
         return list;
@@ -157,19 +184,40 @@ pub fn page_slots(config: Option<&Value>) -> Vec<PageSlot> {
     ["home", "weather", "music", "timers"].iter().map(|k| PageSlot { kind: (*k).into(), variant: 0, theme: -1, layout: -1, light: 0 }).collect()
 }
 
-/// The widget layouts of the weather pages after the first that have their own (in page order).
+/// The widget layouts of the pages that have their own (see `has_own_layout`), in page order.
 pub fn home_layouts(config: Option<&Value>, accent: Color) -> Vec<Vec<HomeItem>> {
-    let Some(pages) = config.and_then(|c| c.get("pages")).and_then(Value::as_array) else { return Vec::new() };
-    pages
-        .iter()
-        .filter(|p| p.get("kind").and_then(Value::as_str) == Some("home"))
-        .skip(1)
-        .filter_map(|p| {
-            let o = p.get("options")?;
-            Some((o.get("items")?.as_array()?, page_neon(o)))
-        })
-        .map(|(a, neon)| items_from(a, accent, neon))
-        .collect()
+    let mut out = Vec::new();
+    let mut homes = 0;
+    for p in known_pages(config) {
+        let weather = p.get("kind").and_then(Value::as_str) == Some("weather");
+        if has_own_layout(p, homes) {
+            let o = &p["options"];
+            let items = items_from(o["items"].as_array().map(Vec::as_slice).unwrap_or_default(), accent, page_neon(o));
+            out.push(if weather { weather_only(items) } else { items });
+        }
+        if p.get("kind").and_then(Value::as_str) == Some("home") {
+            homes += 1;
+        }
+    }
+    out
+}
+
+/// The widget kinds of the weather details page: weather now, the forecast curve, the hourly and daily forecasts and
+/// the weather details.
+pub const WEATHER_WIDGETS: [i32; 5] = [2, 4, 5, 6, 11];
+
+/// A weather details page's widgets: the weather ones only, and none opens anything (they are on the page they would
+/// open).
+fn weather_only(items: Vec<HomeItem>) -> Vec<HomeItem> {
+    items.into_iter().filter(|i| WEATHER_WIDGETS.contains(&i.kind)).map(|i| HomeItem { tap: false, ..i }).collect()
+}
+
+/// The weather details page's widgets until it has its own: the weather now (condition, high and low, feels like),
+/// the details (wind, humidity, chance of rain, the sun's times), the hourly and the daily forecast with the chance
+/// of rain, one row each.
+pub fn weather_items(accent: Color) -> Vec<HomeItem> {
+    let item = |kind: i32, row: i32, opts: i32| HomeItem { kind, col: 0, row, w: 4, h: 1, style: 0, accent, weight: 600, tap: false, neon: true, opts, card: 0 };
+    vec![item(2, 0, 1 | 2 | 8), item(11, 1, 15), item(5, 2, 1), item(6, 3, 1)]
 }
 
 /// The page's old neon setting (one switch for every widget): the default of a widget without its own.
@@ -711,4 +759,62 @@ pub fn update_rows<T: Clone + PartialEq + 'static>(current: &ModelRc<T>, rows: V
         }
     }
     Some(ModelRc::new(VecModel::from(rows)))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    fn config() -> Value {
+        json!({ "pages": [
+            { "kind": "home", "options": { "theme": 8, "scene": 3, "items": [{ "kind": 0, "col": 0, "row": 0, "w": 4, "h": 1 }] } },
+            { "kind": "weather", "variant": 1 },
+            { "kind": "music" },
+            { "kind": "home", "options": { "theme": 2, "items": [{ "kind": 7, "col": 0, "row": 3, "w": 4, "h": 1 }] } },
+            { "kind": "unknown" },
+            { "kind": "weather", "options": { "theme": 9, "items": [
+                { "kind": 2, "col": 0, "row": 0, "w": 4, "h": 2 },
+                { "kind": 0, "col": 0, "row": 2, "w": 2, "h": 1 },
+                { "kind": 11, "col": 0, "row": 3, "w": 4, "h": 1, "opts": 5 }
+            ] } },
+        ] })
+    }
+
+    #[test]
+    fn weather_pages_take_a_background_and_widgets_like_custom_pages() {
+        let c = config();
+        let slots = page_slots(Some(&c));
+        let kinds: Vec<&str> = slots.iter().map(|s| s.kind.as_str()).collect();
+        assert_eq!(kinds, ["home", "weather", "music", "home", "weather"]);
+        // without its own background the weather page has the first custom page's
+        assert_eq!(slots[1].theme, 8);
+        assert_eq!(slots[4].theme, 9);
+        // layouts: the second custom page's, then the weather page's own; the first weather page shows the panel's
+        assert_eq!((slots[0].layout, slots[1].layout, slots[3].layout, slots[4].layout), (-1, -1, 0, 1));
+        let lays = home_layouts(Some(&c), Color::from_rgb_u8(1, 2, 3));
+        assert_eq!(lays.len(), 2);
+        assert_eq!(lays[0][0].kind, 7);
+        // the weather page keeps its weather widgets only, and none of them opens anything
+        let kinds: Vec<i32> = lays[1].iter().map(|i| i.kind).collect();
+        assert_eq!(kinds, [2, 11]);
+        assert!(lays[1].iter().all(|i| !i.tap));
+        assert_eq!(lays[1][1].opts, 5);
+    }
+
+    #[test]
+    fn the_default_weather_widgets_fill_the_grid_and_open_nothing() {
+        let items = weather_items(Color::from_rgb_u8(0, 0, 0));
+        assert_eq!(items.iter().map(|i| i.row).collect::<Vec<_>>(), [0, 1, 2, 3]);
+        assert!(items.iter().all(|i| WEATHER_WIDGETS.contains(&i.kind) && !i.tap && i.w == 4 && i.h == 1));
+    }
+
+    #[test]
+    fn without_a_custom_page_the_weather_page_follows_the_panel() {
+        let c = json!({ "pages": [{ "kind": "weather" }, { "kind": "timers" }] });
+        let slots = page_slots(Some(&c));
+        assert_eq!(slots[0].theme, -1);
+        assert_eq!(slots[0].layout, -1);
+        assert!(home_layouts(Some(&c), Color::from_rgb_u8(0, 0, 0)).is_empty());
+    }
 }

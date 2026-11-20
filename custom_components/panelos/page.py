@@ -135,13 +135,16 @@ def _option_value(value: Any, depth: int = 0) -> Any:
     raise vol.Invalid("not a valid page option")
 
 
-# A widget of a weather page on its 4 x 4 grid, as the panel draws it
-# (app/ui/home.slint, HomeItem; panelos-page.js, WIDGETS): kind 0 clock,
+# A widget of a custom or weather details page on its 4 x 4 grid, as the panel
+# draws it (app/ui/home.slint, HomeItem; panelos-page.js, WIDGETS): kind 0 clock,
 # 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly forecast,
-# 6 daily forecast, 7 music; style and opts per kind.
+# 6 daily forecast, 7 music, 11 weather details; style and opts per kind.
+_WIDGET_KINDS = (0, 1, 2, 3, 4, 5, 6, 7, 11)
+# the weather details page offers the weather widgets only
+_WEATHER_WIDGET_KINDS = (2, 4, 5, 6, 11)
 _HOME_ITEM = vol.Schema(
     {
-        vol.Required("kind"): vol.All(int, vol.Range(min=0, max=7)),
+        vol.Required("kind"): vol.In(_WIDGET_KINDS),
         vol.Required("col"): vol.All(int, vol.Range(min=0, max=3)),
         vol.Required("row"): vol.All(int, vol.Range(min=0, max=3)),
         vol.Required("w"): vol.All(int, vol.Range(min=1, max=4)),
@@ -159,12 +162,14 @@ _HOME_ITEM = vol.Schema(
 )
 
 
-def _home_items(items: Any) -> list[dict[str, Any]]:
+def _home_items(items: Any, kinds: tuple[int, ...] = _WIDGET_KINDS) -> list[dict[str, Any]]:
     """Widgets may lie on each other (the later one on top; the page warns to check them on the panel)."""
     items = vol.Schema(vol.All([_HOME_ITEM], vol.Length(max=16)))(items)
     for item in items:
         if item["col"] + item["w"] > 4 or item["row"] + item["h"] > 4:
             raise vol.Invalid("a widget is outside the 4 x 4 grid")
+        if item["kind"] not in kinds:
+            raise vol.Invalid("the weather details page takes weather widgets only")
     return items
 
 
@@ -188,9 +193,11 @@ def _page(value: Any) -> dict[str, Any]:
     if len(json.dumps(page["options"])) > _OPTIONS_JSON_MAX:
         raise vol.Invalid("the page's options are too large")
     if "items" in page["options"]:
-        if page["kind"] != "home":
-            raise vol.Invalid("only custom pages have widgets")
-        page["options"]["items"] = _home_items(page["options"]["items"])
+        if page["kind"] not in ("home", "weather"):
+            raise vol.Invalid("only custom and weather details pages have widgets")
+        page["options"]["items"] = _home_items(
+            page["options"]["items"], _WIDGET_KINDS if page["kind"] == "home" else _WEATHER_WIDGET_KINDS
+        )
     return page
 
 

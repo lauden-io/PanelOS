@@ -122,14 +122,15 @@ const OWN_CRIT_DOMAINS = ["binary_sensor", "sensor", "lock", "input_boolean", "s
 // draws them (app/ui/home.slint, HomeItem): {kind, col, row, w, h, style,
 // accent "#rrggbb" ("" = the panel's accent), weight, tap, opts}.
 // kind: 0 clock, 1 date, 2 weather now, 3 next event, 4 forecast curve,
-//   5 hourly forecast, 6 daily forecast, 7 music.
+//   5 hourly forecast, 6 daily forecast, 7 music, 11 weather details.
 // style: clock 0 digital, 1 big digits + seconds line, 2 round, 3 square,
 //   4 minimal, 5 numerals, 6 split-flap, 7 the time in words, 8 nixie, 9 LCD quartz, 10 twin-bell; music: the
 //   scroll speed of long titles 1..5 (with opts bit 1); others 0.
 // opts (bits): clock 1 seconds, 2 date, 4 weather, 8 next event; date 1 year,
 //   2 week number; weather now 1 condition, 2 high / low, 4 rain chance,
 //   8 feels like; next event 1 time, 2 calendar colour; curve 1 rain bars,
-//   2 icons; hourly / daily 1 rain chance; music 1 long titles scroll.
+//   2 icons; hourly / daily 1 rain chance; music 1 long titles scroll;
+//   weather details 1 wind, 2 humidity, 4 chance of rain, 8 sunrise and sunset.
 // The weather, calendars and player of a weather page are its entities (the
 // first weather.*, every calendar.*, the first media_player.*).
 const WIDGETS = {
@@ -141,7 +142,10 @@ const WIDGETS = {
   5: { name: "Hourly forecast", icon: "clock-time-four-outline", min: [3, 1], def: [4, 1], opts: 1, bits: [[1, "Chance of rain"]] },
   6: { name: "Daily forecast", icon: "calendar-week", min: [3, 1], def: [4, 1], opts: 1, bits: [[1, "Chance of rain"]] },
   7: { name: "Music", icon: "music", min: [1, 1], def: [4, 1], opts: 0, bits: [] },
+  11: { name: "Details", icon: "weather-windy", min: [2, 1], def: [4, 1], opts: 15, bits: [[1, "Wind"], [2, "Humidity"], [4, "Chance of rain"], [8, "Sunrise and sunset"]] },
 };
+// The widgets a Weather details page offers (the weather ones), in the order of its "Add a widget" sheet.
+const WEATHER_WIDGETS = [2, 11, 4, 5, 6];
 const CLOCK_STYLES = ["Digital", "Big digits", "Round", "Square", "Minimal", "Numerals", "Split-flap", "In words", "Nixie", "LCD quartz", "Twin-bell"];
 // The smallest size of a widget in cells [w, h]: the nixie clock needs 3 x 1 (4 x 1 with seconds), the LCD 2 x 1 (its
 // case shows from 3 x 2), the twin-bell 2 x 2; other widgets as WIDGETS says.
@@ -163,6 +167,13 @@ const DEFAULT_ITEMS = [
   { kind: 0, col: 0, row: 0, w: 4, h: 1, style: 1, opts: 1 },
   { kind: 4, col: 0, row: 1, w: 4, h: 1, style: 0, opts: 3 },
   { kind: 7, col: 0, row: 3, w: 4, h: 1, style: 0, opts: 0 },
+];
+// … and a Weather details page's (the panel's weather_items): the weather now, the details, the hours, the days.
+const WEATHER_DEFAULT_ITEMS = [
+  { kind: 2, col: 0, row: 0, w: 4, h: 1, style: 0, opts: 11, tap: false },
+  { kind: 11, col: 0, row: 1, w: 4, h: 1, style: 0, opts: 15, tap: false },
+  { kind: 5, col: 0, row: 2, w: 4, h: 1, style: 0, opts: 1, tap: false },
+  { kind: 6, col: 0, row: 3, w: 4, h: 1, style: 0, opts: 1, tap: false },
 ];
 const ACCENTS = ["#FF4A1C", "#F5F3EE", "#FFB020", "#3CCB7F", "#2E9BFF", "#B06CFF", "#FF5C9A"];
 // Timers: the panel's own colour for the 1st … 6th timer, and the colours to choose from.
@@ -335,8 +346,14 @@ function synthBase(scene) {
   const [g2, d2] = grad([[0, "#ffd45a"], [1, "#ff3d9a"]]);
   let s = `${d1}${d2}<rect width="120" height="120" fill="url(#${g1})"/>`;
   if (scene === 3) {
-    s += [[12, 14], [30, 30], [52, 10], [88, 20], [104, 40], [70, 34], [18, 50], [96, 8]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.9" fill="#fff"/>`).join("");
-    s += `<circle cx="82" cy="40" r="14" fill="url(#${g2})"/><ellipse cx="82" cy="40" rx="24" ry="5" fill="none" stroke="#ff8fd0" stroke-width="1.6"/>`;
+    // space: a nebula, the ringed planet over cyan wireframe mountains, a violet grid
+    const [g3, d3] = grad([[0, "#ffa8e2"], [0.5, "#ff6cc8"], [1, "#6a34d4"]]);
+    s = `${d1}${d3}<rect width="120" height="120" fill="url(#${g1})"/><rect width="120" height="76" fill="#0b0634" opacity=".55"/>`;
+    s += `<ellipse cx="30" cy="30" rx="36" ry="11" fill="#ff4fd8" opacity=".22" transform="rotate(12 30 30)"/><ellipse cx="88" cy="20" rx="30" ry="9" fill="#4a7bff" opacity=".2"/>`;
+    s += [[12, 14], [30, 40], [52, 10], [88, 30], [104, 44], [70, 6], [18, 52], [96, 8], [40, 22], [112, 18]].map(([x, y]) => `<circle cx="${x}" cy="${y}" r="0.9" fill="#fff"/>`).join("");
+    s += `<g transform="rotate(-11 60 64)"><ellipse cx="60" cy="64" rx="27" ry="8" fill="none" stroke="#ffe2f7" stroke-width="1.4"/></g><circle cx="60" cy="64" r="17" fill="url(#${g3})"/>`;
+    s += `<g transform="rotate(-11 60 64)"><path d="M33 64 A27 8 0 0 0 87 64" fill="none" stroke="#ffe2f7" stroke-width="1.6"/></g>`;
+    s += `<path d="M0 62 L14 56 L26 60 L40 66 L52 74 L60 76 L70 73 L84 70 L96 64 L108 66 L120 63 V76 H0Z" fill="#110730" stroke="#29f3ff" stroke-width="1"/>`;
   } else {
     s += `<circle cx="60" cy="58" r="22" fill="url(#${g2})"/>`;
     s += [56, 62, 67, 71].map((y, i) => `<rect x="36" y="${y}" width="48" height="${1 + i * 0.6}" fill="#4b0f63"/>`).join("");
@@ -344,7 +361,7 @@ function synthBase(scene) {
   if (scene === 0) s += `<path d="M0 75 L22 52 L38 66 L60 44 L80 64 L98 50 L120 72 V76 H0Z" fill="#240a40" stroke="#ff2bd6" stroke-width="1"/>`;
   if (scene === 1) s += `<path d="M0 76 V60 H10 V48 H20 V62 H28 V40 H40 V58 H48 V50 H60 V66 H66 V36 H78 V60 H86 V52 H98 V64 H108 V56 H120 V76Z" fill="#1a0633"/>` + [[14, 52], [32, 46], [34, 52], [70, 42], [72, 50], [90, 56], [112, 60]].map(([x, y]) => `<rect x="${x}" y="${y}" width="2" height="2" fill="#4ff0ff"/>`).join("");
   if (scene === 2) s += `<rect x="0" y="70" width="120" height="6" fill="#ff6fb5" opacity=".5"/><path d="M96 76 Q98 56 92 40" stroke="#14001f" stroke-width="3" fill="none"/><path d="M92 40 q-14 -2 -20 6 M92 40 q12 -6 22 0 M92 40 q-6 -10 -16 -10 M92 40 q4 -10 14 -10" stroke="#14001f" stroke-width="3" fill="none"/>`;
-  s += `<g stroke="#ff2bd6" stroke-width="0.8" opacity=".75">${[78, 84, 92, 102, 116].map((y) => `<line x1="0" y1="${y}" x2="120" y2="${y}"/>`).join("")}${[-60, -20, 20, 60, 100, 140, 180].map((x) => `<line x1="60" y1="76" x2="${x}" y2="120"/>`).join("")}</g>`;
+  s += `<g stroke="${scene === 3 ? "#b967ff" : "#ff2bd6"}" stroke-width="0.8" opacity=".75">${[78, 84, 92, 102, 116].map((y) => `<line x1="0" y1="${y}" x2="120" y2="${y}"/>`).join("")}${[-60, -20, 20, 60, 100, 140, 180].map((x) => `<line x1="60" y1="76" x2="${x}" y2="120"/>`).join("")}</g>`;
   return s;
 }
 
@@ -2842,9 +2859,10 @@ class PanelOSPage extends HTMLElement {
     if (page.hidden && i > 0) bits.push("Hidden");
     const ents = page.entities || [];
     const names = (domain) => ents.filter((e) => e.startsWith(`${domain}.`));
-    if (page.kind === "home") {
-      bits.push((BACKGROUNDS[bgIndex(page)] || {}).name);
-      bits.push(plural((page.options?.items || DEFAULT_ITEMS).length, "widget", "widgets"));
+    if (page.kind === "home" || page.kind === "weather") {
+      bits.push((BACKGROUNDS[this._bgOf(p, page)] || {}).name);
+      bits.push(plural(this._items(page).length, "widget", "widgets"));
+      if (page.kind === "weather") bits.push(ents[0] ? this._ename(ents[0]) : "The panel's weather");
     } else {
       const looks = LOOKS[page.kind] || [];
       if (looks.length > 1) bits.push(looks[page.variant || 0] || looks[0]);
@@ -3046,10 +3064,20 @@ class PanelOSPage extends HTMLElement {
     ];
   }
 
+  // The background a Custom or Weather details page shows (a BACKGROUNDS index): its own; a Weather details page
+  // without one has the first Custom page's (without a Custom page, the panel's own: Photo · nature).
+  _bgOf(p, page) {
+    if (page.kind !== "weather" || Number.isInteger(page.options?.theme)) return bgIndex(page);
+    const home = this._pages(p).find((x) => x.kind === "home");
+    return home ? bgIndex(home) : 0;
+  }
+
   _lookCard(p, page, i) {
     const o = page.options || {};
-    if (page.kind === "home") {
-      const cur = bgIndex(page);
+    if (page.kind === "home" || page.kind === "weather") {
+      // the Weather details page: the same backgrounds; its cars, traffic and real sun and moon are the Custom page's
+      const weather = page.kind === "weather";
+      const cur = this._bgOf(p, page);
       const sw = BACKGROUNDS[cur].theme === 8;
       const plain = BACKGROUNDS[cur].theme === PLAIN_THEME;
       const pics = this._has(p, "images");
@@ -3057,7 +3085,9 @@ class PanelOSPage extends HTMLElement {
         const ok = pics || b.theme === PLAIN_THEME;
         return { id: k, name: b.name, pic: this._lookPic(p, `bg-${k}`, () => svgNode(bgArt(k, this._plainMode(p)))), disabled: !ok, why: ok ? null : this._reason(p, "images") };
       });
-      return this._card("Background", { info: "The backgrounds follow the real weather and the time of day. Plain is one colour, the panel's own dark or light ground, as its theme is." },
+      return this._card("Background", { info: weather
+        ? "The backgrounds follow the real weather and the time of day. Plain is one colour, the panel's own dark or light ground, as its theme is. Until one is chosen here, this page has the first Custom page's background. The synthwave cars and the real sun and moon follow the Custom page's settings; the panel shows one synthwave scene, chosen by the first page with a synthwave background."
+        : "The backgrounds follow the real weather and the time of day. Plain is one colour, the panel's own dark or light ground, as its theme is. The panel shows one synthwave scene, chosen by the first page with a synthwave background." },
         this._lookPicker(items, cur, (k) => {
           const b = BACKGROUNDS[k];
           const next = { ...o, theme: b.theme };
@@ -3065,14 +3095,14 @@ class PanelOSPage extends HTMLElement {
           else delete next.scene;
           this._setPage(p, i, { options: next });
         }),
-        sw ? this._row("Cars", this._toggle(o.cars !== false, (v) => this._setPageOption(p, i, "cars", v), { label: "Cars" })) : null,
-        sw && o.cars !== false ? this._row("Traffic", this._slider(Number.isInteger(o.traffic) ? o.traffic : 0, 0, 2, 1, (v) => this._setPageOption(p, i, "traffic", v), (v) => ["Light", "More", "Busy"][v], { label: "Traffic" }),
+        sw && !weather ? this._row("Cars", this._toggle(o.cars !== false, (v) => this._setPageOption(p, i, "cars", v), { label: "Cars" })) : null,
+        sw && !weather && o.cars !== false ? this._row("Traffic", this._slider(Number.isInteger(o.traffic) ? o.traffic : 0, 0, 2, 1, (v) => this._setPageOption(p, i, "traffic", v), (v) => ["Light", "More", "Busy"][v], { label: "Traffic" }),
           { info: "How often a new car sets off." }) : null,
         // drawn, line and plain backgrounds: light or dark by the panel's theme, or always one of them
         (Number(o.theme) >= 3 && Number(o.theme) !== 8) ? this._row("Light or dark", this._seg([["panel", "Panel setting"], ["light", "Light"], ["dark", "Dark"]], ["light", "dark"].includes(o.light) ? o.light : "panel",
           (v) => this._setPageOption(p, i, "light", v === "panel" ? undefined : v), { label: "Light or dark" }),
           { info: "Panel setting: the light scene with the panel's light theme, the dark one with its dark theme, and Auto follows the panel. Light or Dark keeps this background so." }) : null,
-        sw || plain ? null : this._more(`bg:${p.entry_id}:${i}`, this._row("Real sun and moon", this._toggle(o.real_sun !== false, (v) => this._setPageOption(p, i, "real_sun", v), { label: "Real sun and moon" }),
+        sw || plain || weather ? null : this._more(`bg:${p.entry_id}:${i}`, this._row("Real sun and moon", this._toggle(o.real_sun !== false, (v) => this._setPageOption(p, i, "real_sun", v), { label: "Real sun and moon" }),
           { info: "On: the sun and the moon stand where they really are in the sky. Off: they keep a fixed place." })));
     }
     const looks = LOOKS[page.kind] || [];
@@ -3119,8 +3149,9 @@ class PanelOSPage extends HTMLElement {
     ];
   }
 
+  // The Weather details page: the Custom page's widget editor, with the weather widgets only.
   _editWeather(p, page, i) {
-    return [this._card("Options", {}, this._pageEntityRow(p, i, "Weather from", "weather", "The panel's weather"))];
+    return this._editHome(p, page, i);
   }
 
   // The clock page: the same choices as the screensaver's clock (its face is the page's look).
@@ -3356,7 +3387,7 @@ class PanelOSPage extends HTMLElement {
   // -- weather page: layout editor ------------------------------------------------------
 
   _items(page) {
-    return clone(Array.isArray(page.options?.items) ? page.options.items : DEFAULT_ITEMS);
+    return clone(Array.isArray(page.options?.items) ? page.options.items : page.kind === "weather" ? WEATHER_DEFAULT_ITEMS : DEFAULT_ITEMS);
   }
 
   _saveItems(p, i, items, opts) {
@@ -3406,12 +3437,14 @@ class PanelOSPage extends HTMLElement {
     // from (16, 44), cells 112 × 98
     const g = { gx: (16 * size) / 480, gy: (44 * size) / 480, cw: (112 * size) / 480, ch: (98 * size) / 480 };
     const sel = this._ui.sel;
-    const lightGround = BACKGROUNDS[bgIndex(page)].theme === PLAIN_THEME && this._plainMode(p) === "light";
+    const weather = page.kind === "weather";
+    const bg = this._bgOf(p, page);
+    const lightGround = BACKGROUNDS[bg].theme === PLAIN_THEME && this._plainMode(p) === "light";
     // the panel shows this page while its settings are open: the live picture is the background, so
     // what lies where (and on what) is seen as it really is
     const live = this._livePage(p, i) && this._picOfLivePage(p);
     const canvas = h("div", { class: `hcanvas${lightGround ? " light" : ""}${live ? " live" : ""}`, style: { width: `${size}px`, height: `${size}px` } },
-      live ? h("img", { class: "art", src: this._pics[p.entry_id].url, "data-pic": p.entry_id, alt: "", draggable: "false" }) : svgNode(bgArt(bgIndex(page), this._plainMode(p))));
+      live ? h("img", { class: "art", src: this._pics[p.entry_id].url, "data-pic": p.entry_id, alt: "", draggable: "false" }) : svgNode(bgArt(bg, this._plainMode(p))));
     for (let k = 0; k <= 4; k++) {
       canvas.append(h("i", { class: "gridline", style: { left: `${g.gx + k * g.cw}px`, top: `${g.gy}px`, height: `${4 * g.ch}px`, borderLeftWidth: "1px" } }));
       canvas.append(h("i", { class: "gridline", style: { top: `${g.gy + k * g.ch}px`, left: `${g.gx}px`, width: `${4 * g.cw}px`, borderTopWidth: "1px" } }));
@@ -3446,11 +3479,12 @@ class PanelOSPage extends HTMLElement {
       h("div", { class: "editor-wrap" }, canvas),
       this._overlapNote(items),
       Array.isArray(page.options?.items) ? null : h("p", { class: "note", style: { margin: "0 0 14px" } }, "The panel's own layout. Any change here saves it for this page.")),
-      this._card("Data", { info: "Where the widgets of this page get their data. Without a choice here they use the panel's weather and player." },
+      this._card("Data", { info: weather ? "Where the widgets of this page get the weather. Without a choice here they use the panel's weather."
+        : "Where the widgets of this page get their data. Without a choice here they use the panel's weather and player." },
         this._pageEntityRow(p, i, "Weather from", "weather", "The panel's weather"),
-        hasKind(7) ? this._pageEntityRow(p, i, "Player", "media_player", "The panel's player") : null,
-        hasKind(3) ? this._row("Calendars for the next event", null, { stack: true }) : null,
-        hasKind(3) ? (cals.length ? this._multi({ label: "Calendars", key: `hcals:${p.entry_id}:${i}` }, cals.map((e) => this._mi(ents.includes(e.id), e.name, () => {
+        !weather && hasKind(7) ? this._pageEntityRow(p, i, "Player", "media_player", "The panel's player") : null,
+        !weather && hasKind(3) ? this._row("Calendars for the next event", null, { stack: true }) : null,
+        !weather && hasKind(3) ? (cals.length ? this._multi({ label: "Calendars", key: `hcals:${p.entry_id}:${i}` }, cals.map((e) => this._mi(ents.includes(e.id), e.name, () => {
           const next = ents.includes(e.id) ? ents.filter((x) => x !== e.id) : [...ents, e.id];
           this._setPage(p, i, { entities: next.slice(0, 16) });
         }))) : h("div", { class: "empty" }, "No calendars in Home Assistant.")) : null),
@@ -4124,15 +4158,16 @@ class PanelOSPage extends HTMLElement {
     const page = this._pages(p)[sh.page];
     if (!page) return null;
     const items = this._items(page);
-    return this._sheetFrame("Add a widget", h("div", { class: "cat" }, Object.entries(WIDGETS).map(([k, w]) => {
-      const kind = Number(k);
+    const kinds = page.kind === "weather" ? WEATHER_WIDGETS : Object.keys(WIDGETS).map(Number);
+    return this._sheetFrame("Add a widget", h("div", { class: "cat" }, kinds.map((kind) => {
+      const w = WIDGETS[kind];
       const spot = this._freeSpot(items, w.def[0], w.def[1]);
       const small = spot ? null : this._freeSpot(items, w.min[0], w.min[1]);
       return h("button", { class: "cat-item", onclick: () => {
         // no free place: it goes on top of the others at its smallest size (the layout then points it out)
         const at = spot || small || { x: 0, y: 0 };
         const [ww, hh] = spot ? w.def : w.min;
-        const item = { kind, col: at.x, row: at.y, w: ww, h: hh, style: w.style || 0, accent: "", weight: 600, tap: true, opts: w.opts || 0 };
+        const item = { kind, col: at.x, row: at.y, w: ww, h: hh, style: w.style || 0, accent: "", weight: 600, tap: page.kind !== "weather", opts: w.opts || 0 };
         items.push(item);
         this._ui.sheet = null;
         this._ui.sel = items.length - 1;
@@ -4175,7 +4210,7 @@ class PanelOSPage extends HTMLElement {
       const wt = w.weight || 600;
       body.push(h("div", { class: "group" },
         this._row("Letters", this._weightSlider(wt, (v) => set({ weight: v })), { cls: "first" }),
-        page && bgIndex(page) >= 0 && BACKGROUNDS[bgIndex(page)].theme === 8
+        page && BACKGROUNDS[this._bgOf(p, page)]?.theme === 8
           ? this._row("Neon letters", this._toggle(typeof w.neon === "boolean" ? w.neon : page.options?.neon !== false, (v) => set({ neon: v }), { label: "Neon letters" }))
           : null));
     }
@@ -4190,7 +4225,7 @@ class PanelOSPage extends HTMLElement {
       this._row("Background", this._slider(bg >= 0 ? bg : ownCard, 0, 100, 5, (v) => set({ bg: v }), (v) => (bg < 0 ? `${v} % · Default` : `${v} %`), { label: "Background" }),
         { cls: "first", info: "How solid the card behind this widget is: 0 % is no card, 100 % a solid one.",
           sub: bg >= 0 ? h("button", { class: "linkbtn", onclick: () => set({ bg: -1 }) }, "Back to the default") : null }),
-      this._row("Opens its page on a tap", this._toggle(w.tap !== false, (v) => set({ tap: v }), { label: "Opens its page on a tap" }))));
+      page?.kind === "weather" ? null : this._row("Opens its page on a tap", this._toggle(w.tap !== false, (v) => set({ tap: v }), { label: "Opens its page on a tap" }))));
     return this._sheetFrame(meta.name, body, [
       this._btn("Remove", () => { this._ui.sheet = null; this._removeWidget(p, sh.page, sh.item); this._renderLayer(); }, { cls: "ghost danger", icon: "delete-outline" }),
       h("span", { class: "grow" }), this._btn("Done", () => this._closeSheet(), { cls: "primary" })]);
