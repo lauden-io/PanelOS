@@ -86,6 +86,13 @@ type Factory = Callable[["Panel", str], Entity]
 # A panel that went away keeps its entities' last state this long before they turn unavailable (most drops are a few
 # seconds: a Wi-Fi hiccup, the app restarting; every unavailable span was a row in the recorder and the logbook).
 RECONNECT_GRACE = 30.0
+# An entry set up again within this time after its unload (a reload) takes over the last states (`keep_for_reload`).
+KEPT_FOR_RELOAD = 120.0
+
+
+def kept(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    """What unloaded entries left for their next setup (entry id → states and the reconnect state)."""
+    return hass.data.setdefault(DOMAIN, {}).setdefault("kept", {})
 
 
 def links(hass: HomeAssistant) -> dict[int, tuple[str, int, Send]]:
@@ -541,6 +548,43 @@ class Panel:
         self._grace_cancel = None
         async_dispatcher_send(self.hass, self.signal, None)
 
+    @callback
+    def _cancel_grace(self) -> None:
+        if self._grace_cancel is not None:
+            self._grace_cancel()
+            self._grace_cancel = None
+
+    @callback
+    def keep_for_reload(self) -> None:
+        """The entry unloads: its last states and the reconnect state wait for the entry set up again (a reload),
+        so the entities come back with their states and a drop gets its grace as before."""
+        kept(self.hass)[self.entry.entry_id] = {
+            "at": time.monotonic(),
+            "states": dict(self.states),
+            "options": {k: list(v) for k, v in self.options.items()},
+            "ever": self._ever_connected or self.connected,
+            "gone_since": None if self.connected else self._gone_since,
+        }
+
+    @callback
+    def _resume_after_reload(self) -> None:
+        """Set up again soon after an unload (a reload): the last states and the grace go on. A panel that stays
+        connected through the reload counts as connected before, so its next drop gets the grace too."""
+        old = kept(self.hass).pop(self.entry.entry_id, None)
+        now = time.monotonic()
+        if old and now - old["at"] < KEPT_FOR_RELOAD:
+            self.states.update(old["states"])
+            self.options.update(old["options"])
+            self._ever_connected = bool(old["ever"])
+            if self._ever_connected and not self.connected:
+                # away during the reload: the grace runs from when it went away (or from the reload)
+                self._gone_since = old["gone_since"] if old["gone_since"] is not None else old["at"]
+                left = RECONNECT_GRACE - (now - self._gone_since)
+                if left > 0:
+                    self._grace_cancel = async_call_later(self.hass, left + 0.5, self._grace_over)
+        if self.connected:
+            self._ever_connected = True
+
     # -- screen picture ----------------------------------------------------
 
     async def async_screenshot(self, timeout: float = 8) -> tuple[bytes, str]:
@@ -592,7 +636,9 @@ class Panel:
             self._link_voice_device(voice_entry)
         if info.get("mac"):
             self._take_over_esphome_entities(info["mac"])
+        self._resume_after_reload()
         self.entry.async_on_unload(async_dispatcher_connect(self.hass, SIGNAL_LINKS, self._links_changed))
+        self.entry.async_on_unload(self._cancel_grace)
         self.entry.async_on_unload(self._stop_waiting)
         # A dashboard saved in Home Assistant may need other card resources.
         self.entry.async_on_unload(self.hass.bus.async_listen("lovelace_updated", self._lovelace_updated))
