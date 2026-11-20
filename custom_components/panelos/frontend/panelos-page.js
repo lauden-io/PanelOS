@@ -306,6 +306,42 @@ function svgNode(markup, cls) {
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
+// ---------------------------------------------------------------- live widget previews (the widget picker)
+// Home Assistant's weather conditions by the names the panel shows (app/src/pages.rs condition_text).
+const WX_NAMES = { "clear-night": "Clear", "partlycloudy": "Partly cloudy", "lightning": "Thunder", "lightning-rainy": "Thunderstorm", "snowy-rainy": "Sleet", "windy-variant": "Windy", "pouring": "Pouring" };
+const wxName = (c) => WX_NAMES[c] || (c ? c.charAt(0).toUpperCase() + c.slice(1) : "");
+// The weather icons of the previews: line drawings on a 24-unit grid, in the text colour.
+const WX_CLOUD = "M7.5 19h9.5a4 4 0 0 0 .4-7.98 5.5 5.5 0 0 0-10.6 1.2A3.4 3.4 0 0 0 7.5 19z";
+const WX_SUN = '<circle cx="12" cy="12" r="4.2"/>' + [0, 45, 90, 135, 180, 225, 270, 315].map((a) => `<path d="M12 4.2V2" transform="rotate(${a} 12 12)"/>`).join("");
+function wxIcon(cond, x, y, size, ink) {
+  const up = `<path d="${WX_CLOUD}" transform="translate(0 -3.5)"/>`;
+  const drops = (n) => [9, 13, 17, 11, 15].slice(0, n).map((dx, i) => `<path d="M${dx} ${17.5 + (i > 2 ? 2 : 0)}l-1 2.6"/>`).join("");
+  const shapes = {
+    "sunny": WX_SUN,
+    "clear-night": '<path d="M15.5 3.6a8.4 8.4 0 1 0 4.9 13.3A7 7 0 0 1 15.5 3.6z"/>',
+    "partlycloudy": `<g transform="translate(-3.2 -3.6) scale(.7)">${WX_SUN}</g><path d="${WX_CLOUD}" transform="translate(1.5 .5) scale(.92)"/>`,
+    "cloudy": `<path d="${WX_CLOUD}" transform="translate(0 -1.5)"/>`,
+    "rainy": up + drops(3),
+    "pouring": up + drops(5),
+    "snowy": up + [9, 13, 17].map((dx) => `<circle cx="${dx}" cy="19.5" r=".7"/>`).join(""),
+    "snowy-rainy": up + '<circle cx="10" cy="19.5" r=".7"/><path d="M15 17.5l-1 2.6"/>',
+    "hail": up + [9, 13, 17].map((dx) => `<circle cx="${dx}" cy="19" r="1.1"/>`).join(""),
+    "lightning": up + '<path d="M13 15l-2 3.5h3l-2 3.5"/>',
+    "lightning-rainy": up + '<path d="M12 15l-2 3.5h3l-2 3.5M16.5 16.5l-1 2.6"/>',
+    "fog": '<path d="M4 9h16M6 13h14M4 17h14"/>',
+    "windy": '<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5M3 13h15a2.5 2.5 0 1 1-2.5 2.5M3 17h8"/>',
+    "windy-variant": '<path d="M3 9h11a2.5 2.5 0 1 0-2.5-2.5M3 13h15a2.5 2.5 0 1 1-2.5 2.5M3 17h8"/>',
+  };
+  const body = shapes[cond] || shapes.cloudy;
+  return `<g transform="translate(${x} ${y}) scale(${size / 24})" fill="none" stroke="${ink}" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${body}</g>`;
+}
+// A text cut to a width at a font size (the panel elides its widget texts the same way).
+function fitText(t, width, size) {
+  const s = String(t || "");
+  const most = Math.max(1, Math.floor(width / (size * 0.56)));
+  return s.length <= most ? s : `${s.slice(0, Math.max(1, most - 1)).trimEnd()}…`;
+}
+
 // ---------------------------------------------------------------- jelly motion (spec 28.15)
 // The switch, the segmented control, the weekday row and the checkbox move as on the panel. Each motion is a
 // closed-form function of the time t since the change: J-edge(t; τ, T) = 1 − e^(−t/τ)·(cos ωt + sin ωt / (ωτ)),
@@ -850,6 +886,7 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .cat-item .pic { aspect-ratio: 1; border-radius: 10px; overflow: hidden; background: #000; }
 .cat-item .pic.wicon { display: grid; place-items: center; background: var(--raised); color: var(--muted); aspect-ratio: 2; }
 .cat-item .pic.wicon .mdi { --mdc-icon-size: 34px; }
+.cat-item .pic.wicon .wpv { width: 100%; height: 100%; }
 .cat-item > b { font-weight: 600; font-size: 14.5px; overflow-wrap: anywhere; }
 .cat-item > small { color: var(--muted); font-size: 12.5px; line-height: 1.35; overflow-wrap: anywhere; }
 .cat-item:disabled { opacity: .5; cursor: default; }
@@ -4749,8 +4786,228 @@ class PanelOSPage extends HTMLElement {
         this._ui.sheet = null;
         this._ui.sel = items.length - 1;
         this._saveItems(p, sh.page, items, { toast: `${w.name} added` });
-      } }, h("div", { class: "pic wicon" }, this._lookPic(p, `widget-${kind}`, () => icon(w.icon), { fit: "contain" })), h("b", null, w.name), h("small", null, spot ? `${w.def[0]} × ${w.def[1]}` : small ? "Smaller, to fit" : "On top of the others"));
+      } }, h("div", { class: "pic wicon" }, this._widgetPreview(p, page, kind) || this._lookPic(p, `widget-${kind}`, () => icon(w.icon), { fit: "contain" })), h("b", null, w.name), h("small", null, spot ? `${w.def[0]} × ${w.def[1]}` : small ? "Smaller, to fit" : "On top of the others"));
     })), null, { wide: true });
+  }
+
+  // -- live widget previews -------------------------------------------------------------
+  // The widget picker draws each widget as the panel does, at its first size, with the live content of the panel's
+  // Home Assistant: the time and date (in Home Assistant's time zone, the clock running), the weather now and its
+  // forecasts (the page's weather, else the panel's), the next event of the page's calendars, the music of the page's
+  // player (else the panel's). A widget without data shows the panel's own picture with demo content (null here).
+
+  // The panel's time format (24-hour unless the panel's settings say 12-hour).
+  _h24(p) {
+    const st = this._settings(p);
+    return !(st.time_format === "12" || st.time_format === "12h" || st.h24 === false);
+  }
+
+  // Now in Home Assistant's time zone: hour, minute, second, weekday, day, month.
+  _hassNow(at = Date.now()) {
+    const opts = { hour: "2-digit", minute: "2-digit", second: "2-digit", weekday: "long", day: "numeric", month: "long", hourCycle: "h23" };
+    let f;
+    try {
+      f = new Intl.DateTimeFormat("en-GB", { ...opts, timeZone: this._hass?.config?.time_zone || undefined });
+    } catch (_e) {
+      f = new Intl.DateTimeFormat("en-GB", opts);
+    }
+    const o = Object.fromEntries(f.formatToParts(new Date(at)).map((x) => [x.type, x.value]));
+    return { h: Number(o.hour) % 24, m: Number(o.minute), s: Number(o.second), weekday: o.weekday, day: Number(o.day), month: o.month };
+  }
+
+  _clockText(p, n) {
+    const hh = this._h24(p) ? String(n.h).padStart(2, "0") : String(((n.h + 11) % 12) + 1);
+    return [hh, String(n.m).padStart(2, "0")];
+  }
+
+  // A weather entity's forecast (hourly / daily) once, through Home Assistant's own subscription: kept 10 minutes; the
+  // picker is drawn again when it arrives. null until it is there.
+  _forecast(entity, type) {
+    const key = `${entity}|${type}`;
+    const cache = (this._fc = this._fc || {});
+    const c = cache[key];
+    if (c && (c.loading || Date.now() - c.at < 600000)) return c.list || null;
+    cache[key] = { list: c?.list || null, loading: true, at: Date.now() };
+    let unsub = null;
+    let done = false;
+    const finish = (list) => {
+      if (done) return;
+      done = true;
+      cache[key] = { list, at: Date.now() };
+      if (unsub) unsub.then((u) => u()).catch(() => {});
+      if (this._ui.sheet?.kind === "addWidget") this._renderLayer();
+    };
+    try {
+      unsub = this._hass.connection.subscribeMessage((msg) => finish(Array.isArray(msg?.forecast) ? msg.forecast : []),
+        { type: "weather/subscribe_forecast", entity_id: entity, forecast_type: type });
+      unsub.catch(() => finish([]));
+      setTimeout(() => finish(c?.list || []), 8000);
+    } catch (_e) {
+      finish([]);
+    }
+    return c?.list || null;
+  }
+
+  // The data a page's widgets show (as the panel picks it).
+  _widgetData(p, page) {
+    const st = this._settings(p);
+    const ents = page.entities || [];
+    const pick = (domain, fallback) => ents.find((e) => e.startsWith(`${domain}.`)) || fallback || "";
+    const usable = (id) => { const s = id && this._hass?.states?.[id]; return s && !["unavailable", "unknown"].includes(s.state) ? s : null; };
+    return {
+      wx: pick("weather", st.weather_entity),
+      wxState: usable(pick("weather", st.weather_entity)),
+      calendars: ents.filter((e) => e.startsWith("calendar.")),
+      player: usable(pick("media_player", st.media_player_entity)),
+    };
+  }
+
+  // The next (or current) event of the calendars, from their own states (as app/src/cal.rs next_event).
+  _nextEvent(p, calendars) {
+    const tints = ["#3d9bff", "#ff7a3d", "#2fd27a", "#c86bfa", "#ffb21e", "#ff4fa0"];
+    const now = Date.now();
+    let best = null;
+    calendars.forEach((id, i) => {
+      const a = this._hass?.states?.[id]?.attributes || {};
+      const start = Date.parse(String(a.start_time || "").replace(" ", "T"));
+      const end = Date.parse(String(a.end_time || "").replace(" ", "T"));
+      if (!a.message || Number.isNaN(start) || Number.isNaN(end) || end <= now) return;
+      if (!best || start < best.start) best = { start, end, title: String(a.message), allDay: Boolean(a.all_day), tint: tints[i % tints.length] };
+    });
+    if (!best) return null;
+    const day = (t) => { const n = this._hassNow(t); return `${n.month} ${n.day}`; };
+    const hm = (t) => this._clockText(p, this._hassNow(t)).join(":");
+    let rel;
+    if (best.start <= now) rel = "now";
+    else if (day(best.start) === day(now)) {
+      const d = Math.round((best.start - now) / 60000);
+      rel = d >= 60 ? `in ${Math.floor(d / 60)} h ${d % 60} min` : `in ${Math.max(1, d)} min`;
+    } else if (day(best.start) === day(now + 86400000)) rel = "Tomorrow";
+    else if (best.start < now + 7 * 86400000) rel = this._hassNow(best.start).weekday;
+    else rel = `${this._hassNow(best.start).day} ${this._hassNow(best.start).month}`;
+    return { ...best, rel, time: best.allDay ? "All day" : `${hm(best.start)} – ${hm(best.end)}` };
+  }
+
+  _widgetPreview(p, page, kind) {
+    const dark = this._lookMode(p) !== "light";
+    const c = {
+      bg: dark ? "#000000" : "#F5F3EF", ink: dark ? "#FFFFFF" : "#101114", card: dark ? "#1F1F1F" : "#D9D7D3",
+      soft: dark ? "rgba(255,255,255,.75)" : "rgba(16,17,20,.72)", acc: "#FF4A1C", accText: dark ? "#FF8466" : "#C2401F",
+      track: dark ? "rgba(255,255,255,.2)" : "rgba(16,17,20,.18)", rain: dark ? "#86B8FF" : "#3E7FD6",
+    };
+    const d = this._widgetData(p, page);
+    const W = WIDGETS[kind].def[0] === 4 ? 460 : 236;
+    const font = 'font-family="PanelOS Text, Noto Sans, sans-serif"';
+    const T = (x, y, size, fill, text, { weight = 400, anchor = "start", attrs = "" } = {}) =>
+      `<text x="${x}" y="${y}" font-size="${size}" font-weight="${weight}" fill="${fill}" text-anchor="${anchor}" ${font} ${attrs}>${esc(text)}</text>`;
+    const card = `<rect x="6" y="6" width="${W - 12}" height="98" rx="14" fill="${c.card}"/>`;
+    const deg = (v) => (v == null || Number.isNaN(Number(v)) ? "–" : `${Math.round(Number(v))}°`);
+    const now = this._hassNow();
+    let body = null;
+    if (kind === 0) {
+      const [hh, mm] = this._clockText(p, now);
+      body = `<text x="${W / 2}" y="76" font-size="56" font-weight="600" fill="${c.ink}" text-anchor="middle" ${font} data-wpv="clock"><tspan>${hh}</tspan><tspan fill="${c.acc}">:</tspan><tspan>${mm}</tspan></text>`
+        + `<rect x="${W / 2 - 87}" y="90" width="174" height="3" rx="1.5" fill="${c.track}"/>`
+        + `<rect x="${W / 2 - 87}" y="90" width="174" height="3" rx="1.5" fill="${c.acc}" data-wpv="sec" style="transform-box: fill-box; transform-origin: left; transform: scaleX(${(now.s / 60).toFixed(3)})"/>`;
+    } else if (kind === 1) {
+      body = T(18, 46, 17, c.accText, now.weekday, { weight: 500, attrs: 'data-wpv="weekday"' }) + T(18, 82, 27, c.ink, `${now.day} ${now.month}`, { weight: 600, attrs: 'data-wpv="daymonth"' });
+    } else if (kind === 2) {
+      const s = d.wxState;
+      if (!s) return null;
+      body = wxIcon(s.state, 46, 30, 40, c.ink) + T(98, 66, 40, c.ink, deg(s.attributes?.temperature), { weight: 600 }) + T(100, 90, 15, c.soft, fitText(wxName(s.state), W - 112, 15));
+    } else if (kind === 3) {
+      const ev = this._nextEvent(p, d.calendars);
+      if (!ev) return null;
+      body = card + `<rect x="22" y="26" width="4" height="58" rx="2" fill="${ev.tint}"/>`
+        + T(38, 46, 14, c.soft, fitText(`${ev.rel}  ·  ${ev.time}`, W - 60, 14)) + T(38, 80, 24, c.ink, fitText(ev.title, W - 60, 24), { weight: 600 });
+    } else if (kind === 4 || kind === 5 || kind === 6) {
+      const s = d.wxState;
+      if (!s) return null;
+      const list = this._forecast(d.wx, kind === 6 ? "daily" : "hourly");
+      if (!list || !list.length) return null;
+      const lab = (f) => {
+        const n = this._hassNow(Date.parse(f.datetime));
+        if (kind === 6) return n.day === now.day && n.month === now.month ? "Today" : n.weekday.slice(0, 3);
+        return this._h24(p) ? String(n.h).padStart(2, "0") : `${((n.h + 11) % 12) + 1}${n.h < 12 ? "a" : "p"}`;
+      };
+      const rain = (f) => (f.precipitation_probability == null ? "" : `${Math.round(f.precipitation_probability)}%`);
+      if (kind === 4) {
+        const pts = [{ t: s.attributes?.temperature, l: "Now", r: null }, ...list.slice(0, 5).map((f) => ({ t: f.temperature, l: lab(f), r: f.precipitation_probability }))];
+        const ts = pts.map((x) => Number(x.t)).filter((v) => !Number.isNaN(v));
+        if (ts.length < 2) return null;
+        const lo = Math.min(...ts);
+        const hi = Math.max(...ts);
+        const xs = pts.map((x, i) => 34 + (i * (W - 68)) / (pts.length - 1));
+        const ys = pts.map((x) => 40 + (hi === lo ? 12 : ((hi - Number(x.t)) / (hi - lo)) * 26));
+        let path = `M${xs[0]} ${ys[0]}`;
+        for (let i = 1; i < xs.length; i++) {
+          const mx = (xs[i - 1] + xs[i]) / 2;
+          path += ` C${mx} ${ys[i - 1]} ${mx} ${ys[i]} ${xs[i]} ${ys[i]}`;
+        }
+        body = card + `<path d="${path}" fill="none" stroke="${c.ink}" stroke-width="2.2"/>`
+          + pts.map((x, i) => `<circle cx="${xs[i]}" cy="${ys[i]}" r="${i ? 3.6 : 4.4}" fill="${i ? c.ink : c.acc}"/>` + T(xs[i], ys[i] - 9, 14, c.ink, deg(x.t), { weight: 600, anchor: "middle" })
+            + (x.r == null ? "" : `<rect x="${xs[i] - 9}" y="78" width="18" height="2" rx="1" fill="${c.rain}" opacity="${(0.3 + (0.7 * Math.min(100, Number(x.r) || 0)) / 100).toFixed(2)}"/>`)
+            + T(xs[i], 96, 13, c.soft, x.l, { anchor: "middle" })).join("");
+      } else {
+        const n = kind === 5 ? 7 : 5;
+        const gap = kind === 5 ? 6 : 8;
+        const cw = (W - 12 - gap * (n - 1)) / n;
+        const lo = (f) => (f.templow == null ? "" : deg(f.templow));
+        body = list.slice(0, n).map((f, i) => {
+          const x = 6 + i * (cw + gap);
+          const cx = x + cw / 2;
+          const temp = kind === 6 && f.templow != null
+            ? `<text x="${cx}" y="76" font-size="15" text-anchor="middle" ${font}><tspan font-weight="600" fill="${c.ink}">${esc(deg(f.temperature))}</tspan><tspan fill="${c.soft}" dx="4">${esc(lo(f))}</tspan></text>`
+            : T(cx, 76, 15, c.ink, deg(f.temperature), { weight: 600, anchor: "middle" });
+          return `<rect x="${x}" y="8" width="${cw}" height="94" rx="12" fill="${c.card}"/>` + T(cx, 27, 13, c.soft, lab(f), { anchor: "middle" })
+            + wxIcon(f.condition, cx - 10, 34, 20, c.ink) + temp + T(cx, 95, 12, c.rain, rain(f), { anchor: "middle" });
+        }).join("");
+      }
+    } else if (kind === 7) {
+      const m = d.player;
+      const a = m?.attributes || {};
+      if (!m || !a.media_title) return null;
+      const dur = Number(a.media_duration) || 0;
+      let pos = Number(a.media_position) || 0;
+      if (m.state === "playing" && a.media_position_updated_at) pos += (Date.now() - Date.parse(a.media_position_updated_at)) / 1000;
+      pos = Math.max(0, Math.min(dur || pos, pos));
+      const mmss = (v) => `${Math.floor(v / 60)}:${String(Math.floor(v % 60)).padStart(2, "0")}`;
+      const clip = `wpvc${++artId}`;
+      const cover = a.entity_picture
+        ? `<clipPath id="${clip}"><rect x="18" y="22" width="64" height="64" rx="6"/></clipPath><image href="${esc(a.entity_picture)}" x="18" y="22" width="64" height="64" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})"/>`
+        : `<rect x="18" y="22" width="64" height="64" rx="6" fill="${c.track}"/><path d="M53 40v18.5a5 5 0 1 1-3-4.6V44l-10 2v15a5 5 0 1 1-3-4.6V42z" fill="${c.soft}"/>`;
+      const play = m.state === "playing"
+        ? '<rect x="379" y="41" width="5" height="18" rx="1.5" fill="#fff"/><rect x="388" y="41" width="5" height="18" rx="1.5" fill="#fff"/>'
+        : '<path d="M381 40l15 10-15 10z" fill="#fff"/>';
+      body = card + cover + T(100, 43, 17, c.ink, fitText(a.media_title, 226, 17), { weight: 600 }) + T(100, 63, 14, c.soft, fitText(a.media_artist || a.media_album_name || "", 226, 14))
+        + `<rect x="100" y="71" width="226" height="3" rx="1.5" fill="${c.track}"/>` + (dur ? `<rect x="100" y="71" width="${(226 * pos) / dur}" height="3" rx="1.5" fill="${c.acc}"/>` : "")
+        + T(100, 92, 12, c.soft, mmss(pos)) + T(213, 92, 12, c.soft, fitText(a.friendly_name || "", 110, 12), { anchor: "middle" }) + (dur ? T(326, 92, 12, c.soft, `-${mmss(Math.max(0, dur - pos))}`, { anchor: "end" }) : "")
+        + `<path d="M342 43v14M356 43l-10 7 10 7z" fill="${c.ink}" stroke="${c.ink}" stroke-width="2.4" stroke-linejoin="round"/>`
+        + `<circle cx="386" cy="50" r="22" fill="${c.acc}"/>${play}`
+        + `<path d="M430 43v14M416 43l10 7-10 7z" fill="${c.ink}" stroke="${c.ink}" stroke-width="2.4" stroke-linejoin="round"/>`;
+    }
+    if (body == null) return null;
+    const node = svgNode(`<svg viewBox="0 0 ${W} 110" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect width="${W}" height="110" fill="${c.bg}"/>${body}</svg>`, "art wpv");
+    if (kind === 0 || kind === 1) this._wpvRun(p);
+    return node;
+  }
+
+  // The clock and the date of the open picker go on live (every second, in place; stops with the picker).
+  _wpvRun(p) {
+    if (this._wpvTimer) return;
+    this._wpvTimer = setInterval(() => {
+      const els = this._layer.querySelectorAll("[data-wpv]");
+      if (!els.length || this._ui.sheet?.kind !== "addWidget") { clearInterval(this._wpvTimer); this._wpvTimer = null; return; }
+      const n = this._hassNow();
+      const [hh, mm] = this._clockText(p, n);
+      els.forEach((e) => {
+        const k = e.dataset.wpv;
+        if (k === "clock") { const ts = e.querySelectorAll("tspan"); if (ts[0].textContent !== hh) ts[0].textContent = hh; if (ts[2].textContent !== mm) ts[2].textContent = mm; }
+        else if (k === "sec") e.style.transform = `scaleX(${(n.s / 60).toFixed(3)})`;
+        else if (k === "weekday" && e.textContent !== n.weekday) e.textContent = n.weekday;
+        else if (k === "daymonth" && e.textContent !== `${n.day} ${n.month}`) e.textContent = `${n.day} ${n.month}`;
+      });
+    }, 1000);
   }
 
   _sheet_widget(sh, p) {
