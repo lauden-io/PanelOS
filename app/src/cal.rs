@@ -366,6 +366,120 @@ fn cals(s: &crate::UiState, entities: &[String]) -> Cals {
     }
 }
 
+/// An event's description or place as the details show it. Calendars hand over what the invitation held: HTML,
+/// the targets of links in angle brackets ("Join<https://…>"), links hundreds of characters long, separator lines,
+/// runs of blank lines. Tags go (a line break, a paragraph or a list item starts a line), entities are read, a link
+/// target in angle brackets goes, a long bare link shows only its host, a line without any letter or digit goes,
+/// blank runs become one empty line, and past `cap` characters the text ends with "…".
+fn readable(text: &str, cap: usize) -> String {
+    let text = text.replace("\r\n", "\n").replace(['\r', '\t'], " ");
+    // tags and link targets
+    let mut plain = String::with_capacity(text.len());
+    let mut rest = text.as_str();
+    while let Some(i) = rest.find('<') {
+        plain.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let tag_like = after.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '/' || c == '!');
+        match after.find('>').filter(|_| tag_like) {
+            Some(end) => {
+                let inner = after[..end].trim();
+                let name: String =
+                    inner.trim_start_matches('/').chars().take_while(|c| c.is_ascii_alphanumeric()).collect::<String>().to_ascii_lowercase();
+                let lower = inner.to_ascii_lowercase();
+                if lower.starts_with("http") || lower.starts_with("mailto:") || lower.starts_with("tel:") {
+                    plain.push(' ');
+                } else if name == "li" {
+                    // a list item starts a line with a bullet; its end adds nothing (the next item starts its own)
+                    if !inner.starts_with('/') {
+                        plain.push_str("\n• ");
+                    }
+                } else if matches!(name.as_str(), "br" | "p" | "div" | "tr" | "ul" | "ol" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+                    plain.push('\n');
+                }
+                rest = &after[end + 1..];
+            }
+            None => {
+                plain.push('<');
+                rest = after;
+            }
+        }
+    }
+    plain.push_str(rest);
+    // entities
+    let mut decoded = String::with_capacity(plain.len());
+    let mut rest = plain.as_str();
+    while let Some(i) = rest.find('&') {
+        decoded.push_str(&rest[..i]);
+        let after = &rest[i + 1..];
+        let entity = after.find(';').filter(|&e| e <= 8).map(|e| &after[..e]);
+        let ch = entity.and_then(|e| match e {
+            "amp" => Some('&'),
+            "lt" => Some('<'),
+            "gt" => Some('>'),
+            "quot" => Some('"'),
+            "apos" | "#39" => Some('\''),
+            "nbsp" => Some(' '),
+            _ => e
+                .strip_prefix("#x")
+                .or_else(|| e.strip_prefix("#X"))
+                .and_then(|h| u32::from_str_radix(h, 16).ok())
+                .or_else(|| e.strip_prefix('#').and_then(|d| d.parse().ok()))
+                .and_then(char::from_u32),
+        });
+        match (entity, ch) {
+            (Some(e), Some(c)) => {
+                decoded.push(c);
+                rest = &after[e.len() + 1..];
+            }
+            _ => {
+                decoded.push('&');
+                rest = after;
+            }
+        }
+    }
+    decoded.push_str(rest);
+    // words and lines
+    let mut lines: Vec<String> = Vec::new();
+    for line in decoded.split('\n') {
+        let words: Vec<String> = line
+            .split(' ')
+            .filter(|w| !w.is_empty())
+            .map(|w| {
+                let lower = w.to_ascii_lowercase();
+                let link = ["https://", "http://"].iter().find_map(|p| lower.starts_with(*p).then_some(p.len()));
+                match link {
+                    Some(n) if w.chars().count() > 40 => {
+                        let host: String = w[n..].chars().take_while(|&c| !matches!(c, '/' | '?' | '#' | '>')).collect();
+                        format!("{host}/…")
+                    }
+                    _ => w.to_string(),
+                }
+            })
+            .collect();
+        let line = words.join(" ");
+        if !line.is_empty() && !line.chars().any(char::is_alphanumeric) {
+            continue;
+        }
+        if line.is_empty() && lines.last().is_none_or(String::is_empty) {
+            continue;
+        }
+        lines.push(line);
+    }
+    while lines.last().is_some_and(String::is_empty) {
+        lines.pop();
+    }
+    let out = lines.join("\n");
+    if out.chars().count() <= cap {
+        return out;
+    }
+    let cut: String = out.chars().take(cap).collect();
+    let cut = match cut.rfind(char::is_whitespace) {
+        Some(i) if cut.len() - i < 40 => cut[..i].to_string(),
+        _ => cut,
+    };
+    format!("{}…", cut.trim_end())
+}
+
 /// An event for the views; `day0` is the midnight of the day it is shown on.
 fn event(e: &Ev, c: &Cals, day0: i64, t: i64) -> CalEvent {
     let start_min = if e.all_day { 0 } else { ((e.start - day0) / 60).clamp(0, 24 * 60) as i32 };
@@ -391,8 +505,8 @@ fn event(e: &Ev, c: &Cals, day0: i64, t: i64) -> CalEvent {
         now,
         progress: if now { ((t - e.start) as f32 / (e.end - e.start).max(1) as f32).clamp(0.0, 1.0) } else { 0.0 },
         rel: if e.all_day || midnight(day0) != midnight(t) { SharedString::new() } else { rel(e.start, e.end, t).into() },
-        note: e.note.clone().into(),
-        place: e.place.clone().into(),
+        note: readable(&e.note, 1500).into(),
+        place: readable(&e.place, 300).into(),
         editable: c.features.get(e.cal).is_some_and(|f| f & CAN_UPDATE != 0) && !e.uid.is_empty(),
         id: e.id().into(),
         date: local_format(day0, "%a %-d %b").into(),
@@ -1217,6 +1331,28 @@ mod tests {
         assert_eq!(v, ["W", "O", "R", "K", " ", " "]);
         let t: Vec<String> = flap_cells("6:45P", 6).iter().map(|x| x.to_string()).collect();
         assert_eq!(t, [" ", "6", ":", "4", "5", "P"]);
+    }
+
+    #[test]
+    fn descriptions_read_plainly() {
+        assert_eq!(readable("Hello<br>world", 100), "Hello\nworld");
+        assert_eq!(readable("<p>One</p><p>Two</p>", 100), "One\n\nTwo");
+        assert_eq!(readable("<ul><li>a</li><li>b</li></ul>", 100), "• a\n• b");
+        assert_eq!(readable("<b>bold</b> &amp; <i>more</i> &lt;3 &#233;&#x41;", 100), "bold & more <3 éA");
+        assert_eq!(readable("x < y and a&b", 100), "x < y and a&b");
+        // a link target in angle brackets goes, the words round it stay apart
+        assert_eq!(readable("Join the meeting<https://example.org/l/meetup-join/19%3ameeting_abc>now", 100), "Join the meeting now");
+        assert_eq!(readable("Write <mailto:someone@example.org>", 100), "Write");
+        // a long bare link shows its host; a short one stays
+        let long = format!("https://eu.safelinks.example.com/?url={}", "x%2F".repeat(150));
+        assert_eq!(readable(&format!("see {long} there"), 100), "see eu.safelinks.example.com/… there");
+        assert_eq!(readable("https://meet.example.com/abc-def", 100), "https://meet.example.com/abc-def");
+        // separator lines and blank runs
+        assert_eq!(readable("Top\n-::~:~::~:~:~::-\n\n\n\nBottom\n\n", 100), "Top\n\nBottom");
+        assert_eq!(readable("a\r\n\tb", 100), "a\nb");
+        // past the cap: cut at a space, "…"
+        assert_eq!(readable("one two three four", 9), "one two…");
+        assert_eq!(readable("", 9), "");
     }
 
     #[test]
