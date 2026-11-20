@@ -624,6 +624,7 @@ export component MenuHost inherits Rectangle {
     in property <length> menu-w: root.kind == 0 ? 320px : 448px;
     in property <length> need: 200px;
     in property <bool> deep;
+    in property <bool> dim: true;                 // false: a menu over another one (the page is dimmed once)
     in property <duration> in-ms: 400ms;
     in property <duration> out-ms: 200ms;
     callback close();
@@ -661,7 +662,7 @@ export component MenuHost inherits Rectangle {
     x: 0; y: 0; width: 480px; height: 480px;
     Rectangle {
         background: #000000;
-        opacity: (root.deep ? 0.55 : 0.30) * root.dk;
+        opacity: root.dim ? (root.deep ? 0.55 : 0.30) * root.dk : 0;
     }
     TouchArea { enabled: root.open; clicked => { root.close(); } }
     @children
@@ -787,7 +788,8 @@ export component Dropdown inherits Rectangle {
     border-width: pop-open ? 1px : 0px;
     border-color: root.tk-accent.with-alpha(0.45);
     property <bool> pop-open;
-    // the menu opens upwards by itself when it would not fit under the field on the 480 px screen
+    // the list stays on the screen between the status bar and the bottom edge (y 48-468): under the field, else above
+    // it, else as far up as it must go (a long list may then cover its field)
     property <length> menu-h: Math.min(8, root.options.length) * 48px + 12px;
     property <bool> opens-up: root.up || root.absolute-position.y + root.height + 6px + root.menu-h > 480px;
     property <string> shown-text: root.selected >= 0 && root.selected < root.options.length ? root.options[root.selected] : root.placeholder;
@@ -796,11 +798,11 @@ export component Dropdown inherits Rectangle {
         vertical-alignment: center; overflow: elide; }
     Icon { x: parent.width - 36px; y: 0; width: 24px; height: parent.height; text: root.pop-open ? "\u{F0143}" : "\u{F0140}"; font-size: 22px; color: root.tk-muted; }
     TouchArea { clicked => { root.pop-open = true; menu.show(); } }
+    // the popup's own size is the list's: Slint hit-tests a popup by its root, so a popup without a height takes no
+    // taps (every press counts as outside and only closes it) and draws its list centred on a zero-high root
     menu := PopupWindow {
         x: 0;
-        // kept on the screen between the status bar and the bottom (y 48-468); a long list may cover its field
-        y: Math.max(48px - root.absolute-position.y, Math.min(468px - root.absolute-position.y - root.menu-h,
-            root.opens-up ? -root.menu-h - 6px : root.height + 6px));
+        y: root.list-y - root.field-y;
         width: root.width;
         height: root.menu-h;
         close-policy: close-on-click-outside;
@@ -810,6 +812,7 @@ export component Dropdown inherits Rectangle {
             init => { self.k = 1; }
             animate k { duration: 140ms; easing: ease-out; }
             opacity: self.k;
+            x: 0; y: 0;
             width: root.width;
             height: Math.min(8, root.options.length) * 48px + 12px;
             border-radius: root.tk-radius >= 0px ? root.tk-radius : 14px; background: root.tk-menu; border-width: 1px; border-color: root.tk-line;

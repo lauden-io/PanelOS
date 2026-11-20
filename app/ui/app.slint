@@ -30,7 +30,7 @@ import { TimerItem, AlarmItem, SwCar, TimersPage } from "timers.slint";
 import { ClimateDev, ClimateRoom, ThermostatPage } from "thermostat.slint";
 import { CamItem, CamAction, CameraPage } from "camera.slint";
 import { TodoItem, TodoList, TodoPage } from "todo.slint";
-import { CalEvent, CalDay, CalCell, CalBoard, WallCell, CalendarPage } from "calendar.slint";
+import { CalEvent, CalDay, CalCell, CalBoard, WallCell, CalItem, CalendarPage } from "calendar.slint";
 import { InfoNote, InfoPage } from "info.slint";
 import { NotifWindow } from "notify_window.slint";
 import { StatusScreen, StatusPage, TopStrip } from "status.slint";
@@ -281,20 +281,29 @@ export component AppWindow inherits Window {
     in property <bool> cal-edit;
     in property <string> cal-edit-title;
     in property <string> cal-edit-cal;
+    in property <string> cal-edit-code;
     in property <color> cal-edit-tint;
     in property <string> cal-edit-day;
-    in property <string> cal-edit-start;
-    in property <string> cal-edit-end;
-    in property <bool> cal-edit-allday;
+    in-out property <bool> cal-edit-allday;
+    in-out property <int> cal-edit-start-min;
+    in-out property <int> cal-edit-end-min;
+    in-out property <int> cal-edit-open;
     in property <bool> cal-edit-typing;
     in property <bool> cal-edit-can-delete;
-    in property <int> cal-edit-picker;
-    in property <[string]> cal-edit-hours;
-    in property <[string]> cal-edit-mins;
+    in property <int> cal-kb-layer;
+    in property <bool> cal-undo;
+    in property <string> cal-undo-text;
+    in property <bool> cal-picker;        // the chip's picker: the plain look's view and the calendars shown
+    in property <[CalItem]> cal-cals;
+    in property <[string]> cal-board-clock-cells;
+    in property <string> cal-desk-line;
     in property <bool> cal-settings;
     in property <bool> cal-day-sheet;
     in property <string> cal-day-sheet-title;
-    in property <[CalEvent]> cal-day-sheet-events;
+    in property <string> cal-day-sheet-caps;
+    in property <string> cal-day-sheet-short;
+    in property <bool> cal-day-sheet-week;
+    in property <[CalDay]> cal-day-sheet-days;
     in property <string> cal-day-sheet-free;
     in-out property <bool> cal-detail;
     in-out property <CalEvent> cal-detail-ev;
@@ -1222,6 +1231,7 @@ export component AppWindow inherits Window {
                 }
                 if slot.kind == "calendar": CalendarPage {
                     live: home-slot.on-view;
+                    on-screen: i == root.page && !root.screensaver-on;
                     look: slot.variant; board-rows: root.cal-board-rows; board-clock: root.cal-board-clock; board-date: root.cal-board-date;
                     board-ticker: root.cal-board-ticker; board-epoch: root.cal-board-epoch; board-empty: root.cal-board-empty; tear-month: root.cal-tear-month; tear-day: root.cal-tear-day;
                     tear-weekday: root.cal-tear-weekday; tear-sunday: root.cal-tear-sunday; tear-info: root.cal-tear-info; tear-events: root.cal-tear-events;
@@ -1231,11 +1241,15 @@ export component AppWindow inherits Window {
                     empty-title: root.cal-empty-title; empty-sub: root.cal-empty-sub; day-events: root.cal-day-events; day-allday: root.cal-day-allday;
                     day-today: root.cal-day-today; day-free: root.cal-day-free; now-min: root.cal-now-min; week-names: root.cal-week-names; week-nums: root.cal-week-nums;
                     week-today: root.cal-week-today; week-events: root.cal-week-events; week-allday: root.cal-week-allday; month-names: root.cal-month-names;
-                    month-cells: root.cal-month-cells; edit: root.cal-edit; edit-title: root.cal-edit-title; edit-cal: root.cal-edit-cal; edit-tint: root.cal-edit-tint;
-                    edit-day: root.cal-edit-day; edit-start: root.cal-edit-start; edit-end: root.cal-edit-end; edit-allday: root.cal-edit-allday;
-                    edit-typing: root.cal-edit-typing; edit-can-delete: root.cal-edit-can-delete; edit-picker: root.cal-edit-picker; edit-hours: root.cal-edit-hours;
-                    edit-mins: root.cal-edit-mins; settings: root.cal-settings; detail <=> root.cal-detail; detail-ev <=> root.cal-detail-ev; detail-when <=> root.cal-detail-when;
-                    day-sheet: root.cal-day-sheet; day-sheet-title: root.cal-day-sheet-title; day-sheet-events: root.cal-day-sheet-events;
+                    month-cells: root.cal-month-cells; edit: root.cal-edit; edit-title: root.cal-edit-title; edit-cal: root.cal-edit-cal; edit-code: root.cal-edit-code;
+                    edit-tint: root.cal-edit-tint; edit-day: root.cal-edit-day; edit-allday <=> root.cal-edit-allday; edit-start-min <=> root.cal-edit-start-min;
+                    edit-end-min <=> root.cal-edit-end-min; edit-open <=> root.cal-edit-open;
+                    edit-typing: root.cal-edit-typing; edit-can-delete: root.cal-edit-can-delete; kb-layer: root.cal-kb-layer; kb-layout: root.kb-layout;
+                    undo: root.cal-undo; undo-text: root.cal-undo-text;
+                    picker: root.cal-picker; cals: root.cal-cals; clock-cells: root.cal-board-clock-cells; desk-line: root.cal-desk-line;
+                    settings: root.cal-settings; detail <=> root.cal-detail; detail-ev <=> root.cal-detail-ev; detail-when <=> root.cal-detail-when;
+                    day-sheet: root.cal-day-sheet; day-sheet-title: root.cal-day-sheet-title; day-sheet-caps: root.cal-day-sheet-caps;
+                    day-sheet-short: root.cal-day-sheet-short; day-sheet-week: root.cal-day-sheet-week; day-sheet-days: root.cal-day-sheet-days;
                     day-sheet-free: root.cal-day-sheet-free;
                 }
                 if slot.kind == "todo": TodoPage {
@@ -1330,7 +1344,7 @@ export component AppWindow inherits Window {
         && !root.info-critical && !root.cam-ring;
     // every page sheet, editor and keyboard view (the dots are never drawn over them)
     property <bool> sheet-open: root.quick-sheet || root.quick-settings || root.thermo-sheet || root.thermo-picker || root.thermo-settings || root.music-picker
-        || root.music-settings || root.cal-detail || root.cal-settings || root.cal-day-sheet || root.cal-edit || root.timers-quick
+        || root.music-settings || root.cal-detail || root.cal-settings || root.cal-day-sheet || root.cal-edit || root.cal-picker || root.timers-quick
         || root.timers-sheet >= 0 || root.timers-settings || root.timers-edit || root.timers-edit-keyboard || root.todo-picker
         || root.todo-settings || root.todo-adding || root.cam-settings || root.cam-replies || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker
         || root.home-settings >= 0 || root.home-editing || root.home-lock;

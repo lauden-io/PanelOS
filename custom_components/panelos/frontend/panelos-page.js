@@ -4105,14 +4105,23 @@ class PanelOSPage extends HTMLElement {
     const ents = page.entities || [];
     const all = this._ents(["calendar"], { p });
     const wall = Array.isArray(o.wall_calendars) ? o.wall_calendars : ents;
+    const hidden = Array.isArray(o.hidden_calendars) ? o.hidden_calendars.filter((x) => ents.includes(x)) : [];
     return [this._card("Calendars", { info: "The calendars the page shows." },
       all.length ? this._multi({ label: "Calendars", key: `cals:${p.entry_id}:${i}` }, all.map((e) => this._mi(ents.includes(e.id), e.name, () => {
         const next = ents.includes(e.id) ? ents.filter((x) => x !== e.id) : [...ents, e.id];
         if (next.length > 8) { this._toast("At most 8 calendars"); return; }
         const opts = { ...o };
         if (Array.isArray(opts.wall_calendars)) opts.wall_calendars = opts.wall_calendars.filter((x) => next.includes(x));
+        if (Array.isArray(opts.hidden_calendars)) opts.hidden_calendars = opts.hidden_calendars.filter((x) => next.includes(x));
         this._setPage(p, i, { entities: next, options: opts });
       }))) : h("div", { class: "empty" }, "No calendars in Home Assistant."),
+      // shown on the panel: also chosen with the panel's chip; at least one stays on
+      ents.length > 1 ? this._row("Shown on the panel", null, { stack: true }) : null,
+      ents.length > 1 ? this._multi({ label: "Shown on the panel", key: `shown:${p.entry_id}:${i}` }, ents.map((id) => this._mi(!hidden.includes(id), this._ename(id), () => {
+        const next = hidden.includes(id) ? hidden.filter((x) => x !== id) : [...hidden, id];
+        if (next.length >= ents.length) { this._toast("At least one calendar stays on the panel"); return; }
+        this._setPageOption(p, i, "hidden_calendars", next.length ? next : undefined);
+      }))) : null,
       (page.variant || 0) === 3 && ents.length ? this._row("Written on the wall calendar", null, { stack: true, info: "Calendars with many daily entries (routines) would fill every day; leave them off here." }) : null,
       (page.variant || 0) === 3 && ents.length ? this._multi({ label: "Written on the wall calendar", key: `wall:${p.entry_id}:${i}` }, ents.map((id) => this._mi(wall.includes(id), this._ename(id), () => {
         const next = wall.includes(id) ? wall.filter((x) => x !== id) : [...wall, id];

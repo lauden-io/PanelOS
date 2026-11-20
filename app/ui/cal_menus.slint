@@ -1,0 +1,1067 @@
+// The calendar page's menus, one set per look (spec 37): the chip's picker (the plain look's view and the calendars
+// shown), the page settings (the quick shade's page row), a day's list, an event's details and its edit form (the same
+// object; the times open the agreed drums in place). Plain: the brand card. Departure board: flap boards hanging on two
+// rods, the station's printed timetable, a boarding pass. Tear-off: slips from the pad, its cardboard back, an
+// appointment card. Wall calendar: ruled index cards pinned on. Every menu is placed and dimmed by MenuHost and moves
+// with the look's own motion (animation spec 25.K5).
+import { Theme, Act, Words, Clock } from "theme.slint";
+import { Icon, MenuHost, Jelly, Segmented, Dropdown, Toggle, CheckBox, TextButton } from "widgets.slint";
+import { Keyboard } from "overlays.slint";
+
+export struct CalEvent {
+    title: string,
+    time: string,          // "18:00–20:15", "6:00–8:15 PM", or "All day" (the panel's time format)
+    t1: string,            // the start ("18:00", "All day") and the end ("20:15")
+    t2: string,
+    cal: string,           // the calendar's name
+    code: string,          // its two letters (the departure board's gate)
+    tint: color,           // the calendar's colour
+    ink: color,            // the wall calendar's pen for it
+    all-day: bool,
+    start: int,            // minutes from midnight (timed events; day and week grids)
+    end: int,
+    lane: int,             // side by side when events overlap: which lane, of how many (the app lays them out)
+    lanes: int,
+    day: int,              // week view: 0 Monday … 6 Sunday
+    past: bool,
+    now: bool,             // happening now
+    progress: float,       // now: how far along
+    rel: string,           // "in 4 h 15 min", "now", "" (the app writes it)
+    note: string,          // the description
+    place: string,         // the location
+    editable: bool,        // the calendar lets the panel change it (HA: update supported)
+    id: string,            // the app finds the event again by it (edit, delete)
+    date: string,          // the day it is shown on: "Thu 19 Nov"
+}
+
+export struct CalDay {
+    label: string,         // "Today · Sat 14 Nov", "Tomorrow", "Mon 16 Nov"
+    events: [CalEvent],
+    free: string,          // no events that day (the app picks the text)
+}
+
+export struct CalBoard {
+    time: string,          // departure board: "18:00", "6:00P", "--:--" (the app pads and cuts every field to its cells)
+    what: string,          // 16 cells (15 with 12-hour times), capitals
+    gate: string,          // 2 cells: the calendar's code
+    status: string,        // 8 cells: DEPARTED, BOARDING, ON TIME, SUN 15 …
+    state: int,            // 0 today, 1 boarding (now), 2 departed (past), 3 a later day
+}
+
+export struct WallCell {
+    num: int,
+    other-month: bool,
+    sunday: bool,
+    today: bool,           // circled in red (drawn on when the page opens, 25.K4)
+    notes: image,          // wall calendar: the day's events written in pen (today circled), drawn by the app
+}
+
+export struct CalCell {
+    num: int,
+    other-month: bool,
+    today: bool,
+    labels: [string],      // up to two events as small labels (the app picks them), their colours, how many more
+    tints: [color],
+    more: int,
+}
+
+// A calendar of the page as the chip's picker lists it.
+export struct CalItem {
+    name: string,
+    tint: color,           // its colour on the page
+    ink: color,            // the wall calendar's pen for it
+    code: string,          // two letters
+    on: bool,              // shown on the page
+    last: bool,            // the only one shown (it cannot go)
+    cells: [string],       // the departure board's flap cells: the code (2), then the name (9), capitals
+}
+
+// The menus' arithmetic: easing and clock times in the panel's format.
+global CalM {
+    pure public function eo(u: float) -> float { return 1 - Math.pow(1 - clamp(u, 0, 1), 3); }
+    pure public function ei(u: float) -> float { return Math.pow(clamp(u, 0, 1), 3); }
+    pure public function two(v: int) -> string { return (v < 10 ? "0" : "") + v; }
+    // minutes from midnight (any day) as "09:30" / "9:30 AM"
+    pure public function hm(m: int) -> string {
+        if Clock.h24 {
+            return CalM.two(Math.floor(Math.mod(m, 1440) / 60)) + ":" + CalM.two(Math.mod(m, 60));
+        }
+        return (Math.mod(Math.floor(Math.mod(m, 1440) / 60), 12) == 0 ? 12 : Math.mod(Math.floor(Math.mod(m, 1440) / 60), 12)) + ":" + CalM.two(Math.mod(m, 60))
+            + (Math.mod(m, 1440) < 720 ? " AM" : " PM");
+    }
+    // a little noise from two numbers (0 … 1): the boarding pass's bars
+    pure public function noise(a: float, b: float) -> float {
+        return Math.abs(Math.sin((a * 12.9898 + b * 78.233) * 1rad) * 43758.5453) - Math.floor(Math.abs(Math.sin((a * 12.9898 + b * 78.233) * 1rad) * 43758.5453));
+    }
+}
+
+// ---------------------------------------------------------------- shared parts of the looks
+
+// Split-flap cells of the departure board (13 px pitch, 26 px high), one character each. A flip turns every changed
+// cell twice (2 × 120 ms, a random character between, spec 12.6), the cells 40 ms apart from the left.
+component Flap inherits Rectangle {
+    in property <[string]> chars;
+    in property <int> first;               // the field's first character in `chars`
+    in property <int> cells;
+    in property <color> ink: #ffd23f;
+    in property <float> t: 100000;         // ms since this field's flip began
+    in property <[string]> from;           // the characters before the flip (none: blank)
+    in property <int> seed;
+    property <[string]> abc: ["A", "B", "C", "D", "E", "F", "G", "H", "J", "K", "L", "M", "N", "P", "R", "S", "T", "U", "V", "W",
+        "X", "Y", "Z", "0", "1", "2", "3", "4", "5", "6", "7", "8", "9"];
+    width: root.cells * 13px - 1px;
+    height: 26px;
+    for i in root.cells: cell := Rectangle {
+        property <string> ch: root.first + i < root.chars.length ? root.chars[root.first + i] : " ";
+        property <string> was: i < root.from.length ? root.from[i] : " ";
+        property <float> tt: root.t - i * 40;
+        property <bool> flipping: cell.ch != cell.was && cell.tt < 240;
+        property <float> q: Math.min(4, Math.max(0, cell.tt / 60));
+        property <float> qf: cell.q - Math.floor(cell.q);
+        property <float> sy: !cell.flipping || cell.tt <= 0 ? 1 : Math.mod(Math.floor(cell.q), 2) == 0 ? 1 - 0.92 * cell.qf : 0.08 + 0.92 * cell.qf;
+        property <string> shown: !cell.flipping ? cell.ch : cell.tt < 60 ? cell.was : cell.tt < 180 ? root.abc[Math.mod(root.seed * 7 + i * 11, 33)] : cell.ch;
+        x: i * 13px; y: 0; width: 12px; height: 26px;
+        Rectangle { border-radius: 2px; background: #1c1c1f; }
+        Rectangle { y: 0; height: 13px; border-top-left-radius: 2px; border-top-right-radius: 2px; background: #262629; }
+        Rectangle { y: 13px - 13px * cell.sy; height: 26px * cell.sy; clip: true;
+            Text { x: 0; y: -(13px - 13px * cell.sy); width: 12px; height: 26px; text: cell.shown; font-family: "DejaVu Sans Mono"; font-size: 17px;
+                font-weight: 700; color: root.ink; horizontal-alignment: center; vertical-alignment: center; } }
+        Rectangle { y: 12px; height: 1px; background: #000000d9; }
+    }
+}
+
+// The wall calendar's red pushpin.
+component Pin inherits Rectangle {
+    in property <float> k: 1;              // pressing in: 1.3 → 1
+    width: 18px; height: 18px;
+    Rectangle { x: (parent.width - self.width) / 2 + 1px; y: (parent.height - self.height) / 2 + 3px; width: 18px * root.k; height: self.width;
+        border-radius: self.width / 2; background: #00000059; }
+    Rectangle { x: (parent.width - self.width) / 2; y: (parent.height - self.height) / 2; width: 18px * root.k; height: self.width;
+        border-radius: self.width / 2; background: #d32f2f;
+        Rectangle { x: parent.width * 0.2; y: parent.height * 0.16; width: parent.width * 0.36; height: self.width; border-radius: self.width / 2; background: #ff9c90; }
+        Rectangle { x: parent.width * 0.5; y: parent.height * 0.55; width: parent.width * 0.4; height: self.width; border-radius: self.width / 2; background: #8e1b1b80; } }
+}
+
+// The tear-off pad's torn top edge (7 px, the paper's colour), drawn above a slip.
+component TornEdge inherits Rectangle {
+    in property <color> paper: #fbfaf5;
+    height: 7px;
+    clip: true;
+    Path { x: 0; y: 0; width: 456px; height: 7px; viewbox-width: 456; viewbox-height: 7; fill: root.paper;
+        commands: "M 0 7 L 0 4 L 4 1 L 8 5 L 12 3 L 16 1 L 20 5 L 24 3 L 28 1 L 32 5 L 36 3 L 40 1 L 44 5 L 48 3 L 52 1 L 56 5 L 60 3 L 64 1 L 68 5 L 72 3 L 76 1 L 80 5 L 84 3 L 88 1 L 92 5 L 96 3 L 100 1 L 104 5 L 108 3 L 112 1 L 116 5 L 120 3 L 124 1 L 128 5 L 132 3 L 136 1 L 140 5 L 144 3 L 148 1 L 152 5 L 156 3 L 160 1 L 164 5 L 168 3 L 172 1 L 176 5 L 180 3 L 184 1 L 188 5 L 192 3 L 196 1 L 200 5 L 204 3 L 208 1 L 212 5 L 216 3 L 220 1 L 224 5 L 228 3 L 232 1 L 236 5 L 240 3 L 244 1 L 248 5 L 252 3 L 256 1 L 260 5 L 264 3 L 268 1 L 272 5 L 276 3 L 280 1 L 284 5 L 288 3 L 292 1 L 296 5 L 300 3 L 304 1 L 308 5 L 312 3 L 316 1 L 320 5 L 324 3 L 328 1 L 332 5 L 336 3 L 340 1 L 344 5 L 348 3 L 352 1 L 356 5 L 360 3 L 364 1 L 368 5 L 372 3 L 376 1 L 380 5 L 384 3 L 388 1 L 392 5 L 396 3 L 400 1 L 404 5 L 408 3 L 412 1 L 416 5 L 420 3 L 424 1 L 428 5 L 432 3 L 436 1 L 440 5 L 444 3 L 448 1 L 452 5 L 456 3 L 456 7 Z"; }
+}
+
+// A ruled index card's lines (blue rules, the red one under the head).
+component Rules inherits Rectangle {
+    in property <length> red-y: 48px;      // < 0: no red rule
+    in property <length> first: 49px;
+    in property <length> pitch: 28px;
+    for i in 40: Rectangle { x: 0; y: root.first + i * root.pitch; width: root.width; height: 1px; visible: self.y < root.height; background: #c3d9ef; }
+    if root.red-y >= 0: Rectangle { x: 0; y: root.red-y; width: root.width; height: 1.5px; background: #e57373; }
+}
+
+// A 28.7 button with a glyph in front (the details' Edit with the pencil), in the look's colours.
+component CalButton inherits Rectangle {
+    in property <string> text;
+    in property <string> icon;
+    in property <color> ground: Theme.text;
+    in property <color> ink: Theme.background;
+    in property <string> font;
+    in property <length> size: 16px;
+    in property <length> radius: 999px;
+    callback clicked;
+    height: 48px;
+    width: bl.preferred-width + 40px;
+    property <float> sq: ta.pressed ? 0.96 : 1;
+    animate sq { duration: ta.pressed ? 60ms : 180ms; easing: cubic-bezier(0.34, 1.6, 0.64, 1); }
+    Rectangle {
+        x: root.width * (1 - root.sq) / 2; y: root.height * (1 - root.sq) / 2; width: root.width * root.sq; height: root.height * root.sq;
+        border-radius: Math.min(self.height / 2, root.radius);
+        background: ta.pressed ? root.ground.with-alpha(0.8) : root.ground;
+        bl := HorizontalLayout { alignment: center; spacing: 8px;
+            if root.icon != "": Icon { text: root.icon; font-size: 18px; color: root.ink; }
+            Text { text: root.text; font-family: root.font; font-size: root.size; font-weight: 600; color: root.ink; vertical-alignment: center; } }
+    }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// One drum of the agreed time block (spec 35: 40 px rows, the middle one picked): a drag moves a row per 40 px, a
+// tap on the upper or lower row steps one; a step glides (the rows slide home in 180 ms).
+component CalDrum inherits Rectangle {
+    in property <int> n;                   // values 0 … n − 1
+    in property <int> value;
+    in property <int> kind;                // 0 hours (24), 1 hours (1–12), 2 minutes (5-minute steps), 3 AM / PM
+    in property <color> ink;
+    in property <string> font;
+    in property <length> big: 38px;
+    in property <length> small: 24px;
+    callback set(int);
+    width: 96px; height: 120px;
+    clip: true;
+    property <int> base;
+    property <int> dir;
+    property <duration> g0;
+    property <bool> gliding;
+    property <int> last;
+    init => { root.last = root.value; }
+    changed value => {
+        root.dir = Math.mod(root.value - root.last + root.n, root.n) <= root.n / 2 ? 1 : -1;
+        root.last = root.value;
+        root.g0 = animation-tick();
+        root.gliding = true;
+    }
+    Timer { interval: 180ms; running: root.gliding; triggered => { root.gliding = false; } }
+    property <length> off: root.gliding ? root.dir * 40px * (1 - CalM.eo((animation-tick() - root.g0) / 180ms)) : 0px;
+    pure function label(v: int) -> string {
+        return root.kind == 0 ? "" + v : root.kind == 1 ? (v == 0 ? "12" : "" + v) : root.kind == 2 ? CalM.two(v * 5) : (v == 0 ? "AM" : "PM");
+    }
+    for r in [-2, -1, 0, 1, 2]: Text {
+        property <int> v: Math.mod(root.value + r + root.n * 4, root.n);
+        x: 0; y: 40px + r * 40px + root.off; width: root.width; height: 40px;
+        text: root.label(self.v);
+        font-family: root.font; font-size: r == 0 ? root.big : root.small; font-weight: r == 0 ? (root.font == "Caveat" ? 700 : 600) : (root.font == "Caveat" ? 600 : 500);
+        color: r == 0 ? root.ink : root.ink.with-alpha(0.35); horizontal-alignment: center; vertical-alignment: center;
+    }
+    TouchArea {
+        pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.base = root.value; } }
+        moved => { root.set(Math.mod(root.base + Math.round((self.pressed-y - self.mouse-y) / 40px) + root.n * 4, root.n)); }
+        clicked => {
+            let k = self.mouse-y < 40px ? -1 : self.mouse-y > 80px ? 1 : 0;
+            if k != 0 { root.set(Math.mod(root.value + k + root.n, root.n)); }
+        }
+    }
+}
+
+// The drum block under a time row: hours, minutes in 5-minute steps (12-hour: hours 1–12 and an AM / PM drum).
+component CalTimeDrums inherits Rectangle {
+    in property <int> minutes;             // the time shown, minutes from the day's midnight (may pass 24 h)
+    in property <color> ink;
+    in property <string> font;
+    in property <length> big: 38px;
+    in property <length> small: 24px;
+    callback set(int);                     // the new time of day (0 … 1439)
+    height: 120px;
+    property <int> m: Math.mod(root.minutes, 1440);
+    property <int> h: Math.floor(root.m / 60);
+    property <int> mm: Math.mod(root.m, 60);
+    property <length> w: Clock.h24 ? 96px + 22px + 96px : 96px + 22px + 96px + 8px + 70px;
+    Rectangle { x: 70px; y: 40px; width: root.width - 140px; height: 40px; border-radius: 14px; background: root.ink.with-alpha(0.07); }
+    if Clock.h24: CalDrum { x: (root.width - root.w) / 2; y: 0; n: 24; kind: 0; value: root.h; ink: root.ink; font: root.font; big: root.big; small: root.small;
+        set(v) => { root.set(v * 60 + root.mm); } }
+    if !Clock.h24: CalDrum { x: (root.width - root.w) / 2; y: 0; n: 12; kind: 1; value: Math.mod(root.h, 12); ink: root.ink; font: root.font; big: root.big; small: root.small;
+        set(v) => { root.set((v + (root.h >= 12 ? 12 : 0)) * 60 + root.mm); } }
+    Text { x: (root.width - root.w) / 2 + 96px; y: 40px; width: 22px; height: 40px; text: ":"; font-family: root.font; font-size: root.font == "Caveat" ? 34px : 34px;
+        font-weight: root.font == "Caveat" ? 700 : 600; color: root.ink; horizontal-alignment: center; vertical-alignment: center; }
+    CalDrum { x: (root.width - root.w) / 2 + 118px; y: 0; n: 12; kind: 2; value: Math.mod(Math.round(root.mm / 5), 12); ink: root.ink; font: root.font;
+        big: root.big; small: root.small;
+        set(v) => { root.set(root.h * 60 + v * 5); } }
+    if !Clock.h24: CalDrum { x: (root.width - root.w) / 2 + 222px; y: 0; width: 70px; n: 2; kind: 3; value: root.h >= 12 ? 1 : 0; ink: root.ink; font: root.font;
+        big: 22px; small: 18px;
+        set(v) => { root.set((Math.mod(root.h, 12) + (v == 1 ? 12 : 0)) * 60 + root.mm); } }
+}
+
+// A look's colours and letters for the controls inside its menus (spec 32.0 tokens).
+struct CalSkin {
+    surf: color, raised: color, line: color, text: color, muted: color, faint: color, on-text: color, menu: color, pressed: color,
+    accent: color, primary: color, on-primary: color, font: string, size: length, weight: int, radius: length, label-font: string,
+    label-size: length, label-weight: int, label-color: color, caps: bool,
+}
+
+// ---------------------------------------------------------------- the edit form (the same rows in every look)
+component CalEditForm inherits VerticalLayout {
+    in property <int> look;
+    in property <CalSkin> sk;
+    in property <string> title;
+    in property <string> day;
+    in property <bool> typing;
+    in property <bool> can-delete;
+    in-out property <bool> allday;
+    in-out property <int> start-min;
+    in-out property <int> end-min;
+    in-out property <int> open;            // 0 none, 1 the start's drums, 2 the end's
+    property <[string]> labels: root.look == 1 ? ["DATE", "ALL DAY", "DEPARTS", "ARRIVES"] : root.look == 2 ? ["DAY", "ALL DAY", "FROM", "UNTIL"]
+        : root.look == 3 ? ["day", "all day", "from", "to"] : ["Day", "All day", "Starts", "Ends"];
+    property <string> vfont: root.look == 2 || root.look == 3 ? "Caveat" : "";
+    property <length> vsize: root.look == 2 ? 21px : root.look == 3 ? 22px : 15px;
+    property <int> vweight: root.look == 2 || root.look == 3 ? 700 : 600;
+    property <color> pen: root.look == 2 ? #1b348a : root.sk.text;
+    spacing: 8px;
+    alignment: start;
+    function set-start(m: int) {
+        let len = root.end-min - root.start-min;
+        root.start-min = m;
+        root.end-min = m + Math.max(5, len);
+    }
+    function set-end(m: int) {
+        let base = Math.floor(root.end-min / 1440) * 1440;
+        root.end-min = Math.max(root.start-min + 5, base + m);
+    }
+    // the title: a tap opens the keyboard (the form waits above it)
+    Rectangle {
+        min-height: 46px;
+        border-radius: Math.min(14px, root.sk.radius); background: root.sk.raised;
+        border-width: root.typing ? 2px : 1px; border-color: root.typing ? root.sk.accent : root.sk.line;
+        HorizontalLayout { padding-left: 14px; padding-right: 14px; padding-top: 8px; padding-bottom: 8px; spacing: 10px;
+            Icon { width: 20px; text: "\u{F03EB}"; font-size: 18px; color: root.sk.muted; vertical-alignment: center; }
+            Text { height: self.preferred-height; text: root.title + (root.typing ? "|" : ""); font-family: root.look == 2 || root.look == 3 ? "Caveat" : "";
+                font-size: root.look == 2 ? 24px : root.look == 3 ? 25px : 17px; font-weight: root.look == 1 || root.look == 2 || root.look == 3 ? 700 : 400;
+                color: root.look == 2 ? #1b348a : root.sk.text; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; } }
+        TouchArea { clicked => { Act.act("cal.title", ""); } }
+    }
+    // the day: ‹ › step a day
+    Rectangle { height: 48px; border-radius: Math.min(14px, root.sk.radius); background: root.sk.raised;
+        Text { x: 14px; y: 0; height: parent.height; text: root.labels[0]; font-family: root.sk.label-font; font-size: root.sk.label-size; font-weight: root.sk.label-weight;
+            letter-spacing: root.sk.caps ? 1.4px : 0px; color: root.sk.label-color; vertical-alignment: center; }
+        HorizontalLayout { x: parent.width - 8px - self.width; width: self.preferred-width; height: parent.height; alignment: end;
+            Rectangle { width: 44px; Icon { text: "\u{F0141}"; font-size: 22px; color: root.sk.text; }
+                TouchArea { clicked => { Act.act("cal.edit-day", "-1"); } } }
+            Text { min-width: root.vfont == "Caveat" ? 112px : 96px; text: root.day; font-family: root.vfont; font-size: root.vsize; font-weight: root.vweight; color: root.pen;
+                horizontal-alignment: center; vertical-alignment: center; }
+            Rectangle { width: 44px; Icon { text: "\u{F0142}"; font-size: 22px; color: root.sk.text; }
+                TouchArea { clicked => { Act.act("cal.edit-day", "1"); } } } } }
+    // all day (it hides the times)
+    Rectangle { height: 48px; border-radius: Math.min(14px, root.sk.radius); background: root.sk.raised;
+        Text { x: 14px; y: 0; height: parent.height; text: root.labels[1]; font-family: root.sk.label-font; font-size: root.sk.label-size; font-weight: root.sk.label-weight;
+            letter-spacing: root.sk.caps ? 1.4px : 0px; color: root.sk.label-color; vertical-alignment: center; }
+        Toggle { x: parent.width - 8px - self.width; y: 8px; on: root.allday; tk-raised: root.sk.pressed; tk-line: root.sk.line; tk-knob: root.sk.faint;
+            tk-knob-on: root.sk.surf; tk-accent: root.sk.accent;
+            toggled => { root.allday = !root.allday; root.open = 0; } } }
+    // the start and the end: a tap opens the drums under the row
+    for r[k] in [1, 2]: VerticalLayout { spacing: 8px;
+        visible: !root.allday; height: root.allday ? 0px : self.preferred-height;
+        Rectangle { height: root.allday ? 0px : 48px; border-radius: Math.min(14px, root.sk.radius); background: root.sk.raised;
+            Text { x: 14px; y: 0; height: parent.height; text: root.labels[r + 1]; font-family: root.sk.label-font; font-size: root.sk.label-size;
+                font-weight: root.sk.label-weight; letter-spacing: root.sk.caps ? 1.4px : 0px; color: root.sk.label-color; vertical-alignment: center; }
+            Rectangle { x: parent.width - 8px - self.width; y: 8px; height: 32px; width: pv.preferred-width + 34px; border-radius: Math.min(16px, root.sk.radius);
+                background: root.sk.pressed; border-width: root.open == r ? 2px : 0px; border-color: #FF4A1C;
+                pv := Text { x: 14px; width: self.preferred-width + 6px; height: parent.height; text: CalM.hm(r == 1 ? root.start-min : root.end-min);
+                    font-family: root.vfont; font-size: root.vsize; font-weight: root.vweight; color: root.pen; vertical-alignment: center; } }
+            TouchArea { clicked => { root.open = root.open == r ? 0 : r; } } }
+        if root.open == r && !root.allday: CalTimeDrums {
+            minutes: r == 1 ? root.start-min : root.end-min; ink: root.look == 2 ? #1d1d20 : root.sk.text; font: root.look == 3 ? "Caveat" : "";
+            big: root.look == 3 ? 40px : 38px;
+            set(m) => { if r == 1 { root.set-start(m); } else { root.set-end(m); } } }
+    }
+    // Delete (a short undo strip follows) and Save; a tap beside the form leaves without saving
+    HorizontalLayout { padding-top: 6px; spacing: 10px; alignment: space-between;
+        if root.can-delete: TextButton { width: 120px; text: root.sk.caps ? "DELETE" : "Delete"; danger: true; tk-raised: root.sk.raised; tk-pressed: root.sk.pressed;
+            tk-font: root.sk.font; tk-font-size: root.sk.size; tk-font-weight: Math.max(600, root.sk.weight); tk-radius: root.sk.radius;
+            clicked => { Act.act("cal.delete", ""); } }
+        if !root.can-delete: Rectangle { }
+        TextButton { width: 120px; text: root.sk.caps ? "SAVE" : "Save"; primary: true; tk-text: root.sk.primary; tk-on-text: root.sk.on-primary;
+            tk-font: root.sk.font; tk-font-size: root.sk.size; tk-font-weight: Math.max(600, root.sk.weight); tk-radius: root.sk.radius;
+            clicked => { Act.act("cal.save", ""); } }
+    }
+}
+
+// ---------------------------------------------------------------- the menus
+export component CalMenus inherits Rectangle {
+    in property <int> look;                // 0 plain, 1 departure board, 2 tear-off, 3 wall calendar
+    in property <int> view;                // the plain look's view: 0 agenda, 1 day, 2 week, 3 month, 4 three days
+    in property <[CalItem]> cals;
+    in property <[string]> clock-cells;    // the board's clock in its cells
+    in property <string> desk-line;        // "DESK CALENDAR 2026 · 365 PAGES"
+    in property <bool> picker;
+    in property <bool> settings;
+    in property <bool> day-open;
+    in property <string> day-title;        // "Today · Thu 19 Nov", "Monday, 23 November"
+    in property <string> day-caps;         // "TODAY · THURSDAY 19 NOVEMBER"
+    in property <string> day-short;        // "Thu 19 Nov"
+    in property <bool> day-week;           // the board's week of departures
+    in property <[CalDay]> days;
+    in property <string> day-free;
+    in property <length> src-x;            // the tapped day (a list grows out of it; the wall card keeps it in sight)
+    in property <length> src-y;
+    in property <length> src-w;
+    in property <length> src-h;
+    in-out property <bool> detail;
+    in-out property <CalEvent> ev;
+    in-out property <string> when;         // "Today · 18:00–20:15"
+    in property <bool> edit;
+    in property <string> edit-title;
+    in property <string> edit-day;
+    in property <string> edit-code;
+    in property <string> edit-cal;
+    in property <color> edit-tint;
+    in property <bool> edit-typing;
+    in property <bool> edit-can-delete;
+    in-out property <bool> edit-allday;
+    in-out property <int> edit-start-min;
+    in-out property <int> edit-end-min;
+    in-out property <int> edit-open;
+    in property <int> kb-layer;
+    in property <int> kb-layout;
+    in property <bool> undo;
+    in property <string> undo-text;
+    width: 480px; height: 480px;
+
+    // the looks' colours for the controls (tokens of spec 32.0)
+    property <CalSkin> sk-plain: { surf: Theme.surface, raised: Theme.surface-raised, line: Theme.outline, text: Theme.text, muted: Theme.muted, faint: Theme.faint,
+        on-text: Theme.background, menu: Theme.surface-raised, pressed: Theme.surface-pressed, accent: Theme.accent, primary: Theme.text, on-primary: Theme.background,
+        font: "", size: 15px, weight: 500, radius: 999px, label-font: "", label-size: 15px, label-weight: 400, label-color: Theme.text, caps: false };
+    property <CalSkin> sk-board: { surf: #0b0b0c, raised: #1a1a1d, line: #2c2c31, text: #ffd23f, muted: #9a9aa0, faint: #6a6a70, on-text: #0b0b0c, menu: #141416,
+        pressed: #26262a, accent: #ffd23f, primary: #ffd23f, on-primary: #0b0b0c, font: "DejaVu Sans Mono", size: 15px, weight: 700, radius: 4px,
+        label-font: "", label-size: 10px, label-weight: 700, label-color: #8a8a90, caps: true };
+    property <CalSkin> sk-pass: { surf: #f7f5ef, raised: #0000000f, line: #0000002e, text: #15161a, muted: #6b6d73, faint: #8b8d93, on-text: #f7f5ef, menu: #f7f5ef,
+        pressed: #0000001f, accent: #15161a, primary: #15161a, on-primary: #f7f5ef, font: "", size: 15px, weight: 600, radius: 999px,
+        label-font: "", label-size: 11px, label-weight: 700, label-color: #6b6d73, caps: true };
+    property <CalSkin> sk-card: { surf: #c3bcac, raised: #2a251c1f, line: #2a251c4d, text: #2a251c, muted: #4d463a, faint: #6b6354, on-text: #ece6d8, menu: #d9d2c3,
+        pressed: #2a251c33, accent: #2a251c, primary: #2a251c, on-primary: #ece6d8, font: "", size: 15px, weight: 600, radius: 999px,
+        label-font: "", label-size: 11px, label-weight: 700, label-color: #3a342a, caps: true };
+    property <CalSkin> sk-appt: { surf: #fffdf7, raised: #1d1d200f, line: #1d1d2033, text: #1d1d20, muted: #6f6d66, faint: #8a8880, on-text: #fffdf7, menu: #fbfaf5,
+        pressed: #1d1d201f, accent: #2a251c, primary: #2a251c, on-primary: #ece6d8, font: "", size: 15px, weight: 600, radius: 999px,
+        label-font: "", label-size: 11px, label-weight: 700, label-color: #6f6d66, caps: true };
+    property <CalSkin> sk-wall: { surf: #fdfdfb, raised: #1b348a12, line: #1b348a4d, text: #1b348a, muted: #56565c, faint: #8a8a90, on-text: #fdfdfb, menu: #fdfdfb,
+        pressed: #1b348a24, accent: #1b348a, primary: #1b348a, on-primary: #fdfdfb, font: "Caveat", size: 21px, weight: 700, radius: 999px,
+        label-font: "Caveat", label-size: 22px, label-weight: 600, label-color: #56565c, caps: false };
+    property <[string]> open-cells: ["O", "P", "E", "N", " ", " "];
+    property <[string]> closed-cells: ["C", "L", "O", "S", "E", "D"];
+    property <[string]> look-names: [Words.line("ui.looks.calendar.0"), Words.line("ui.looks.calendar.1"), Words.line("ui.looks.calendar.2"),
+        Words.line("ui.looks.calendar.3")];
+    property <[string]> look-caps: [root.look-names[0].to-uppercase(), root.look-names[1].to-uppercase(), root.look-names[2].to-uppercase(),
+        root.look-names[3].to-uppercase()];
+
+    // each menu keeps the look it opened in while it leaves (a look change reopens the settings in the new one)
+    property <int> pk-look: root.look;
+    property <int> st-look: root.look;
+    property <int> dy-look: root.look;
+    property <int> dt-look: root.look;
+    changed picker => { if root.picker { root.pk-look = root.look; } }
+    changed settings => { if root.settings { root.st-look = root.look; } }
+    changed day-open => { if root.day-open { root.dy-look = root.look; } }
+    changed detail => { if root.detail { root.dt-look = root.look; } }
+    // the plain look's view: picked, the pill moves, then the page changes (180 ms)
+    property <int> pending-view;
+    Timer { interval: 180ms; running: root.pending-view >= 0 && root.view-wait; triggered => { root.view-wait = false; Act.act("cal.view", root.pending-view); } }
+    property <bool> view-wait;
+    // a gate that cannot close shakes (at least one calendar stays on)
+    property <int> shake-i: -1;
+    property <duration> shake-t0;
+    Timer { interval: 300ms; running: root.shake-i >= 0; triggered => { root.shake-i = -1; } }
+    property <float> shake-t: root.shake-i >= 0 ? (animation-tick() - root.shake-t0) / 1ms : 300;
+    property <length> shake-x: 4px * Math.sin(root.shake-t / 300 * 720deg) * (1 - root.shake-t / 300);
+    function toggle(i: int, item: CalItem) {
+        if item.last && item.on {
+            root.shake-t0 = animation-tick();
+            root.shake-i = i;
+        } else {
+            Act.act("cal.toggle", i);
+        }
+    }
+
+    // ================================================================ the chip's picker
+    pick-host := MenuHost {
+        open: root.picker; kind: 0;
+        menu-w: root.pk-look == 0 ? 340px : root.pk-look == 1 ? 300px : 272px;
+        need: 300px;
+        in-ms: root.pk-look == 0 ? 140ms : root.pk-look == 1 ? 144ms + (1 + 3 * root.cals.length) * 50ms + 9 * 40ms + 260ms
+            : root.pk-look == 2 ? 620ms : 260ms;
+        out-ms: root.pk-look == 0 ? 100ms : root.pk-look == 1 ? 160ms : root.pk-look == 2 ? 140ms : 130ms;
+        close => { Act.act("cal.picker-close", ""); }
+        property <bool> leaving: !root.picker;
+        // plain: the brand card with the view and the calendars, from the chip's corner (140 ms, 0.96 → 1, a fade)
+        if root.pk-look == 0: Rectangle {
+            property <float> u: pick-host.leaving ? 1 : CalM.eo(pick-host.t-in / 140);
+            x: 124px; y: 48px; width: 340px; height: Math.min(pl.preferred-height, 420px);
+            opacity: pick-host.leaving ? 1 - pick-host.t-out / 100 : Math.min(1, self.u * 1.6);
+            transform-scale-x: 0.96 + 0.04 * self.u; transform-scale-y: 0.96 + 0.04 * self.u; transform-origin: { x: self.width, y: 0px };
+            border-radius: 14px; background: Theme.surface-raised; border-width: 1px; border-color: Theme.outline;
+            drop-shadow-blur: 32px; drop-shadow-offset-y: 12px; drop-shadow-color: #00000073;
+            TouchArea { }
+            Flickable { width: parent.width; height: parent.height; content-height: pl.preferred-height; interactive: pl.preferred-height > self.height;
+                pl := VerticalLayout { width: 340px; padding: 6px; spacing: 0px; alignment: start;
+                    Rectangle { height: 33px; Text { x: 10px; y: 8px; height: 19px; text: "View"; font-size: 13px; font-weight: 600; color: Theme.muted; vertical-alignment: center; } }
+                    Rectangle { height: 50px;
+                        Segmented { x: 6px; y: 2px; width: parent.width - 12px; options: ["Agenda", "Day", "3 days", "Week", "Month"];
+                            selected: root.view-wait ? (root.pending-view == 0 ? 0 : root.pending-view == 1 ? 1 : root.pending-view == 4 ? 2 : root.pending-view == 2 ? 3 : 4)
+                                : root.view == 0 ? 0 : root.view == 1 ? 1 : root.view == 4 ? 2 : root.view == 2 ? 3 : 4;
+                            picked(i) => { root.pending-view = i == 0 ? 0 : i == 1 ? 1 : i == 2 ? 4 : i == 3 ? 2 : 3; root.view-wait = true; } } }
+                    Rectangle { height: 33px; Text { x: 10px; y: 8px; height: 19px; text: "Calendars"; font-size: 13px; font-weight: 600; color: Theme.muted; vertical-alignment: center; } }
+                    for c[i] in root.cals: Rectangle {
+                        height: max(52px, pr.preferred-height);
+                        HorizontalLayout { x: i == root.shake-i ? root.shake-x : 0px; padding-left: 10px; padding-right: 12px; spacing: 10px;
+                            VerticalLayout { alignment: center; Rectangle { width: 12px; height: 12px; border-radius: 6px; background: c.tint; } }
+                            pr := Text { text: c.name; font-size: 15px; font-weight: c.on ? 600 : 400; color: Theme.text; wrap: word-wrap; vertical-alignment: center;
+                                horizontal-stretch: 1; min-height: 52px; }
+                            VerticalLayout { alignment: center; CheckBox { checked: c.on; } } }
+                        TouchArea { clicked => { root.toggle(i, c); } } }
+                }
+            }
+        }
+        // departure board: a small flap board on two rods; GATES and the board's clock; each calendar a gate, OPEN or CLOSED
+        if root.pk-look == 1: pbc := Rectangle {
+            property <length> h: Math.min(pb.preferred-height, 420px);
+            property <float> jy: (self.h / 1px + 48) * (1 - Jelly.edge(pick-host.t-in, 60, 220));
+            property <length> dy: pick-host.leaving ? -(self.h + 48px) * CalM.ei(pick-host.t-out / 160) : (self.jy > 0 ? -self.jy * 1px : Jelly.cap(-self.jy, 2) * 1px);
+            property <float> ft: pick-host.leaving ? 100000 : pick-host.t-in - 144;
+            x: 164px; y: 48px + self.dy; width: 300px; height: self.h;
+            for rx in [30px, 266px]: Rectangle { x: rx; y: -60px; width: 4px; height: 60px; border-radius: 1px; background: #8f9095;
+                Rectangle { x: 0; width: 1px; background: #4a4b50; } Rectangle { x: 3px; width: 1px; background: #55565b; } }
+            Rectangle { border-radius: 6px; background: #0b0b0c; border-width: 1px; border-color: #2a2a2e;
+                drop-shadow-blur: 36px; drop-shadow-offset-y: 18px; drop-shadow-color: #000000b3; }
+            TouchArea { }
+            Flickable { width: parent.width; height: parent.height; content-height: pb.preferred-height; interactive: pb.preferred-height > self.height;
+                pb := VerticalLayout { width: 300px; padding-left: 12px; padding-right: 12px; padding-top: 10px; padding-bottom: 12px; spacing: 0px; alignment: start;
+                    Rectangle { height: 41px;
+                        Text { x: 0; y: 0; height: 26px; text: "GATES"; font-size: 15px; font-weight: 800; letter-spacing: 3px; color: #f4f4f2; vertical-alignment: center; }
+                        Flap { x: parent.width - self.width; y: 0; chars: root.clock-cells; cells: root.clock-cells.length; ink: #f4f4f2; t: pbc.ft; seed: 3; }
+                        Rectangle { x: 0; y: 34px; width: parent.width; height: 1px; background: #232326; } }
+                    for c[i] in root.cals: gate := Rectangle {
+                        height: 40px;
+                        property <bool> on: c.on;
+                        property <duration> tg0;
+                        property <bool> tg;
+                        changed on => { gate.tg0 = animation-tick(); gate.tg = true; }
+                        Timer { interval: 500ms; running: gate.tg; triggered => { gate.tg = false; } }
+                        property <float> tgt: gate.tg ? (animation-tick() - gate.tg0) / 1ms : 100000;
+                        property <float> f0: pick-host.leaving ? 100000 : pick-host.t-in - 144 - (1 + 3 * i) * 50;
+                        property <color> dimmed: #ffd23f66;
+                        HorizontalLayout { x: i == root.shake-i ? root.shake-x : 0px; y: 7px; height: 26px; spacing: 10px; alignment: start;
+                            Flap { chars: c.cells; first: 0; cells: 2; ink: c.on ? #ffd23f : gate.dimmed; t: gate.f0; seed: i; }
+                            Flap { chars: c.cells; first: 2; cells: 9; ink: c.on ? #ffd23f : gate.dimmed; t: gate.f0 - 50; seed: i + 5; }
+                            Flap { chars: c.on ? root.open-cells : root.closed-cells; cells: 6; ink: c.on ? #4cd964 : gate.dimmed;
+                                t: gate.tg ? gate.tgt : gate.f0 - 100; from: gate.tg ? (c.on ? root.closed-cells : root.open-cells) : []; seed: i + 9; } }
+                        TouchArea { clicked => { root.toggle(i, c); } } }
+                }
+            }
+        }
+        // tear-off: a slip torn from the pad (it falls into place with a sway); boxes ticked in blue pen
+        if root.pk-look == 2: Rectangle {
+            property <float> k: Jelly.edge(pick-host.t-in, 80, 280);
+            x: 192px; y: 48px + (pick-host.leaving ? -14px * CalM.ei(pick-host.t-out / 140) : -22px * (1 - self.k));
+            width: 272px; height: Math.min(pt.preferred-height, 420px);
+            opacity: pick-host.leaving ? 1 - pick-host.t-out / 140 : Math.min(1, pick-host.t-in / 80);
+            transform-rotation: pick-host.leaving ? 0deg : (-3 * (1 - self.k) + 1.2 * Math.sin(360deg * pick-host.t-in / 300) * Math.pow(2.71828, -pick-host.t-in / 200)) * 1deg;
+            transform-origin: { x: self.width / 2, y: 0px };
+            TornEdge { x: 0; y: -6px; width: parent.width; paper: #fbfaf5; }
+            Rectangle { background: #fbfaf5; border-bottom-left-radius: 3px; border-bottom-right-radius: 3px;
+                drop-shadow-blur: 30px; drop-shadow-offset-y: 14px; drop-shadow-color: #0000008c; }
+            TouchArea { }
+            Flickable { width: parent.width; height: parent.height; content-height: pt.preferred-height; interactive: pt.preferred-height > self.height;
+                pt := VerticalLayout { width: 272px; padding-left: 16px; padding-right: 16px; padding-top: 16px; padding-bottom: 12px; spacing: 0px; alignment: start;
+                    Rectangle { height: 31px;
+                        Text { width: parent.width; height: 18px; text: "CALENDARS"; font-size: 13px; font-weight: 800; letter-spacing: 3px; color: #c8202a;
+                            horizontal-alignment: center; vertical-alignment: center; }
+                        Rectangle { y: 26px; height: 1px; background: #d9d6cc; } }
+                    for c[i] in root.cals: slip := Rectangle {
+                        height: max(44px, tn.preferred-height + 12px);
+                        property <bool> on: c.on;
+                        property <duration> t0;
+                        property <bool> drawing;
+                        changed on => { slip.t0 = animation-tick(); slip.drawing = true; }
+                        Timer { interval: 200ms; running: slip.drawing; triggered => { slip.drawing = false; } }
+                        property <float> tick: slip.drawing ? (c.on ? CalM.eo((animation-tick() - slip.t0) / 180ms) : 1 - CalM.eo((animation-tick() - slip.t0) / 180ms)) : (c.on ? 1 : 0);
+                        HorizontalLayout { x: i == root.shake-i ? root.shake-x : 0px; padding-left: 4px; padding-right: 4px; spacing: 10px;
+                            VerticalLayout { alignment: center;
+                                Rectangle { width: 20px; height: 20px; border-width: 1.5px; border-color: #1d1d20; border-radius: 2px;
+                                    if slip.tick > 0.01: Path { x: -2px; y: -5px; width: 26px; height: 26px; viewbox-width: 24; viewbox-height: 24; fill: transparent;
+                                        stroke: #1b348a; stroke-width: 2.6px; stroke-line-cap: round; stroke-line-join: round;
+                                        MoveTo { x: 5; y: 12.5; }
+                                        LineTo { x: 5 + 4.2 * Math.min(1, slip.tick * 2.4); y: 12.5 + 4.3 * Math.min(1, slip.tick * 2.4); }
+                                        LineTo { x: 9.2 + 9.8 * Math.max(0, slip.tick * 1.7 - 0.7); y: 16.8 - 10.3 * Math.max(0, slip.tick * 1.7 - 0.7); } } } }
+                            VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: c.tint; } }
+                            tn := Text { height: self.preferred-height; text: c.name; font-size: 15px; color: #1d1d20; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; } }
+                        TouchArea { clicked => { root.toggle(i, c); } } }
+                }
+            }
+        }
+        // wall calendar: an index card pinned on; each calendar a pen stroke in its ink; one left off is struck in pencil
+        if root.pk-look == 3: Rectangle {
+            property <float> u: CalM.eo(pick-host.t-in / 140);
+            property <float> pk: pick-host.t-in < 140 ? 1.3 : 1.3 - 0.3 * CalM.eo((pick-host.t-in - 140) / 110);
+            property <float> sc: pick-host.leaving ? 1 + 0.04 * CalM.eo(pick-host.t-out / 130) : 1.06 - 0.06 * self.u;
+            x: 188px; y: 54px; width: 272px; height: Math.min(pw.preferred-height, 410px);
+            opacity: pick-host.leaving ? 1 - pick-host.t-out / 130 : Math.min(1, pick-host.t-in / 60);
+            transform-rotation: 0.6deg; transform-scale-x: self.sc; transform-scale-y: self.sc; transform-origin: { x: self.width / 2, y: self.height / 2 };
+            Rectangle { background: #fdfdfb; border-radius: 2px; clip: true;
+                drop-shadow-blur: pick-host.t-in < 140 && !pick-host.leaving ? 28px : 12px; drop-shadow-offset-y: pick-host.t-in < 140 && !pick-host.leaving ? 18px : 5px;
+                drop-shadow-color: #00000070;
+                Rules { width: parent.width; height: parent.height; } }
+            TouchArea { }
+            Flickable { width: parent.width; height: parent.height; content-height: pw.preferred-height; interactive: pw.preferred-height > self.height;
+                pw := VerticalLayout { width: 272px; padding-left: 16px; padding-right: 16px; padding-top: 14px; padding-bottom: 12px; spacing: 0px; alignment: start;
+                    Rectangle { height: 38px; Text { x: 2px; y: 0; height: 30px; text: "Calendars"; font-family: "Caveat"; font-size: 27px; font-weight: 700; color: #c0242a;
+                        vertical-alignment: center; } }
+                    for c[i] in root.cals: line := Rectangle {
+                        height: max(42px, wn.preferred-height + 10px);
+                        property <bool> on: c.on;
+                        property <duration> t0;
+                        property <bool> striking;
+                        changed on => { line.t0 = animation-tick(); line.striking = true; }
+                        Timer { interval: 220ms; running: line.striking; triggered => { line.striking = false; } }
+                        property <float> st: line.striking ? (c.on ? 1 - CalM.eo((animation-tick() - line.t0) / 200ms) : CalM.eo((animation-tick() - line.t0) / 200ms)) : (c.on ? 0 : 1);
+                        HorizontalLayout { x: i == root.shake-i ? root.shake-x : 0px; padding-left: 2px; padding-right: 2px; spacing: 10px;
+                            opacity: 1 - 0.45 * line.st;
+                            VerticalLayout { alignment: center;
+                                Path { width: 40px; height: 12px; viewbox-width: 40; viewbox-height: 12; fill: transparent; stroke: c.ink; stroke-width: 3px; stroke-line-cap: round;
+                                    commands: "M 2 8 C 7 2 11 12 16 7 S 25 2 29 7 S 35 9 38 5"; } }
+                            wn := Text { height: self.preferred-height; text: c.name; font-family: "Caveat"; font-size: 24px; font-weight: 600; color: c.ink; wrap: word-wrap; vertical-alignment: center;
+                                horizontal-stretch: 1; } }
+                        if line.st > 0.01: Path { x: 48px + (i == root.shake-i ? root.shake-x : 0px); y: parent.height / 2 - 4px;
+                            width: (Math.min(parent.width - 54px, wn.preferred-width) + 8px) * line.st; height: 10px;
+                            viewbox-width: 100 * line.st; viewbox-height: 10; fill: transparent; stroke: #56565c; stroke-width: 2.2px; stroke-line-cap: round;
+                            commands: "M 0 6 C 30 3 60 8 100 4"; }
+                        TouchArea { clicked => { root.toggle(i, c); } } }
+                }
+            }
+            Pin { x: (parent.width - self.width) / 2; y: -7px; k: parent.pk; }
+        }
+    }
+
+    // ================================================================ the page settings (the quick shade's page row)
+    set-host := MenuHost {
+        open: root.settings; kind: 1;
+        need: 260px;
+        in-ms: root.st-look == 0 ? 140ms : root.st-look == 1 ? 144ms + 50ms + 6 * 40ms + 260ms : root.st-look == 2 ? 420ms : 260ms;
+        out-ms: root.st-look == 0 ? 100ms : root.st-look == 1 ? 160ms : root.st-look == 2 ? 180ms : 130ms;
+        close => { Act.act("cal.settings-close", ""); }
+        property <bool> leaving: !root.settings;
+        property <CalSkin> sk: root.st-look == 1 ? root.sk-board : root.st-look == 2 ? root.sk-card : root.st-look == 3 ? root.sk-wall : root.sk-plain;
+        property <float> u: CalM.eo(set-host.t-in / 140);
+        // the card itself: brand surface, the flap board, the pad's cardboard back, an index card with two pins
+        st := Rectangle {
+            property <length> h: Math.min(sl.preferred-height, root.st-look == 3 ? 410px : 420px);
+            property <float> jy: (self.h / 1px + 48) * (1 - Jelly.edge(set-host.t-in, 60, 220));
+            property <float> sw-u: CalM.eo(Math.min(1, set-host.t-in / 260));
+            property <float> sw: set-host.t-in > 260 ? 1.5 * Math.sin((set-host.t-in - 260) / 160 * 180deg) * Math.pow(2.71828, -(set-host.t-in - 260) / 90) : 0;
+            property <float> ang: set-host.leaving ? -90 * CalM.ei(set-host.t-out / 180) : -90 * (1 - self.sw-u) + self.sw;
+            property <float> wk: CalM.eo(set-host.t-in / 140);
+            property <float> pk: set-host.t-in < 140 ? 1.3 : 1.3 - 0.3 * CalM.eo((set-host.t-in - 140) / 110);
+            property <float> wsc: set-host.leaving ? 1 + 0.04 * CalM.eo(set-host.t-out / 130) : 1.06 - 0.06 * self.wk;
+            x: root.st-look == 3 ? 20px : 16px;
+            y: root.st-look == 1 ? 48px + (set-host.leaving ? -(self.h + 48px) * CalM.ei(set-host.t-out / 160) : (self.jy > 0 ? -self.jy * 1px : Jelly.cap(-self.jy, 2) * 1px))
+                : root.st-look == 3 ? 54px : 48px;
+            width: root.st-look == 3 ? 440px : 448px; height: self.h;
+            opacity: root.st-look == 0 ? (set-host.leaving ? 1 - set-host.t-out / 100 : Math.min(1, set-host.u * 1.6))
+                : root.st-look == 3 ? (set-host.leaving ? 1 - set-host.t-out / 130 : Math.min(1, set-host.t-in / 60)) : 1;
+            transform-scale-x: root.st-look == 0 ? 0.96 + 0.04 * set-host.u : root.st-look == 3 ? self.wsc : 1;
+            transform-scale-y: root.st-look == 0 ? 0.96 + 0.04 * set-host.u : root.st-look == 3 ? self.wsc : root.st-look == 2 ? Math.max(0.02, Math.cos(self.ang * 1deg)) : 1;
+            transform-rotation: root.st-look == 3 ? -0.4deg : 0deg;
+            transform-origin: { x: self.width / 2, y: root.st-look == 3 ? self.height / 2 : 0 };
+            if root.st-look == 1: Rectangle { for rx in [30px, 414px]: Rectangle { x: rx; y: -60px; width: 4px; height: 60px; border-radius: 1px; background: #8f9095;
+                Rectangle { x: 0; width: 1px; background: #4a4b50; } Rectangle { x: 3px; width: 1px; background: #55565b; } } }
+            Rectangle {
+                background: root.st-look == 1 ? #0b0b0c : root.st-look == 2 ? #c3bcac : root.st-look == 3 ? #fdfdfb : Theme.surface;
+                border-radius: root.st-look == 1 ? 6px : root.st-look == 2 ? 3px : root.st-look == 3 ? 2px : 14px;
+                border-width: root.st-look == 0 || root.st-look == 1 ? 1px : 0px; border-color: root.st-look == 1 ? #2a2a2e : Theme.outline;
+                drop-shadow-blur: root.st-look == 3 ? 12px : 32px; drop-shadow-offset-y: root.st-look == 3 ? 5px : 14px; drop-shadow-color: #00000080;
+                clip: root.st-look == 2 || root.st-look == 3;
+                if root.st-look == 2: Image { width: parent.width; height: parent.height; source: @image-url("cal/cardboard.png");
+                    horizontal-tiling: repeat; vertical-tiling: repeat; }
+                if root.st-look == 3: Rules { width: parent.width; height: parent.height; }
+            }
+            TouchArea { }
+            Flickable { width: parent.width; height: parent.height; content-height: sl.preferred-height; interactive: sl.preferred-height > self.height;
+                sl := VerticalLayout { width: st.width; alignment: start; spacing: 0px;
+                    padding-left: root.st-look == 1 ? 12px : root.st-look == 2 ? 18px : root.st-look == 3 ? 16px : 6px;
+                    padding-right: self.padding-left;
+                    padding-top: root.st-look == 1 ? 10px : root.st-look == 2 ? 14px : root.st-look == 3 ? 14px : 6px;
+                    padding-bottom: root.st-look == 1 ? 12px : root.st-look == 2 ? 12px : root.st-look == 3 ? 12px : 6px;
+                    // the head
+                    if root.st-look == 0: Rectangle { height: 42px; Text { x: 10px; y: 10px; height: 28px; text: "Calendar"; font-family: "Space Grotesk"; font-size: 20px;
+                        font-weight: 500; color: Theme.text; vertical-alignment: center; } }
+                    if root.st-look == 1: Rectangle { height: 41px;
+                        Text { x: 0; y: 0; height: 26px; text: "SETTINGS"; font-size: 15px; font-weight: 800; letter-spacing: 3px; color: #f4f4f2; vertical-alignment: center; }
+                        Flap { x: parent.width - self.width; y: 0; chars: root.clock-cells; cells: root.clock-cells.length; ink: #f4f4f2;
+                            t: set-host.leaving ? 100000 : set-host.t-in - 144; seed: 4; }
+                        Rectangle { x: 0; y: 34px; width: parent.width; height: 1px; background: #232326; } }
+                    if root.st-look == 2: Rectangle { height: 44px;
+                        Text { x: 0; y: 0; height: 22px; text: "SETTINGS"; font-size: 16px; font-weight: 800; letter-spacing: 3px; color: #2a251c; vertical-alignment: center; }
+                        Text { x: 0; y: 22px; height: 14px; text: root.desk-line; font-size: 9px; font-weight: 700; letter-spacing: 1.5px; color: #4d463a; vertical-alignment: center; } }
+                    if root.st-look == 3: Rectangle { height: 38px; Text { x: 2px; y: 0; height: 30px; text: "Settings"; font-family: "Caveat"; font-size: 27px; font-weight: 700;
+                        color: #c0242a; vertical-alignment: center; } }
+                    // Calendar look
+                    VerticalLayout { spacing: 6px; padding-top: 8px; padding-bottom: 8px; padding-left: root.st-look == 0 ? 10px : 2px; padding-right: self.padding-left;
+                        Text { text: root.st-look == 1 || root.st-look == 2 ? "CALENDAR LOOK" : "Calendar look";
+                            font-family: root.st-look == 3 ? "Caveat" : ""; font-size: root.st-look == 0 ? 14px : root.st-look == 1 ? 10px : root.st-look == 2 ? 11px : 22px;
+                            font-weight: root.st-look == 0 ? 500 : root.st-look == 3 ? 600 : 700; letter-spacing: root.st-look == 1 ? 1.4px : root.st-look == 2 ? 1.5px : 0px;
+                            color: root.st-look == 0 ? Theme.muted : root.st-look == 1 ? #8a8a90 : root.st-look == 2 ? #3a342a : #56565c; }
+                        Dropdown { options: root.st-look == 1 ? root.look-caps : root.look-names; selected: root.look;
+                            tk-raised: set-host.sk.raised; tk-line: set-host.sk.line; tk-text: set-host.sk.text; tk-muted: set-host.sk.muted; tk-menu: set-host.sk.menu;
+                            tk-pressed: set-host.sk.pressed; tk-accent: set-host.sk.accent; tk-font: set-host.sk.font; tk-font-size: set-host.sk.size;
+                            tk-font-weight: set-host.sk.weight; tk-radius: root.st-look == 1 ? 4px : 14px;
+                            picked(i) => { Act.act("cal.look", i); } } }
+                    // Time format (the panel-wide value of 32.3)
+                    VerticalLayout { spacing: 6px; padding-top: 8px; padding-bottom: 8px; padding-left: root.st-look == 0 ? 10px : 2px; padding-right: self.padding-left;
+                        Text { text: root.st-look == 1 || root.st-look == 2 ? "TIME FORMAT" : "Time format";
+                            font-family: root.st-look == 3 ? "Caveat" : ""; font-size: root.st-look == 0 ? 14px : root.st-look == 1 ? 10px : root.st-look == 2 ? 11px : 22px;
+                            font-weight: root.st-look == 0 ? 500 : root.st-look == 3 ? 600 : 700; letter-spacing: root.st-look == 1 ? 1.4px : root.st-look == 2 ? 1.5px : 0px;
+                            color: root.st-look == 0 ? Theme.muted : root.st-look == 1 ? #8a8a90 : root.st-look == 2 ? #3a342a : #56565c; }
+                        Segmented { options: root.st-look == 1 ? ["24-HOUR", "12-HOUR"] : ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
+                            tk-raised: set-host.sk.raised; tk-text: set-host.sk.text; tk-on-text: set-host.sk.on-text; tk-accent: set-host.sk.accent;
+                            tk-font: set-host.sk.font; tk-font-size: root.st-look == 1 ? 14px : set-host.sk.size; tk-font-weight: set-host.sk.weight;
+                            tk-radius: root.st-look == 1 ? 4px : 20px;
+                            picked(i) => { Act.act("set.h24", i == 0 ? "true" : "false"); } } }
+                    // Done (the cardboard back keeps its barcode at the bottom left)
+                    Rectangle { height: root.st-look == 0 ? 62px : 58px;
+                        if root.st-look == 2: Rectangle { x: 2px; y: 22px; width: 64px; height: 20px; opacity: 0.75;
+                            for b in [0, 3, 4, 6, 10, 13, 14, 16, 20, 23, 24, 26, 30, 33, 34, 36, 40, 43, 44, 46, 50, 53, 54, 56, 60, 63]: Rectangle {
+                                x: b * 1px; width: 1px; background: #2a251c; } }
+                        TextButton { x: parent.width - self.width - (root.st-look == 0 ? 10px : 2px); y: root.st-look == 0 ? 6px : 8px; width: 104px;
+                            text: root.st-look == 1 ? "DONE" : "Done"; primary: true; tk-text: set-host.sk.primary; tk-on-text: set-host.sk.on-primary;
+                            tk-font: set-host.sk.font; tk-font-size: root.st-look == 3 ? 21px : root.st-look == 1 ? 15px : 16px;
+                            tk-font-weight: root.st-look == 0 ? 600 : 700; tk-radius: root.st-look == 1 ? 4px : 999px;
+                            clicked => { Act.act("cal.settings-close", ""); } } }
+                }
+            }
+            if root.st-look == 3: Pin { x: parent.width * 0.22 - 9px; y: -7px; k: parent.pk; }
+            if root.st-look == 3: Pin { x: parent.width * 0.78 - 9px; y: -7px; k: parent.pk; }
+        }
+    }
+
+    // ================================================================ a day's list (the board: the week's departures)
+    day-host := MenuHost {
+        open: root.day-open; kind: 1;
+        need: 300px;
+        in-ms: root.dy-look == 0 ? 200ms : root.dy-look == 1 ? 300ms : root.dy-look == 2 ? 620ms : 260ms;
+        out-ms: root.dy-look == 0 ? 100ms : root.dy-look == 1 ? 180ms : root.dy-look == 2 ? 140ms : 130ms;
+        close => { Act.act("cal.day-sheet-close", ""); }
+        property <bool> leaving: !root.day-open;
+        // where it sits: plain and the board under the status bar, the slip over the pad, the wall card beside the day
+        property <length> w: root.dy-look == 3 ? 288px : root.dy-look == 2 ? 344px : 448px;
+        property <length> lim-top: root.dy-look == 2 ? 60px : root.dy-look == 3 ? 54px : 48px;
+        property <length> lim-bottom: root.dy-look == 3 ? 464px : 468px;
+        property <length> pref: dl.preferred-height;
+        property <int> dcol: Math.round((root.src-x - 16px) / 64px);
+        property <bool> outer: day-host.dcol <= 1 || day-host.dcol >= 5;
+        property <length> above: root.src-y - 10px - day-host.pref;
+        property <length> below: root.src-y + root.src-h + 10px;
+        property <length> wy: day-host.outer ? clamp(root.src-y - 30px, 54px, 464px - Math.min(day-host.pref, 410px))
+            : day-host.above >= 54px ? day-host.above : day-host.below + day-host.pref <= 464px ? day-host.below
+            : root.src-y - 54px > 464px - (root.src-y + root.src-h) ? 54px : day-host.below;
+        property <length> wbottom: !day-host.outer && day-host.above < 54px && day-host.below + day-host.pref > 464px && root.src-y - 54px > 464px - (root.src-y + root.src-h)
+            ? root.src-y - 10px : 464px;
+        property <length> wx: day-host.outer ? clamp(day-host.dcol <= 1 ? root.src-x + root.src-w + 8px : root.src-x - day-host.w - 8px, 20px, 460px - day-host.w)
+            : clamp(root.src-x + root.src-w / 2 - day-host.w / 2, 20px, 460px - day-host.w);
+        property <length> card-x: root.dy-look == 3 ? day-host.wx : root.dy-look == 2 ? 68px : 16px;
+        property <length> card-y: root.dy-look == 3 ? day-host.wy : day-host.lim-top;
+        property <length> card-h: Math.min(day-host.pref, (root.dy-look == 3 ? day-host.wbottom : day-host.lim-bottom) - day-host.card-y);
+        property <float> k: Jelly.edge(day-host.t-in, 80, 280);
+        property <float> bu: day-host.leaving ? 1 : CalM.eo(day-host.t-in / 200);
+        property <float> wk: CalM.eo(day-host.t-in / 140);
+        property <float> pk: day-host.t-in < 140 ? 1.3 : 1.3 - 0.3 * CalM.eo((day-host.t-in - 140) / 110);
+        property <float> roll: day-host.leaving ? 1 - CalM.ei(day-host.t-out / 180) : CalM.eo(day-host.t-in / 280);
+        dc := Rectangle {
+            x: day-host.card-x;
+            y: day-host.card-y + (root.dy-look == 2 ? (day-host.leaving ? -14px * CalM.ei(day-host.t-out / 140) : -22px * (1 - day-host.k)) : 0px);
+            width: day-host.w;
+            // the board's timetable rolls down in its frame like a blind
+            height: root.dy-look == 1 ? Math.max(1px, day-host.card-h * day-host.roll) : day-host.card-h;
+            clip: root.dy-look == 1;
+            opacity: root.dy-look == 0 ? (day-host.leaving ? 1 - day-host.t-out / 100 : Math.min(1, day-host.bu * 1.6))
+                : root.dy-look == 2 ? (day-host.leaving ? 1 - day-host.t-out / 140 : Math.min(1, day-host.t-in / 80))
+                : root.dy-look == 3 ? (day-host.leaving ? 1 - day-host.t-out / 130 : Math.min(1, day-host.t-in / 60)) : 1;
+            // plain: it grows out of the tapped day (from 0.3 at its centre); the wall card is pinned on; the slip sways
+            transform-scale-x: root.dy-look == 0 && root.src-w > 0 ? 0.3 + 0.7 * day-host.bu
+                : root.dy-look == 3 ? (day-host.leaving ? 1 + 0.04 * CalM.eo(day-host.t-out / 130) : 1.06 - 0.06 * day-host.wk) : 1;
+            transform-scale-y: self.transform-scale-x;
+            transform-rotation: root.dy-look == 3 ? -1deg
+                : root.dy-look == 2 && !day-host.leaving ? (-3 * (1 - day-host.k) + 1.2 * Math.sin(360deg * day-host.t-in / 300) * Math.pow(2.71828, -day-host.t-in / 200)) * 1deg : 0deg;
+            transform-origin: root.dy-look == 0 && root.src-w > 0 ? { x: root.src-x + root.src-w / 2 - day-host.card-x, y: root.src-y + root.src-h / 2 - day-host.card-y }
+                : root.dy-look == 3 ? { x: self.width / 2, y: self.height / 2 } : { x: self.width / 2, y: 0px };
+            if root.dy-look == 2: TornEdge { x: 0; y: -6px; width: parent.width; paper: #fbfaf5; }
+            Rectangle {
+                height: day-host.card-h;
+                background: root.dy-look == 1 ? #ffd400 : root.dy-look == 2 ? #fbfaf5 : root.dy-look == 3 ? #fdfdfb : Theme.surface;
+                border-radius: root.dy-look == 0 ? 14px : root.dy-look == 1 ? 2px : root.dy-look == 2 ? 0px : 2px;
+                border-width: root.dy-look == 0 ? 1px : root.dy-look == 1 ? 1px : 0px; border-color: root.dy-look == 1 ? #6d6f73 : Theme.outline;
+                drop-shadow-blur: root.dy-look == 3 ? 12px : 30px; drop-shadow-offset-y: root.dy-look == 3 ? 5px : 14px; drop-shadow-color: #00000080;
+                clip: root.dy-look == 3;
+                if root.dy-look == 1: Rectangle { x: 1px; y: 1px; width: parent.width - 2px; height: parent.height - 2px; border-width: 3px; border-color: #b4b6ba; }
+                if root.dy-look == 3: Rules { width: parent.width; height: parent.height; first: 52px; pitch: 40px; }
+            }
+            TouchArea { }
+            Flickable { width: parent.width; height: day-host.card-h; content-height: dl.preferred-height; interactive: dl.preferred-height > self.height;
+                dl := VerticalLayout { width: day-host.w; alignment: start; spacing: 0px;
+                    padding-left: root.dy-look == 0 ? 6px : root.dy-look == 1 ? 18px : 16px; padding-right: self.padding-left;
+                    padding-top: root.dy-look == 0 ? 6px : root.dy-look == 1 ? 16px : root.dy-look == 2 ? 16px : 14px;
+                    padding-bottom: root.dy-look == 0 ? 6px : root.dy-look == 1 ? 12px : 12px;
+                    // heads
+                    if root.dy-look == 0: Rectangle { height: 46px; Text { x: 10px; y: 10px; width: parent.width - 20px; height: 28px; text: root.day-title;
+                        font-family: "Space Grotesk"; font-size: 20px; font-weight: 500; color: Theme.text; vertical-alignment: center; } }
+                    if root.dy-look == 1: Rectangle { height: 36px;
+                        Text { x: 0; y: 0; height: 30px; text: "DEPARTURES"; font-size: 22px; font-weight: 900; letter-spacing: 0.5px; color: #111111; vertical-alignment: center; }
+                        Text { x: 0; y: 0; width: parent.width; height: 30px; text: root.day-week ? "TIMETABLE · THIS WEEK" : root.day-caps; font-size: 11px; font-weight: 700;
+                            letter-spacing: 1px; color: #111111; horizontal-alignment: right; vertical-alignment: center; }
+                        Rectangle { y: 33px; height: 3px; background: #111111; } }
+                    if root.dy-look == 2: VerticalLayout { padding-bottom: 12px;
+                        Text { height: self.preferred-height; text: root.day-caps; font-size: 13px; font-weight: 800; letter-spacing: 3px; color: #c8202a; horizontal-alignment: center; wrap: word-wrap; }
+                        Rectangle { height: 8px; } Rectangle { height: 1px; background: #d9d6cc; } }
+                    if root.dy-look == 3: Rectangle { height: 38px; Text { x: 2px; y: 0; height: 30px; text: root.day-short; font-family: "Caveat"; font-size: 27px; font-weight: 700;
+                        color: #c0242a; vertical-alignment: center; } }
+                    for d in root.days: VerticalLayout { spacing: 0px;
+                        // the board's day heads (the week's departures)
+                        if root.dy-look == 1 && root.day-week: VerticalLayout { padding-top: 10px;
+                            Text { height: 18px; text: d.label; font-size: 12px; font-weight: 800; letter-spacing: 1.2px; color: #111111; vertical-alignment: center; }
+                            Rectangle { height: 4px; } Rectangle { height: 1.5px; background: #111111; } }
+                        for e in d.events: row := Rectangle {
+                            property <length> mh: root.dy-look == 0 ? 52px : 40px;
+                            height: max(self.mh, rl.preferred-height + (root.dy-look == 0 ? 6px : 0px));
+                            opacity: e.past ? (root.dy-look == 0 ? 0.55 : root.dy-look == 1 ? 0.45 : root.dy-look == 2 ? 0.4 : 0.5) : 1;
+                            // plain: a raised row with a colour bar, the current one with a Signal ring
+                            if root.dy-look == 0: Rectangle { x: 4px; y: 0; width: parent.width - 8px; height: parent.height - 6px; border-radius: 12px;
+                                background: rta.pressed ? Theme.surface-pressed : Theme.surface-raised; border-width: e.now ? 2px : 0px; border-color: #FF4A1C; }
+                            if root.dy-look == 1: Rectangle { y: parent.height - 1px; height: 1px; background: #00000038; }
+                            if root.dy-look == 2: Rectangle { y: parent.height - 1px; height: 1px; background: #cfccc2; }
+                            if root.dy-look != 0 && rta.pressed: Rectangle { background: #0000000f; }
+                            rl := HorizontalLayout {
+                                height: parent.height - (root.dy-look == 0 ? 6px : 0px);
+                                padding-left: root.dy-look == 0 ? 16px : 2px; padding-right: root.dy-look == 0 ? 16px : 2px;
+                                padding-top: root.dy-look == 0 ? 6px : root.dy-look == 3 ? 4px : 6px; padding-bottom: root.dy-look == 0 ? 6px : root.dy-look == 3 ? 5px : 6px;
+                                spacing: root.dy-look == 0 ? 12px : root.dy-look == 3 ? 8px : 10px;
+                                if root.dy-look == 0: Rectangle { width: 4px; Rectangle { y: 4px; height: parent.height - 8px; border-radius: 2px; background: e.tint; } }
+                                if root.dy-look == 0: VerticalLayout { spacing: 1px; alignment: center; horizontal-stretch: 1;
+                                    Text { height: self.preferred-height; text: e.title; font-size: 15px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
+                                    Text { height: self.preferred-height; text: e.time + "  ·  " + e.cal; font-size: 12px; color: Theme.muted; wrap: word-wrap; } }
+                                if root.dy-look != 0: Text {
+                                    width: root.dy-look == 1 ? (Clock.h24 ? 58px : 84px) : root.dy-look == 2 ? (Clock.h24 ? 46px : 70px) : (Clock.h24 ? 52px : 74px);
+                                    text: e.all-day ? (root.dy-look == 3 ? "all day" : "—") : e.t1;
+                                    font-family: root.dy-look == 3 ? "Caveat" : ""; font-size: root.dy-look == 1 ? 15px : root.dy-look == 2 ? 14px : 19px;
+                                    font-weight: root.dy-look == 1 ? 800 : root.dy-look == 2 ? 700 : 500;
+                                    color: root.dy-look == 1 ? #111111 : root.dy-look == 2 ? (e.now ? #c8202a : #1d1d20) : #56565c;
+                                    vertical-alignment: root.dy-look == 3 ? TextVerticalAlignment.bottom : TextVerticalAlignment.center; }
+                                if root.dy-look != 0: Text { height: self.preferred-height; text: e.title; horizontal-stretch: 1; wrap: word-wrap;
+                                    font-family: root.dy-look == 3 ? "Caveat" : ""; font-size: root.dy-look == 1 ? 15px : root.dy-look == 2 ? 14px : 23px;
+                                    font-weight: root.dy-look == 1 ? 500 : root.dy-look == 2 ? 400 : 600;
+                                    color: root.dy-look == 1 ? #111111 : root.dy-look == 2 ? #33332f : e.ink;
+                                    vertical-alignment: root.dy-look == 3 ? TextVerticalAlignment.bottom : TextVerticalAlignment.center; }
+                                if root.dy-look == 1: Text { text: e.code; font-family: "DejaVu Sans Mono"; font-size: 12px; font-weight: 800; color: #111111; vertical-alignment: center; }
+                                if root.dy-look == 2: VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: e.tint; } }
+                            }
+                            if root.dy-look == 1 && e.now: Rectangle { x: Clock.h24 ? 50px : 76px; y: (parent.height - 7px) / 2; width: 7px; height: 7px; border-radius: 3.5px;
+                                background: #0f7a2e; }
+                            if root.dy-look == 3 && e.now: Rectangle { x: (Clock.h24 ? 52px : 74px) + 12px; y: parent.height - 4px; width: parent.width - self.x - 4px;
+                                height: 2px; background: #c0242a; }
+                            rta := TouchArea { clicked => { root.ev = e; root.when = d.label + " · " + e.time; root.detail = true; } }
+                        }
+                        if d.events.length == 0 && !root.day-week: Text { height: 44px; text: root.day-free; font-family: root.dy-look == 3 ? "Caveat" : "";
+                            font-size: root.dy-look == 3 ? 22px : 15px; color: root.dy-look == 0 ? Theme.muted : root.dy-look == 1 ? #111111 : #56565c;
+                            vertical-alignment: center; }
+                    }
+                    if root.days.length == 0: Text { height: 44px; text: root.day-free; font-size: 15px; color: #111111; vertical-alignment: center; }
+                }
+            }
+            if root.dy-look == 3: Pin { x: (parent.width - self.width) / 2; y: -7px; k: day-host.pk; }
+        }
+    }
+
+    // ================================================================ an event's details, and its edit form in the same object
+    det-host := MenuHost {
+        open: root.detail || root.edit; kind: 1;
+        dim: !root.day-open;
+        need: 300px;
+        in-ms: root.dt-look == 0 ? 140ms : root.dt-look == 1 ? 320ms : root.dt-look == 2 ? 520ms : 260ms;
+        out-ms: root.dt-look == 0 ? 100ms : root.dt-look == 1 ? 160ms : root.dt-look == 2 ? 160ms : 130ms;
+        // a tap beside the details over a list goes back to the list; beside the form it leaves without saving
+        close => { Act.act(root.edit ? "cal.edit-close" : "cal.detail-close", ""); }
+        property <bool> leaving: !root.detail && !root.edit;
+        property <CalSkin> sk: root.dt-look == 1 ? root.sk-pass : root.dt-look == 2 ? root.sk-appt : root.dt-look == 3 ? root.sk-wall : root.sk-plain;
+        property <length> w: root.dt-look == 1 ? 392px : root.dt-look == 2 ? 372px : root.dt-look == 3 ? 304px : 448px;
+        property <length> cx: root.dt-look == 1 ? 44px : root.dt-look == 2 ? 54px : root.dt-look == 3 ? (root.day-open && root.dy-look == 3 ? clamp(day-host.card-x + 18px, 20px, 152px) : 88px) : 16px;
+        property <length> cy: root.dt-look == 1 ? 52px : root.dt-look == 2 ? 58px : root.dt-look == 3 ? (root.day-open && root.dy-look == 3 ? Math.min(day-host.card-y + 22px, 140px) : 70px) : 48px;
+        property <length> lim-bottom: root.edit-typing ? Theme.keyboard-top - 8px : root.dt-look == 3 ? 464px : 468px;
+        property <length> ch: Math.min(dtl.preferred-height, det-host.lim-bottom - det-host.cy);
+        property <float> k: Jelly.edge(det-host.t-in, 80, 280);
+        property <float> bu: CalM.eo(det-host.t-in / 140);
+        property <float> wk: CalM.eo(det-host.t-in / 140);
+        property <float> pk: det-host.t-in < 140 ? 1.3 : 1.3 - 0.3 * CalM.eo((det-host.t-in - 140) / 110);
+        // the boarding pass is printed: it feeds out of a slot under the status bar in three jerks
+        property <float> feed: det-host.leaving ? 1 - CalM.ei(det-host.t-out / 160)
+            : det-host.t-in < 70 ? 0.34 * det-host.t-in / 70 : det-host.t-in < 120 ? 0.34 : det-host.t-in < 190 ? 0.34 + 0.34 * (det-host.t-in - 120) / 70
+            : det-host.t-in < 240 ? 0.68 : Math.min(1, 0.68 + 0.32 * (det-host.t-in - 240) / 70);
+        // the details become the form: the content fades in again and the object grows or shrinks to it (200 ms)
+        property <bool> was-edit: root.edit;
+        property <duration> m0;
+        property <bool> morphing;
+        changed was-edit => { det-host.m0 = animation-tick(); det-host.morphing = true; }
+        Timer { interval: 200ms; running: det-host.morphing; triggered => { det-host.morphing = false; } }
+        property <float> mk: det-host.morphing ? Math.min(1, (animation-tick() - det-host.m0) / 120ms) : 1;
+        // the end's drums open low in the form: the form scrolls them into sight (once the drums are laid out)
+        property <int> drums: root.edit-open;
+        property <bool> reveal;
+        changed drums => { det-host.reveal = det-host.drums == 2; }
+        Timer { interval: 30ms; running: det-host.reveal; triggered => {
+            det-host.reveal = false;
+            dfl.content-y = Math.min(0px, dfl.height - dfl.content-height);
+        } }
+        Rectangle {
+            x: det-host.cx + (root.dt-look == 2 ? (det-host.leaving ? 80px * CalM.ei(det-host.t-out / 160) : 70px * (1 - det-host.k)) : 0px);
+            y: det-host.cy; width: det-host.w; height: det-host.ch + 8px;
+            // the slot: the pass is clipped at its top edge while it feeds
+            clip: root.dt-look == 1;
+            opacity: root.dt-look == 0 ? (det-host.leaving ? 1 - det-host.t-out / 100 : Math.min(1, det-host.bu * 1.6))
+                : root.dt-look == 2 ? (det-host.leaving ? 1 - det-host.t-out / 160 : Math.min(1, det-host.t-in / 90))
+                : root.dt-look == 3 ? (det-host.leaving ? 1 - det-host.t-out / 130 : Math.min(1, det-host.t-in / 60)) : 1;
+            dcard := Rectangle {
+                y: root.dt-look == 1 ? -det-host.ch * (1 - det-host.feed) : 0px;
+                height: det-host.ch;
+                animate height { duration: 200ms; easing: ease-out; }
+                transform-scale-x: root.dt-look == 0 ? 0.96 + 0.04 * det-host.bu
+                    : root.dt-look == 3 ? (det-host.leaving ? 1 + 0.04 * CalM.eo(det-host.t-out / 130) : 1.06 - 0.06 * det-host.wk) : 1;
+                transform-scale-y: self.transform-scale-x;
+                transform-rotation: root.dt-look == 3 ? 1.2deg : root.dt-look == 2 && !det-host.leaving ? 1.6deg * (1 - det-host.k) : 0deg;
+                transform-origin: { x: self.width / 2, y: root.dt-look == 3 ? self.height / 2 : 0 };
+                Rectangle {
+                    background: root.dt-look == 1 ? #f7f5ef : root.dt-look == 2 ? #fffdf7 : root.dt-look == 3 ? #fdfdfb : Theme.surface;
+                    border-radius: root.dt-look == 1 ? 14px : root.dt-look == 2 ? 6px : root.dt-look == 3 ? 2px : 14px;
+                    border-width: root.dt-look == 0 ? 1px : 0px; border-color: Theme.outline;
+                    drop-shadow-blur: root.dt-look == 3 ? 12px : 36px; drop-shadow-offset-y: root.dt-look == 3 ? 5px : 18px; drop-shadow-color: #00000099;
+                    clip: root.dt-look == 3;
+                    if root.dt-look == 3: Rules { width: parent.width; height: parent.height; red-y: root.edit ? 48px : -1px; first: root.edit ? 49px : 12px; pitch: 28px; }
+                }
+                TouchArea { }
+                dfl := Flickable { width: parent.width; height: parent.height; content-height: dtl.preferred-height; interactive: dtl.preferred-height > self.height;
+                    dtl := VerticalLayout { width: det-host.w; alignment: start; spacing: 0px; opacity: det-host.mk;
+                        // ---- the band of the boarding pass (details and the change of booking)
+                        if root.dt-look == 1: Rectangle { height: 48px; background: root.edit ? root.edit-tint : root.ev.tint;
+                            border-top-left-radius: 14px; border-top-right-radius: 14px;
+                            HorizontalLayout { padding-left: 16px; padding-right: 16px; spacing: 10px;
+                                Icon { width: 20px; text: "\u{F001D}"; font-size: 18px; color: #ffffff; }
+                                Text { text: root.edit ? "CHANGE BOOKING" : "BOARDING PASS"; font-size: 14px; font-weight: 800; letter-spacing: 2.5px; color: #ffffff;
+                                    vertical-alignment: center; horizontal-stretch: 1; }
+                                Text { text: root.edit ? root.edit-code : root.ev.code; font-family: "DejaVu Sans Mono"; font-size: 20px; font-weight: 700; color: #ffffff;
+                                    vertical-alignment: center; } } }
+                        // ---- the appointment card's head
+                        if root.dt-look == 2: VerticalLayout {
+                            HorizontalLayout { padding-left: 18px; padding-right: 18px; padding-top: 12px; padding-bottom: 8px; spacing: 10px;
+                                Text { text: root.edit ? "RESCHEDULE" : "APPOINTMENT"; font-size: 14px; font-weight: 800; letter-spacing: 3px; color: #c8202a;
+                                    vertical-alignment: bottom; horizontal-stretch: 1; }
+                                Text { height: self.preferred-height; text: (root.edit ? root.edit-cal : root.ev.date).to-uppercase(); font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #8a8880;
+                                    vertical-alignment: bottom; horizontal-alignment: right; wrap: word-wrap; max-width: 180px; } }
+                            Rectangle { height: 2px; background: #c8202a; } }
+                        // ================= the details
+                        if !root.edit && root.dt-look == 0: VerticalLayout { padding-left: 20px; padding-right: 20px; padding-top: 18px; padding-bottom: 8px; spacing: 0px;
+                            HorizontalLayout { spacing: 8px; alignment: start;
+                                VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.ev.tint; } }
+                                Text { height: self.preferred-height; text: root.ev.cal; font-size: 13px; font-weight: 600; color: Theme.muted; wrap: word-wrap; horizontal-stretch: 1; } }
+                            Text { height: self.preferred-height; text: root.ev.title; font-size: 21px; font-weight: 600; color: Theme.text; wrap: word-wrap; }
+                            Rectangle { height: 8px; }
+                            HorizontalLayout { spacing: 8px; padding-top: 4px; padding-bottom: 4px;
+                                Icon { width: 18px; text: "\u{F0150}"; font-size: 18px; color: Theme.muted; vertical-alignment: top; }
+                                Text { height: self.preferred-height; text: root.when; font-size: 15px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; } }
+                            if root.ev.rel != "": HorizontalLayout { padding-left: 26px;
+                                Text { text: root.ev.rel; font-size: 14px; font-weight: 600; color: #FF4A1C; } }
+                            if root.ev.place != "": HorizontalLayout { spacing: 8px; padding-top: 4px; padding-bottom: 4px;
+                                Icon { width: 18px; text: "\u{F07D9}"; font-size: 18px; color: Theme.muted; vertical-alignment: top; }
+                                Text { height: self.preferred-height; text: root.ev.place; font-size: 15px; color: Theme.text; wrap: word-wrap; horizontal-stretch: 1; } }
+                            if root.ev.note != "": VerticalLayout { padding-top: 8px;
+                                Text { height: self.preferred-height; text: root.ev.note; font-size: 14px; color: Theme.muted; wrap: word-wrap; } } }
+                        if !root.edit && root.dt-look == 1: VerticalLayout { padding-left: 16px; padding-right: 16px; padding-top: 12px; padding-bottom: 2px; spacing: 10px;
+                            VerticalLayout { spacing: 2px; Text { text: "EVENT"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                Text { height: self.preferred-height; text: root.ev.title; font-size: 21px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                            HorizontalLayout { spacing: 14px;
+                                VerticalLayout { spacing: 10px; horizontal-stretch: 1;
+                                    VerticalLayout { spacing: 2px; Text { text: "DATE"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                        Text { height: self.preferred-height; text: root.ev.date; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                                    VerticalLayout { spacing: 2px; Text { text: "ARRIVES"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                        Text { height: self.preferred-height; text: root.ev.all-day ? "—" : root.ev.t2; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } } }
+                                VerticalLayout { spacing: 10px; horizontal-stretch: 1;
+                                    VerticalLayout { spacing: 2px; Text { text: "DEPARTS"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                        Text { height: self.preferred-height; text: root.ev.all-day ? "All day" : root.ev.t1; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                                    VerticalLayout { spacing: 2px; Text { text: "GATE"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                        Text { height: self.preferred-height; text: root.ev.code + " · " + root.ev.cal; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } } } }
+                            if root.ev.place != "": VerticalLayout { spacing: 2px; Text { text: "TERMINAL"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                Text { height: self.preferred-height; text: root.ev.place; font-size: 16px; font-weight: 700; color: #15161a; wrap: word-wrap; } }
+                            if root.ev.rel != "": HorizontalLayout { alignment: start;
+                                Rectangle { width: bt.preferred-width + 16px; height: 24px; border-radius: 4px; background: root.ev.rel == "now" ? #4cd96438 : #f2a51a33;
+                                    bt := Text { x: 8px; text: (root.ev.rel == "now" ? "Boarding now" : "Boards " + root.ev.rel).to-uppercase(); font-size: 13px; font-weight: 800;
+                                        letter-spacing: 1.4px; color: root.ev.rel == "now" ? #0d6b28 : #7a4f00; vertical-alignment: center; } } }
+                            if root.ev.note != "": VerticalLayout { spacing: 2px; Text { text: "NOTE"; font-size: 9px; font-weight: 700; letter-spacing: 1.4px; color: #8a8a90; }
+                                Text { height: self.preferred-height; text: root.ev.note; font-size: 13px; color: #4b4d52; wrap: word-wrap; } }
+                            // the perforation with two punched notches
+                            Rectangle { height: 22px;
+                                for dx in 48: Rectangle { x: 12px + dx * 8px; y: 10px; width: 4px; height: 2px; visible: self.x < parent.width - 14px; background: #00000038; }
+                                Rectangle { x: -25px; y: 2px; width: 18px; height: 18px; border-radius: 9px; background: #070708; }
+                                Rectangle { x: parent.width + 7px; y: 2px; width: 18px; height: 18px; border-radius: 9px; background: #070708; } }
+                            // the stub: Edit (or the read-only stamp) and the barcode drawn from the title
+                            HorizontalLayout { padding-bottom: 12px; spacing: 12px; alignment: space-between;
+                                if root.ev.editable: CalButton { text: "Edit"; icon: "\u{F03EB}"; ground: #15161a; ink: #f7f5ef;
+                                    clicked => { Act.act("cal.edit", root.ev.id); } }
+                                if !root.ev.editable: Rectangle { width: 168px; height: 48px;
+                                    Rectangle { x: 4px; y: 8px; width: 150px; height: 30px; border-width: 2px; border-color: #c8202a; border-radius: 6px; transform-rotation: -4deg;
+                                        Text { text: "READ-ONLY CALENDAR"; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: #c8202a; horizontal-alignment: center;
+                                            vertical-alignment: center; } } }
+                                Rectangle { width: 150px; height: 48px;
+                                    for b in 37: Rectangle { x: b * 4px; y: 7px; height: 34px; width: (1 + Math.floor(CalM.noise(root.ev.title.character-count + b, b * 3 + root.ev.start) * 3)) * 1px;
+                                        visible: CalM.noise(b * 1.7, root.ev.title.character-count * 2.3 + root.ev.end) > 0.38; background: #15161a; } } } }
+                        if !root.edit && root.dt-look == 2: VerticalLayout { padding-left: 18px; padding-right: 18px; padding-top: 4px; padding-bottom: 2px;
+                            for row in [{ l: "WHAT", v: root.ev.title, s: 27px, w: 700, show: true }, { l: "WHEN", v: root.when, s: 22px, w: 600, show: true },
+                                        { l: "WHERE", v: root.ev.place, s: 22px, w: 600, show: root.ev.place != "" }, { l: "NOTE", v: root.ev.note, s: 19px, w: 500, show: root.ev.note != "" }]:
+                                VerticalLayout { visible: row.show; height: row.show ? self.preferred-height : 0px;
+                                    HorizontalLayout { spacing: 8px; padding-top: 6px; padding-bottom: 4px;
+                                        VerticalLayout { width: 70px; padding-top: 7px; alignment: start;
+                                            Text { text: row.l; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #8a8880; } }
+                                        Text { height: self.preferred-height; text: row.v; font-family: "Caveat"; font-size: row.s; font-weight: row.w; color: #1b348a; wrap: word-wrap; horizontal-stretch: 1; } }
+                                    if row.l == "WHEN" && root.ev.rel != "": HorizontalLayout { padding-left: 78px; padding-bottom: 4px;
+                                        Text { text: root.ev.rel; font-size: 13px; font-weight: 700; color: #c8202a; } }
+                                    Rectangle { height: 1px; background: #dedbd2; } }
+                            HorizontalLayout { spacing: 8px; padding-top: 8px; padding-bottom: 4px;
+                                Text { width: 70px; text: "CALENDAR"; font-size: 10px; font-weight: 700; letter-spacing: 1.4px; color: #8a8880; vertical-alignment: center; }
+                                VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.ev.tint; } }
+                                Text { height: self.preferred-height; text: root.ev.cal; font-size: 14px; font-weight: 500; color: #1d1d20; wrap: word-wrap; horizontal-stretch: 1; vertical-alignment: center; } } }
+                        if !root.edit && root.dt-look == 3: VerticalLayout { padding-left: 18px; padding-right: 18px; padding-top: 18px; padding-bottom: 2px; spacing: 2px;
+                            Text { height: self.preferred-height; text: root.ev.title; font-family: "Caveat"; font-size: 30px; font-weight: 700; color: root.ev.ink; wrap: word-wrap; }
+                            Text { height: self.preferred-height; text: root.when; font-family: "Caveat"; font-size: 22px; font-weight: 500; color: #56565c; wrap: word-wrap; }
+                            if root.ev.rel != "": Text { text: root.ev.rel; font-family: "Caveat"; font-size: 21px; font-weight: 700; color: #c0242a; }
+                            if root.ev.place != "": HorizontalLayout { spacing: 4px;
+                                Icon { width: 18px; text: "\u{F07D9}"; font-size: 17px; color: #56565c; vertical-alignment: top; }
+                                Text { height: self.preferred-height; text: root.ev.place; font-family: "Caveat"; font-size: 22px; font-weight: 500; color: #56565c; wrap: word-wrap; horizontal-stretch: 1; } }
+                            if root.ev.note != "": VerticalLayout { padding-top: 6px;
+                                Text { height: self.preferred-height; text: root.ev.note; font-family: "Caveat"; font-size: 20px; font-weight: 500; color: #3b3b40; wrap: word-wrap; } }
+                            HorizontalLayout { spacing: 8px; padding-top: 6px;
+                                VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: root.ev.tint; } }
+                                Text { height: self.preferred-height; text: root.ev.cal; font-family: "Caveat"; font-size: 21px; font-weight: 600; color: root.ev.ink; wrap: word-wrap; horizontal-stretch: 1; } } }
+                        // Edit (calendars that allow it), or the read-only line
+                        if !root.edit && root.dt-look != 1 && root.ev.editable: HorizontalLayout { alignment: start;
+                            padding-left: root.dt-look == 0 ? 20px : root.dt-look == 2 ? 18px : 14px; padding-top: 10px; padding-bottom: 14px;
+                            if root.dt-look != 3: CalButton { text: "Edit"; icon: "\u{F03EB}"; ground: root.dt-look == 2 ? #2a251c : Theme.text;
+                                ink: root.dt-look == 2 ? #ece6d8 : Theme.background;
+                                clicked => { Act.act("cal.edit", root.ev.id); } }
+                            // the wall card: the word circled in pen
+                            if root.dt-look == 3: Rectangle { width: 100px; height: 46px;
+                                Text { text: "Edit"; font-family: "Caveat"; font-size: 26px; font-weight: 700; color: #1b348a; horizontal-alignment: center; vertical-alignment: center; }
+                                Path { width: parent.width; height: parent.height; viewbox-width: 100; viewbox-height: 40; fill: transparent; stroke: #1b348a; stroke-width: 2px;
+                                    stroke-line-cap: round; commands: "M 8 22 C 6 8 40 3 62 5 S 96 13 92 24 S 58 37 36 35 S 4 30 9 17"; }
+                                TouchArea { clicked => { Act.act("cal.edit", root.ev.id); } } } }
+                        if !root.edit && root.dt-look != 1 && !root.ev.editable: HorizontalLayout { spacing: 6px; alignment: start;
+                            padding-left: root.dt-look == 0 ? 20px : 18px; padding-top: 10px; padding-bottom: 14px;
+                            Icon { width: 18px; text: "\u{F0341}"; font-size: 16px; color: root.dt-look == 3 ? #56565c : root.dt-look == 2 ? #8a8880 : Theme.faint; }
+                            Text { height: self.preferred-height; text: "Read-only calendar"; font-family: root.dt-look == 3 ? "Caveat" : ""; font-size: root.dt-look == 3 ? 20px : 13px;
+                                color: root.dt-look == 3 ? #56565c : root.dt-look == 2 ? #8a8880 : Theme.faint; vertical-alignment: center; wrap: word-wrap; } }
+                        // ================= the edit form
+                        if root.edit && root.dt-look == 0: Rectangle { height: 46px; Text { x: 20px; y: 12px; height: 28px; text: "Edit event"; font-family: "Space Grotesk";
+                            font-size: 20px; font-weight: 500; color: Theme.text; vertical-alignment: center; } }
+                        if root.edit && root.dt-look == 3: Rectangle { height: 52px; Text { x: 18px; y: 14px; height: 30px; text: "Edit"; font-family: "Caveat"; font-size: 27px;
+                            font-weight: 700; color: #c0242a; vertical-alignment: center; } }
+                        if root.edit: VerticalLayout {
+                            padding-left: root.dt-look == 0 ? 14px : root.dt-look == 3 ? 16px : root.dt-look == 2 ? 18px : 16px; padding-right: self.padding-left;
+                            padding-top: root.dt-look == 0 ? 4px : 12px; padding-bottom: 14px;
+                            CalEditForm { look: root.dt-look; sk: det-host.sk; title: root.edit-title; day: root.edit-day; typing: root.edit-typing;
+                                can-delete: root.edit-can-delete; allday <=> root.edit-allday; start-min <=> root.edit-start-min; end-min <=> root.edit-end-min;
+                                open <=> root.edit-open; } }
+                    }
+                }
+                if root.dt-look == 3: Pin { x: (parent.width - self.width) / 2; y: -7px; k: det-host.pk; }
+            }
+        }
+    }
+
+    // the title being typed: the keyboard under the form
+    if root.edit && root.edit-typing: Rectangle {
+        x: 0; y: Theme.keyboard-top - 6px; width: root.width; height: root.height - self.y; background: Theme.background;
+        TouchArea { }
+        Keyboard { x: Theme.pad; y: 6px; width: root.width - 2 * Theme.pad; layer: root.kb-layer; layout: root.kb-layout; enter-label: "Done";
+            key(k) => { Act.act("cal.key", k); } }
+    }
+
+    // a deleted event: a short strip to take it back (the delete is sent when it goes)
+    if root.undo: Rectangle {
+        x: 16px; y: 464px - self.height; width: 448px; height: Math.max(52px, ut.preferred-height + 16px); border-radius: 14px; background: Theme.surface-raised; border-width: 1px; border-color: Theme.outline;
+        drop-shadow-blur: 20px; drop-shadow-offset-y: 6px; drop-shadow-color: #00000066;
+        TouchArea { }
+        ut := Text { x: 16px; y: 0; width: parent.width - 140px; height: parent.height; text: root.undo-text; font-size: 15px; color: Theme.text; vertical-alignment: center;
+            wrap: word-wrap; }
+        TextButton { x: parent.width - self.width - 6px; y: (parent.height - self.height) / 2; width: 110px; height: 40px; text: "Undo";
+            clicked => { Act.act("cal.undo", ""); } }
+    }
+}

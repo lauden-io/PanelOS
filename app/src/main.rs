@@ -1247,9 +1247,7 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_thermo_settings(false);
     ui.set_music_picker(false);
     ui.set_music_settings(false);
-    ui.set_cal_detail(false);
-    ui.set_cal_settings(false);
-    ui.set_cal_day_sheet(false);
+    cal::close_all(ui);
     ui.set_timers_quick(false);
     ui.set_timers_sheet(-1);
     ui.set_timers_settings(false);

@@ -220,14 +220,11 @@ export component MainWindow inherits Window {
     in property <string> cal-edit-cal;
     in property <color> cal-edit-tint;
     in property <string> cal-edit-day;
-    in property <string> cal-edit-start;
-    in property <string> cal-edit-end;
-    in property <bool> cal-edit-allday;
+    in-out property <bool> cal-edit-allday;
+    in-out property <int> cal-edit-start-min;
+    in-out property <int> cal-edit-end-min;
     in property <bool> cal-edit-typing;
     in property <bool> cal-edit-can-delete;
-    in property <int> cal-edit-picker;
-    in property <[string]> cal-edit-hours;
-    in property <[string]> cal-edit-mins;
     in property <bool> cal-settings;
     in property <bool> cal-detail;
     in property <CalEvent> cal-detail-ev;
@@ -758,9 +755,8 @@ export component MainWindow inherits Window {
             day-today: root.cal-day-today; day-free: root.cal-day-free; now-min: root.cal-now-min; week-names: root.cal-week-names; week-nums: root.cal-week-nums;
             week-today: root.cal-week-today; week-events: root.cal-week-events; week-allday: root.cal-week-allday; month-names: root.cal-month-names;
             month-cells: root.cal-month-cells; edit: root.cal-edit; edit-title: root.cal-edit-title; edit-cal: root.cal-edit-cal; edit-tint: root.cal-edit-tint;
-            edit-day: root.cal-edit-day; edit-start: root.cal-edit-start; edit-end: root.cal-edit-end; edit-allday: root.cal-edit-allday;
-            edit-typing: root.cal-edit-typing; edit-can-delete: root.cal-edit-can-delete; edit-picker: root.cal-edit-picker; edit-hours: root.cal-edit-hours;
-            edit-mins: root.cal-edit-mins; settings: root.cal-settings; detail: root.cal-detail; detail-ev: root.cal-detail-ev; detail-when: root.cal-detail-when;
+            edit-day: root.cal-edit-day; edit-allday <=> root.cal-edit-allday; edit-start-min <=> root.cal-edit-start-min; edit-end-min <=> root.cal-edit-end-min;
+            edit-typing: root.cal-edit-typing; edit-can-delete: root.cal-edit-can-delete; settings: root.cal-settings; detail: root.cal-detail; detail-ev: root.cal-detail-ev; detail-when: root.cal-detail-when;
         }
         if root.panel == "todo": TodoPage {
             lists: root.todo-lists; sel: root.todo-sel; open-items: root.todo-open; done-items: root.todo-done; show-done: root.todo-show-done;
