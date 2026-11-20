@@ -647,6 +647,8 @@ fn update_clock(ui: &AppWindow) {
             // the thermostat remote's own clock (hours and minutes as numbers)
             ui.set_thermo_clock_h(data.hh.parse().unwrap_or(0));
             ui.set_thermo_clock_m(data.mm.parse().unwrap_or(0));
+            // the notifications page's pager and TV news clock (minutes of the day; -1 before the clock is set)
+            ui.set_info_minute(info::minute_of(&data.hh, &data.mm));
             ui.set_clock(data);
             let wall = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs_f64()).unwrap_or(0.0);
             ui.invoke_sync_seconds(wall.rem_euclid(60.0) as f32);
@@ -1246,6 +1248,7 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_cam_settings(false);
     ui.set_cam_replies(false);
     ui.set_info_settings(false);
+    info::leave(ui);
     ui.set_home_bg_sheet(false);
     ui.set_home_settings(-1);
 }
@@ -3716,7 +3719,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             ui.set_timers_sheet(value.parse::<i32>().unwrap_or(-1));
         }
         "strip.close" => {
-            ui.set_strip_on(false);
+            alerts::act(ui, what);
             with_state(|s| s.strip_until = None);
         }
         "status.fold" | "strip.open" | "info.crit-silence" => alerts::act(ui, what),
@@ -3747,8 +3750,12 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         }
         "music.settings-close" => ui.set_music_settings(false),
         "music.look" => page_set(ui, "music", Some(value.parse().unwrap_or(0)), Value::Null),
-        // the notification page's sheet
-        "info.look" => page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null),
+        // the notification page's look
+        "info.look" => {
+            page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null);
+            // the new look's pictures (the pager, the fridge door and notes) at once, not when the integration answers
+            with_state(|s| info::refresh(ui, s));
+        }
         "music.holds" => page_set(ui, "music", None, json!({ "holds": value.parse::<i64>().unwrap_or(0) })),
         "music.scroll" => page_set(ui, "music", None, json!({ "scroll": value == "1" })),
         "music.blur" => {
