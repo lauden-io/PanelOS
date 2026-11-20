@@ -779,12 +779,16 @@ export component Dropdown inherits Rectangle {
         font-size: 15px; font-weight: 500; color: root.selected >= 0 ? root.tk-text : root.tk-muted; vertical-alignment: center; overflow: elide; }
     Icon { x: parent.width - 36px; y: 0; width: 24px; height: parent.height; text: root.pop-open ? "\u{F0143}" : "\u{F0140}"; font-size: 22px; color: root.tk-muted; }
     TouchArea { clicked => { root.pop-open = true; menu.show(); } }
+    // the list stays on the screen between the status bar and the dots (y 48 … 468): a long list may cover its field
+    property <length> pop-y: root.opens-up ? -root.menu-h - 6px : root.height + 6px;
     menu := PopupWindow {
         x: 0;
-        y: root.opens-up ? -root.menu-h - 6px : root.height + 6px;
+        y: Math.max(48px - root.absolute-position.y, Math.min(468px - root.menu-h - root.absolute-position.y, root.pop-y));
         width: root.width;
+        height: root.menu-h;
         close-policy: close-on-click-outside;
         Rectangle {
+            x: 0; y: 0;
             property <float> k: 0;
             init => { self.k = 1; }
             animate k { duration: 140ms; easing: ease-out; }
