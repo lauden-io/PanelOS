@@ -3820,12 +3820,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 });
             },
         );
-        // Wi-Fi roam check only while nothing is heard, said or played.
+        // Wi-Fi roam check only while nothing is heard, said or played; during music when the music stalls.
         let speaking = player.busy.clone();
         let ringing = ringing_flag.clone();
+        let quiet = move || !voice::busy() && !speaking.load(Ordering::SeqCst) && !ringing.load(Ordering::SeqCst);
+        let quiet_music = quiet.clone();
         roam::spawn(
             // idle: no voice run, no sound, no ringing, no Sendspin music (a roam drops the stream for a moment)
-            move || !voice::busy() && !speaking.load(Ordering::SeqCst) && !ringing.load(Ordering::SeqCst) && !sendspin::music_active(),
+            move || quiet() && !sendspin::music_active(),
+            // the music broke up within the last minute, nothing else going on
+            move || quiet_music() && sendspin::stalled_within(std::time::Duration::from_secs(60)),
             || HA_LINKED.load(Ordering::SeqCst),
         );
     }
@@ -3967,6 +3971,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Development: the clocks turn calm after this many seconds without activity ({"calm_after": 600})
             if let Some(n) = v.get("calm_after").and_then(Value::as_u64) {
                 platform::CALM_AFTER_S.store(n, Ordering::SeqCst);
+            }
+            // Development: counts as a music stall now ({"music_stall": true}; the roam check reacts within 5 s)
+            if v.get("music_stall").and_then(Value::as_bool) == Some(true) {
+                sendspin::note_stall();
             }
             if let Some(n) = v.get("cars_test").and_then(Value::as_u64) {
                 synth::test_cars(&ui, n as usize);

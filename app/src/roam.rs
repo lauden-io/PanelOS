@@ -26,6 +26,12 @@
 //! other access point of the network and avoids the poor one for two hours. A move
 //! is probed the same way, and a poor new access point means a move back. Nothing is
 //! tied to an access point: after two hours every one counts again.
+//!
+//! Music counts as busy (a move drops the stream for a moment), so a panel that fell to a
+//! farther access point while music played would stay there as long as the music lasts.
+//! When the music stalls (its buffer runs dry, see `sendspin`) and nothing else is going on,
+//! the check runs at once during the music, at most every 10 minutes: the stream breaks up
+//! anyway, and the move still needs an access point at least 10 dB stronger.
 
 use std::process::Command;
 use std::time::Duration;
@@ -62,6 +68,9 @@ const AVOID_FOR: Duration = Duration::from_secs(2 * 60 * 60);
 const LEAVE_MIN_SIGNAL: i32 = -75;
 /// Poor access points (bssid, unix seconds until), kept over app restarts until the next boot.
 const POOR_FILE: &str = "/tmp/panelos-poor-aps";
+/// A stalling stream: how often the roam thread looks, and the least time between two checks it starts.
+const STALL_POLL: Duration = Duration::from_secs(5);
+const STALL_GAP: Duration = Duration::from_secs(10 * 60);
 
 /// The current connection.
 #[derive(Debug, Clone, PartialEq)]
@@ -218,6 +227,11 @@ fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
     let aps = wpa_cli(&["scan_results"]).map(|t| parse_scan(&t)).unwrap_or_default();
     let same: Vec<String> = aps.iter().filter(|a| a.ssid == link.ssid).map(|a| format!("{} {} MHz {} dBm", a.bssid, a.freq, a.signal)).collect();
     crate::connlog::note(&format!("roam check: access points of the network: {}", same.join(", ")));
+    // wpa_supplicant may move by itself on the scan results (a weak link and a few dB more elsewhere)
+    if let Some(now) = wpa_cli(&["status"]).as_deref().and_then(parse_status).filter(|now| now.bssid != link.bssid) {
+        crate::connlog::note(&format!("roam check: wpa_supplicant moved from {} to {} after the scan", link.bssid, now.bssid));
+        return true;
+    }
     let poor = poor_aps();
     match decide(&link, signal, &aps, &poor, leaving) {
         Decision::Stay { current, best: Some(best) } => {
@@ -347,22 +361,43 @@ fn watch(linked: impl Fn() -> bool) {
     }
 }
 
-/// Runs the roam check thread (`idle`: whether the panel is idle) and the link watch (`linked`:
-/// whether the link to Home Assistant is up).
-pub fn spawn(idle: impl Fn() -> bool + Send + 'static, linked: impl Fn() -> bool + Send + 'static) {
+/// Runs the roam check thread (`idle`: whether the panel is idle; `stalled`: the music stalls and
+/// nothing else is going on) and the link watch (`linked`: whether the link to Home Assistant is up).
+pub fn spawn(
+    idle: impl Fn() -> bool + Send + 'static,
+    stalled: impl Fn() -> bool + Send + 'static,
+    linked: impl Fn() -> bool + Send + 'static,
+) {
     if let Err(e) = std::thread::Builder::new().name("link-watch".into()).spawn(move || watch(linked)) {
         crate::connlog::note(&format!("link watch not started: {e}"));
     }
     let started = std::thread::Builder::new().name("roam".into()).spawn(move || {
-        std::thread::sleep(FIRST_CHECK);
-        let mut next_check = std::time::Instant::now();
+        // the first check waits a while after the start; a stalling stream does not
+        let mut next_check = std::time::Instant::now() + FIRST_CHECK;
         let mut poor_probes = 0;
+        let mut stall_check: Option<std::time::Instant> = None;
         loop {
             if std::time::Instant::now() >= next_check {
                 let done = idle() && check(&idle, false);
                 next_check = std::time::Instant::now() + if done { INTERVAL } else { RETRY };
             }
-            std::thread::sleep(PROBE_EVERY.min(next_check.saturating_duration_since(std::time::Instant::now())).max(RETRY));
+            // until the next probe or check; a stalling stream wakes it
+            let wake = std::time::Instant::now()
+                + PROBE_EVERY.min(next_check.saturating_duration_since(std::time::Instant::now())).max(RETRY);
+            let mut stall = false;
+            while std::time::Instant::now() < wake {
+                std::thread::sleep(STALL_POLL.min(wake.saturating_duration_since(std::time::Instant::now())));
+                if stalled() && stall_check.is_none_or(|t| t.elapsed() >= STALL_GAP) {
+                    stall = true;
+                    break;
+                }
+            }
+            if stall {
+                stall_check = Some(std::time::Instant::now());
+                crate::connlog::note("roam check: the music stalls, checking during the music");
+                check(&|| idle() || stalled(), false);
+                continue;
+            }
             if !idle() {
                 continue;
             }

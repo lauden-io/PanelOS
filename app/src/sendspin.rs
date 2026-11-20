@@ -9,6 +9,8 @@
 //! - Audio comes as 48 kHz 16-bit PCM chunks stamped with the server's clock; the time filter maps them to the
 //!   panel's clock and the speaker thread (`voice::player_thread`) mixes them in when they are due, under every
 //!   other sound. While the voice assistant listens or thinks, the music is silent (as on the XVF speaker).
+//! - A stall (the music had played for 5 s, then the buffer ran dry for a second) is noted: the Wi-Fi roam check
+//!   then runs during the music (`roam`), as the stream breaks up anyway.
 //!
 //! The identity (Curve25519 key pair), the pairing PSK, the pairing records, volume and mute are kept in
 //! `/mnt/persist/nspanel/sendspin.json` (0600).
@@ -315,20 +317,51 @@ struct Music {
     gain: f32,
     /// For the log line while music plays: sum of squares and count of the mixed music samples, since when.
     stat: (f64, u64, Option<Instant>),
+    /// The stall watch: since when the music has played without a gap (reset by a start, a seek, a stall), and since
+    /// when the buffer has been dry.
+    flowing_since: Option<Instant>,
+    dry_since: Option<Instant>,
 }
 
-static MUSIC: Mutex<Music> =
-    Mutex::new(Music { active: false, channels: 2, chunks: VecDeque::new(), cursor: None, filter: TimeFilter::new(), gain: 0.0, stat: (0.0, 0, None) });
+static MUSIC: Mutex<Music> = Mutex::new(Music {
+    active: false,
+    channels: 2,
+    chunks: VecDeque::new(),
+    cursor: None,
+    filter: TimeFilter::new(),
+    gain: 0.0,
+    stat: (0.0, 0, None),
+    flowing_since: None,
+    dry_since: None,
+});
 static MUSIC_ON: AtomicBool = AtomicBool::new(false);
+/// The last stall: the music had played for a while, then the buffer ran dry for a second (the network brought too
+/// little). A start or a seek, whose first chunks are on their way, is no stall.
+static LAST_STALL: Mutex<Option<Instant>> = Mutex::new(None);
+/// A stall is this long without music after this long with it.
+const STALL_DRY: Duration = Duration::from_secs(1);
+const STALL_AFTER: Duration = Duration::from_secs(5);
 
 /// Sendspin music is playing: the speaker keeps running for it.
 pub fn music_active() -> bool {
     MUSIC_ON.load(Ordering::Relaxed)
 }
 
+/// The music stalled within the last `within` (and still plays).
+pub fn stalled_within(within: Duration) -> bool {
+    music_active() && LAST_STALL.lock().unwrap().is_some_and(|t| t.elapsed() <= within)
+}
+
+/// Development: counts as a stall now.
+pub fn note_stall() {
+    *LAST_STALL.lock().unwrap() = Some(Instant::now());
+}
+
 fn set_active(on: bool) {
     let mut m = MUSIC.lock().unwrap();
     m.active = on;
+    m.flowing_since = None;
+    m.dry_since = None;
     if !on {
         m.chunks.clear();
         m.cursor = None;
@@ -401,6 +434,23 @@ pub fn mix_music(out: &mut [i16], heard_at: i64) {
         samples.push(v);
     }
     m.cursor = Some(start + take as f64 * SAMPLE_US);
+    // the stall watch: the buffer does not reach the end of this block
+    let end = start + take as f64 * SAMPLE_US;
+    let dry = m.chunks.back().is_none_or(|(ts, s)| (*ts as f64) + s.len() as f64 * SAMPLE_US < end);
+    let now = Instant::now();
+    if !dry {
+        m.dry_since = None;
+        m.flowing_since.get_or_insert(now);
+    } else if m.flowing_since.is_some_and(|f| f.elapsed() >= STALL_AFTER) && m.dry_since.get_or_insert(now).elapsed() >= STALL_DRY {
+        // once per stall: the music has to flow for a while again before the next one counts
+        m.flowing_since = None;
+        m.dry_since = None;
+        *LAST_STALL.lock().unwrap() = Some(now);
+        eprintln!("nspanel-app: sendspin: stall, the buffer ran dry for {} s", STALL_DRY.as_secs());
+    } else if m.flowing_since.is_some_and(|f| f.elapsed() < STALL_AFTER) {
+        // a gap soon after a start or a seek: no stall, the music starts flowing again
+        m.flowing_since = None;
+    }
     // back to n frames: one repeated or one dropped in the middle
     if take == n - 1 {
         let mid = samples.len() / 2;
@@ -948,6 +998,9 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
                 let roles = p.get("roles").and_then(Value::as_array);
                 if roles.is_none_or(|r| r.iter().any(|x| x == "player")) {
                     let mut m = MUSIC.lock().unwrap();
+                    // a seek: the new chunks are on their way, the gap is no stall
+                    m.flowing_since = None;
+                    m.dry_since = None;
                     match p.get("from_timestamp").and_then(Value::as_i64) {
                         Some(from) => m.chunks.retain(|(t, _)| *t < from),
                         None => {
