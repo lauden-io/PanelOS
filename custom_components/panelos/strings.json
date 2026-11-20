@@ -258,6 +258,12 @@
       },
       "child_lock": {
         "name": "Child lock"
+      },
+      "rain_on_glass": {
+        "name": "Rain on the glass"
+      },
+      "lightning": {
+        "name": "Lightning"
       }
     },
     "notify": {

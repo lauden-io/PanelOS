@@ -21,6 +21,10 @@ pub struct Settings {
     /// "clock" or "black".
     pub screensaver_style: String,
     pub proximity_wake: bool,
+    /// Drops on the glass over the photo backgrounds when it rains.
+    pub rain_on_glass: bool,
+    /// Lightning (flashes and bolts) in the storm scenes.
+    pub lightning: bool,
     /// Dashboard url_path; empty = the one in app.json.
     pub dashboard: String,
     /// Weather entity shown on the screensaver; empty = none.
@@ -182,6 +186,8 @@ impl Default for Settings {
             screensaver_seconds: 120,
             screensaver_style: "clock".into(),
             proximity_wake: true,
+            rain_on_glass: true,
+            lightning: true,
             dashboard: String::new(),
             weather_entity: String::new(),
             wake_words: vec!["okay_nabu".into(), "hey_jarvis".into()],

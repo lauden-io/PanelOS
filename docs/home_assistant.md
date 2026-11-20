@@ -104,6 +104,8 @@ On the panel's device (this integration):
 | Automatic brightness | switch | Backlight follows the light in the room |
 | Wake on approach | switch | The proximity sensor wakes the screen |
 | Child lock | switch | Touches do nothing until the lock is held on the panel for 3 s; it locks again after a minute without a touch |
+| Rain on the glass | switch | Drops on the glass over the photo backgrounds when it rains (on by default) |
+| Lightning | switch | Flashes and bolts in the storm scenes (on by default) |
 | Illuminance | sensor | Light at the panel, lx |
 | Presence | binary sensor | Someone in front of the panel (proximity sensor) |
 | SoC temperature, Wi-Fi signal, IP address, App version | sensors | Diagnostics |

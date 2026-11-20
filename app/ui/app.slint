@@ -709,6 +709,30 @@ export component AppWindow inherits Window {
     property <float> left-k: root.screensaver-on || root.status-on || root.pages.length == 0 ? 0
         : (root.chips-left(root.pages[root.pg-a]) ? 1 : 0) * (1 - root.pg-f) + (root.chips-left(root.pages[root.pg-b]) ? 1 : 0) * root.pg-f;
 
+    // ---- rain on the glass: the app draws the drops over the finished frame (src/glass.rs, src/glass_gl.rs) ----
+    // the storm scenes' lightning, flashes and bolts (the panel's switch)
+    in property <bool> lightning: true;
+    // there are drops on the glass for a stroke to wipe
+    in property <bool> glass-wet;
+    // the pages with a photo background: the weather pages' photos and the weather details' living photo
+    pure function glass-page(p: PageSlot) -> bool {
+        p.kind == "home" ? (p.theme >= 0 ? p.theme : root.weather.theme) >= 0 && (p.theme >= 0 ? p.theme : root.weather.theme) <= 2
+            : p.kind == "weather" && p.variant == 1 && root.weather.theme >= 0 && root.weather.theme <= 2
+    }
+    // nothing over the pages that the drops would lie on
+    property <bool> glass-clear: !root.intro-visible && root.warm-page < 0 && root.paired && !root.connecting && root.offline-cause == 0
+        && !root.setup && !root.setup-pick-open && !root.wifi-setup && !root.wifi-password-open && !root.hidden-open
+        && !root.prox-test && !root.touch-test && !root.web-shown && !root.status-on && !root.timers-ringing && root.set-view == 0
+        && !root.sheet-open && !root.home-editing && !root.home-lock;
+    // how much of the screen shows a photo page with nothing over it (0..1): the drops show (and fade) with it
+    out property <float> glass-k: !root.glass-clear || root.pages.length == 0 ? 0
+        : ((root.glass-page(root.pages[root.pg-a]) ? 1 : 0) * (1 - root.pg-f) + (root.glass-page(root.pages[root.pg-b]) ? 1 : 0) * root.pg-f)
+            * (1 - root.saver-k) * (1 - root.voice-k) * (1 - Math.clamp(root.shade-pos, 0, 1));
+    // H1: a stroke up or down (or steeply slanted) on a wet glass wipes the drops along the finger
+    property <bool> glass-wipe-ok: root.glass-wet && root.glass-k > 0.5 && !Act.hold-swipe;
+    // the stroke under way: 0 not decided, 1 a page drag, 2 a wipe, 3 neither (a slanted stroke with one page)
+    property <int> stroke;
+
     // Taps, holds and drags of every page and layer: what ("music.play",
     // "timers.cancel", ...) and a value ("", an id, a number as text).
     callback act(string, string);
@@ -782,37 +806,68 @@ export component AppWindow inherits Window {
         swipe := SwipeGestureHandler {
             handle-swipe-left: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open;
             handle-swipe-right: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open;
+            handle-swipe-up: root.glass-wipe-ok;
+            handle-swipe-down: root.glass-wipe-ok;
             moved => {
-                if !root.dragging {
-                    // a new swipe takes the picture where it is: the running snap stops under the finger, and the
-                    // recogniser's start distance is not jumped over
-                    root.drag-start = root.offset;
-                    root.pos = root.base;
-                    root.drag-x0 = self.current-position.x - self.pressed-position.x;
+                // on a wet glass the stroke is decided once it is recognised: steeper than 50° wipes, else it turns
+                // the page (before that nothing moves)
+                if root.glass-wipe-ok && root.stroke == 0 && self.swiping && !root.dragging {
+                    root.stroke = Math.abs(self.current-position.y - self.pressed-position.y)
+                        > 1.19 * Math.abs(self.current-position.x - self.pressed-position.x) ? 2 : root.pages.length > 1 ? 1 : 3;
+                    if root.stroke == 2 {
+                        root.act("glass.wipe", "\{self.pressed-position.x / 1px}:\{self.pressed-position.y / 1px}");
+                    }
                 }
-                root.drag-x = self.current-position.x - self.pressed-position.x;
-                root.dragging = true;
+                if root.stroke == 2 {
+                    root.act("glass.wipe", "\{self.current-position.x / 1px}:\{self.current-position.y / 1px}");
+                } else if root.stroke == 1 || (root.stroke == 0 && (!root.glass-wipe-ok || root.dragging)) {
+                    if !root.dragging {
+                        // a new swipe takes the picture where it is: the running snap stops under the finger, and the
+                        // recogniser's start distance is not jumped over
+                        root.drag-start = root.offset;
+                        root.pos = root.base;
+                        root.drag-x0 = self.current-position.x - self.pressed-position.x;
+                    }
+                    root.drag-x = self.current-position.x - self.pressed-position.x;
+                    root.dragging = true;
+                }
             }
             swiped => {
-                let dx = self.current-position.x - self.pressed-position.x;
-                // the page it settles on: the next one in the swipe's direction past 22 % of a width, else the nearest
-                let rp = -(root.drag-start + dx - root.drag-x0) / root.width;
-                let target = dx < -root.width * 0.22 ? Math.ceil(rp - 0.05) : dx > root.width * 0.22 ? Math.floor(rp + 0.05) : Math.round(rp);
-                let before = root.page;
-                root.pos = target;
-                root.dragging = false;
-                root.drag-x = 0;
-                root.page = Math.mod(target, root.pages.length);
-                if root.page != before {
-                    root.page-changed(root.page);
+                if root.stroke == 2 {
+                    root.stroke = 0;
+                    root.act("glass.wipe-end", "");
+                } else if root.stroke == 3 {
+                    root.stroke = 0;
+                } else {
+                    root.stroke = 0;
+                    let dx = self.current-position.x - self.pressed-position.x;
+                    // the page it settles on: the next one in the swipe's direction past 22 % of a width, else the nearest
+                    let rp = -(root.drag-start + dx - root.drag-x0) / root.width;
+                    let target = dx < -root.width * 0.22 ? Math.ceil(rp - 0.05) : dx > root.width * 0.22 ? Math.floor(rp + 0.05) : Math.round(rp);
+                    let before = root.page;
+                    root.pos = target;
+                    root.dragging = false;
+                    root.drag-x = 0;
+                    root.page = Math.mod(target, root.pages.length);
+                    if root.page != before {
+                        root.page-changed(root.page);
+                    }
                 }
             }
             cancelled => {
-                let rp = -(root.drag-start + root.drag-x - root.drag-x0) / root.width;
-                root.pos = Math.round(rp);
-                root.dragging = false;
-                root.drag-x = 0;
-                root.page = Math.mod(root.pos, root.pages.length);
+                if root.stroke == 2 {
+                    root.stroke = 0;
+                    root.act("glass.wipe-end", "");
+                } else if root.stroke == 3 {
+                    root.stroke = 0;
+                } else {
+                    root.stroke = 0;
+                    let rp = -(root.drag-start + root.drag-x - root.drag-x0) / root.width;
+                    root.pos = Math.round(rp);
+                    root.dragging = false;
+                    root.drag-x = 0;
+                    root.page = Math.mod(root.pos, root.pages.length);
+                }
             }
             for slot[i] in root.pages: home-slot := Rectangle {
                 // warm-up: each page drawn once in view, under the page shown (start-up, a new page list)
@@ -891,6 +946,8 @@ export component AppWindow inherits Window {
                 // or the old one fades out over the new one (3 s); the widgets lie over both, drawn once
                 if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k < 0.999: PhotoSky {
                     taps: home-slot.mood-k <= 0.001;
+                    bolts: root.lightning;
+                    flash: root.lightning;
                     mood: home-slot.mood-a;
                     theme: home-slot.home-theme;
                     light-variant: home-slot.light-scene;
@@ -919,6 +976,8 @@ export component AppWindow inherits Window {
                 }
                 if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k > 0.001: PhotoSky {
                     taps: true;
+                    bolts: root.lightning;
+                    flash: root.lightning;
                     mood: home-slot.mood-b;
                     opacity: home-slot.mood-k;
                     theme: home-slot.home-theme;
