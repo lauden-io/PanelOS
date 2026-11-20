@@ -366,7 +366,14 @@ fn show_free(ui: &AppWindow) {
     };
     ui.set_home_layer_back(back);
     ui.set_home_layer_fwd(fwd);
-    ui.set_home_neon_on(items.iter().any(|i| i.get("neon").and_then(Value::as_bool).unwrap_or(true)));
+    // a widget without its own switch glows as the page's old switch says (as the page draws it)
+    let page = ui.get_page().max(0) as usize;
+    let page_neon = crate::with_state(|s| {
+        let ci = config_index(s, page)?;
+        s.panel_config.as_ref()?.get("pages")?.get(ci)?.get("options")?.get("neon")?.as_bool()
+    })
+    .unwrap_or(true);
+    ui.set_home_neon_on(items.iter().any(|i| i.get("neon").and_then(Value::as_bool).unwrap_or(page_neon)));
 }
 
 // ---------------------------------------------------------------- the sensor widget
