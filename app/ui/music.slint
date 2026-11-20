@@ -2,21 +2,15 @@
 //   0 plain (blurred cover behind), 1 full-screen cover (top / bottom fade to dark or light),
 //   2 turntable (cover = label, tone arm = position), 3 cassette, 4 half cassette.
 // The accent (bars, play button, vinyl, label stripes) and the blurred background are computed by
-// the app once per track. The speaker chip opens the player picker.
+// the app once per track. The speaker chip opens "Play on"; the page's settings open from the quick
+// shade's page row. Both are menus of the look (music_menu.slint).
 // The software renderer can't rotate images or clip to a circle, so the vinyl hole is a thick round
 // border over the square cover, and the tone arm / tape run are paths computed here.
 import { Theme, Act, Clock } from "theme.slint";
-import { Icon, Glyph, PlayGlyph, GlowText, Marquee, DragSheet, Dropdown, Segmented, Toggle } from "widgets.slint";
+import { Icon, Glyph, PlayGlyph, GlowText, Marquee, MenuHost, PageMenu } from "widgets.slint";
 import { VolumeIcon } from "settings.slint";
-
-export struct MusicPlayer {
-    name: string,       // "Kitchen speaker"
-    icon: string,       // speaker, display, TV …
-    active: bool,       // the page shows / controls this one
-    grouped: bool,      // plays together with the active one
-    playing: bool,      // plays something (maybe something else)
-    now: string,        // what it plays ("Go West · Pet Shop Boys"), empty when idle
-}
+import { MusicPlayer, MusicMenu } from "music_menu.slint";
+export { MusicPlayer }
 
 component Ctl inherits Rectangle {
     in property <string> icon;
@@ -185,7 +179,12 @@ export component MusicPage inherits Rectangle {
     property <float> spin-x0;
     property <bool> spin-on;
     property <bool> coasting;
-    init => { root.spin-on = root.playing; root.spin-x0 = root.playing ? 1.2 : 2; }
+    init => {
+        root.spin-on = root.playing;
+        root.spin-x0 = root.playing ? 1.2 : 2;
+        root.latch();
+        if root.shown { root.claim(); }
+    }
     pure function up-f(x: float) -> float { return x < 1.2 ? x * x * x / 4.32 : 0.4 + x - 1.2; }
     pure function down-f(x: float) -> float { return x < 2 ? (1 - (1 - x / 2) * (1 - x / 2) * (1 - x / 2)) * 2 / 3 : 2 / 3; }
     pure function spin-at(dt: float) -> float {
@@ -266,7 +265,7 @@ export component MusicPage inherits Rectangle {
     in property <string> kind-icon: "\u{F0387}";   // shown instead of the cover (radio, story …)
     in property <color> accent: #e8262d;
     in property <[MusicPlayer]> players;
-    in property <bool> picker;
+    in property <bool> picker;             // "Play on" (from the chip)
     in property <int> tape-scope;          // cassette: the tape shows 0 this track, 1 the whole queue
     in property <float> q-played;          // seconds of the queue before the current track
     in property <float> q-total;           // seconds of the whole queue
@@ -283,7 +282,7 @@ export component MusicPage inherits Rectangle {
     in property <float> tape-rem: -1;
     in property <bool> scroll;             // long titles scroll instead of being cut off …
     in property <float> scroll-speed: 3;   // … at this speed (1 slow .. 5 fast)
-    in property <bool> settings;           // the music page settings sheet
+    in property <bool> settings;           // the page's settings menu (from the quick shade's page row)
     in property <int> holds;               // turntable / cassette: the record / tape holds 0 one track, 1 the whole queue
     in property <int> wood;                // turntable: the counter under it (index into woods)
     in property <[image]> woods;           // swatches of the wood choices      // cassette: tape left on the supply reel set by the app (rewind); -1 = from the position
@@ -814,141 +813,74 @@ export component MusicPage inherits Rectangle {
         TouchArea { y: -6px; height: parent.height + 12px; clicked => { Act.act("music.picker", ""); } }
     }
 
-    // settings: look, what the record / tape holds, long titles (cut off or scroll, speed)
-    // the settings: a sheet that follows the finger (DragSheet)
-    // as tall as its rows need (header 72 px, rows 54 px apart, 24 px under the last); the page shows above it
-    // (+ the cover option of the plain look and of the cassettes: blurred cover / the cover behind the cassette)
-    property <bool> cover-row: root.style == 0 || root.style == 3 || root.style == 4;
-    property <int> settings-rows: 2 + (root.style >= 2 ? 1 : 0) + (root.style == 2 ? 1 : 0) + (root.scroll ? 1 : 0) + (root.cover-row ? 1 : 0);
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.settings; need: 72px + root.settings-rows * 54px - 22px;
-        close => { Act.act("music.settings-close", ""); }
-        sheet-color: Theme.surface; ink: Theme.text;
-        Text { x: 20px; y: 22px; text: "Music"; font-size: 20px; font-weight: 600; color: Theme.text; }
-        Rectangle {
-            x: parent.width - 16px - 88px - 46px; y: 18px; width: 36px; height: 36px; border-radius: 18px; background: Theme.surface-raised;
-            Icon { text: "\u{F02FD}"; font-size: 21px; color: Theme.text; }
-        }
-        Rectangle {
-            x: parent.width - 16px - 88px; y: 19px; width: 88px; height: 34px; border-radius: 17px; background: Theme.text;
-            Text { text: "Done"; font-size: 15px; font-weight: 600; color: Theme.background; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { clicked => { Act.act("music.settings-close", ""); } }
-        }
-        Dropdown { x: 16px; y: 68px; width: parent.width - 32px; options: ["Plain", "Full cover", "Turntable", "Cassette", "Half cassette"];
-            selected: root.style; picked(i) => { Act.act("music.look", i); } }
-        // rows 54 px apart: look, holds (turntable / cassettes), wood (turntable), long text, speed
-        property <length> row-h: 54px;
-        property <length> r-cover: 72px + (root.style >= 2 ? 1 : 0) * self.row-h + self.row-h;
-        property <length> r-text: 72px + (root.style >= 2 ? 1 : 0) * self.row-h + (root.style == 2 ? 1 : 0) * self.row-h + (root.cover-row ? 1 : 0) * self.row-h + self.row-h;
-        if root.cover-row: Rectangle {
-            x: 16px; y: parent.r-cover - 4px; width: parent.width - 32px; height: 40px;
-            Text { x: 4px; width: parent.width - 80px; height: parent.height; text: root.style == 0 ? "Blurred cover" : "Cover behind the cassette"; font-size: 16px;
-                color: Theme.text; vertical-alignment: center; }
-            Toggle { x: parent.width - 60px; y: 4px; on: root.style == 0 ? root.cover-blur : root.cs-cover;
-                toggled => { Act.act(root.style == 0 ? "music.blur" : "music.cover-bg", root.style == 0 ? (root.cover-blur ? "0" : "1") : (root.cs-cover ? "0" : "1")); } }
-        }
-        if root.style >= 2: Segmented { x: 16px; y: 72px + 54px - 4px; width: parent.width - 32px; options: ["One track", "Whole queue"];
-            selected: root.holds; picked(i) => { Act.act("music.holds", i); } }
-        Segmented { x: 16px; y: parent.r-text - 4px; width: parent.width - 32px; options: ["Cut off", "Scroll"];
-            selected: root.scroll ? 1 : 0; picked(i) => { Act.act("music.scroll", i); } }
-        // turntable: the wood of the counter it stands on (photo swatches)
-        if root.style == 2: Rectangle {
-            x: 16px; y: 72px + 2 * 54px; width: parent.width - 32px; height: 32px;
-            for w[i] in root.woods: Rectangle {
-                x: i * 60px; width: 52px; height: 32px;
-                Image { width: parent.width; height: parent.height; source: w; image-fit: cover; }
-                Rectangle { x: -3px; y: -3px; width: parent.width + 6px; height: parent.height + 6px; border-radius: 4px;
-                    border-width: i == root.wood ? 2px : 0px; border-color: Theme.text; }
-                TouchArea { clicked => { Act.act("music.wood", i); } }
-            }
-        }
-        // scroll speed: slow .. fast in five steps
-        if root.scroll: Rectangle {
-            x: 16px; y: parent.r-text + parent.row-h; width: parent.width - 32px; height: 32px;
-            Icon { x: 0; width: 28px; height: parent.height; text: "\u{F0D3B}"; font-size: 22px; color: Theme.muted; }
-            Icon { x: parent.width - 28px; width: 28px; height: parent.height; text: "\u{F0907}"; font-size: 22px; color: Theme.muted; }
-            Rectangle {
-                x: 44px; y: 14px; width: parent.width - 88px; height: 4px; border-radius: 2px; background: Theme.text.with-alpha(0.14);
-                Rectangle { width: parent.width * (root.scroll-speed - 1) / 4; border-radius: 2px; background: root.acc; x: 0; }
-                for i in 5: Rectangle { x: parent.width * i / 4 - 2px; y: -3px; width: 4px; height: 10px; border-radius: 2px; background: i <= root.scroll-speed - 1 ? root.acc : #ffffff59; }
-                Rectangle { x: parent.width * (root.scroll-speed - 1) / 4 - 9px; y: -7px; width: 18px; height: 18px; border-radius: 9px; background: #ffffff; }
-                TouchArea {
-                    y: -14px; height: parent.height + 28px;
-                    clicked => { Act.act("music.speed", Math.round(Math.max(0, Math.min(1, self.mouse-x / self.width)) * 4) + 1); }
-                }
-            }
+    // ---------- the menus of the look (spec 32.1) ----------
+    // "Play on" hangs from the chip; the settings come down under the status bar when the quick shade's page row asks
+    // for them (PageMenu). A tap beside the menu (the chip too), Done or a pick closes it; leaving the page closes it.
+    in property <bool> shown;              // the page is on screen
+    property <int> skin: root.style <= 1 ? 0 : root.style == 2 ? 1 : 2;
+    property <bool> menu-open: root.picker || root.settings;
+    // the kind and the skin stay as they were opened while the menu leaves
+    property <int> m-kind;
+    property <int> m-skin;
+    function latch() {
+        root.m-kind = root.settings ? 1 : 0;
+        root.m-skin = root.skin;
+    }
+    changed picker => { if self.picker { root.latch(); } }
+    changed settings => { if self.settings { root.latch(); } }
+    function close-menu() {
+        if root.settings { Act.act("music.settings-close", ""); }
+        if root.picker { Act.act("music.picker-close", ""); }
+    }
+    // the quick shade's page row: what it shows while this page is on screen ("Music settings · Turntable")
+    property <string> look-name: root.style == 0 ? "Plain" : root.style == 1 ? "Full cover" : root.style == 2 ? "Turntable" : root.style == 3 ? "Cassette" : "Half cassette";
+    function claim() {
+        PageMenu.title = "Music settings";
+        PageMenu.look = root.look-name;
+        PageMenu.icon = root.style == 0 ? "\u{F14FB}" : root.style == 1 ? "\u{F02EB}" : root.style == 2 ? "\u{F0025}" : "\u{F09D4}";
+        PageMenu.has-settings = true;
+    }
+    changed shown => {
+        if self.shown { root.claim(); } else { root.close-menu(); root.look-next = -1; root.reopen = false; }
+    }
+    changed style => { if root.shown { root.claim(); } }
+    property <int> open-request: PageMenu.open-request;
+    changed open-request => { if root.shown { Act.act("music.settings", ""); } }
+    // a new look in the settings: the menu goes (its own way out), the look changes, and the settings come back as the
+    // new look's menu
+    property <int> look-next: -1;
+    property <bool> reopen;
+    Timer {
+        interval: host.out-ms + 20ms;
+        running: root.look-next >= 0 && !root.settings;
+        triggered => {
+            Act.act("music.look", root.look-next);
+            root.look-next = -1;
+            root.reopen = true;
         }
     }
-
-    // player picker: tap a row = show that player here (remembered); ⇄ = move the music there; + = play there too
-    // the picker: a sheet sized to its players (at most up to y 88), that follows the finger (DragSheet)
-    property <length> picker-content: 64px + root.players.length * 52px + 16px;
-    property <length> picker-need: min(424px, root.picker-content);
-    property <bool> picker-info;
-    changed picker => { if self.picker { picker-list.viewport-y = 0; } }
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.picker; need: root.picker-need; content-need: root.picker-content;
-        close => { Act.act("music.picker-close", ""); }
-        sheet-color: Theme.surface; ink: Theme.text;
-        clip: true;
-        // (the list first: the header's buttons lie above it)
-        // the players scroll when they do not all fit
-        // every opening starts at the top of the list (the panel itself is the first row)
-        picker-list := Flickable {
-            x: 0; y: 64px; width: parent.width; height: root.picker-need - 64px;
-            viewport-height: max(self.height, root.players.length * 52px + 16px);
-        for p[i] in root.players: Rectangle {
-            x: 12px; y: i * 52px; width: parent.width - 24px; height: 48px; border-radius: 14px;
-            background: p.active ? root.acc.with-alpha(0.18) : transparent;
-            TouchArea { clicked => { Act.act("music.show", i); } }
-            Icon { x: 10px; y: 0; width: 28px; height: parent.height; text: p.icon; font-size: 22px; color: p.active || p.grouped ? Theme.text : Theme.muted; }
-            Text { x: 48px; y: p.now != "" ? 4px : 0; width: parent.width - 152px; height: p.now != "" ? 22px : parent.height; text: p.name; font-size: 16px; font-weight: p.active ? 600 : 400;
-                color: Theme.text; vertical-alignment: center; overflow: elide; }
-            if p.now != "": HorizontalLayout {
-                x: 48px; y: 25px; width: parent.width - 152px; height: 18px; spacing: 6px;
-                if p.playing: Rectangle {
-                    width: 12px;
-                    for b in 3: Rectangle { x: b * 4px; y: (parent.height - self.height) / 2 + 2px; width: 3px; height: b == 1 ? 11px : b == 0 ? 6px : 9px; border-radius: 1px; background: root.acc; }
+    Timer { interval: 60ms; running: root.reopen; triggered => { root.reopen = false; if root.shown { Act.act("music.settings", ""); } } }
+    host := MenuHost {
+        open: root.menu-open;
+        kind: root.m-kind;
+        menu-w: root.m-kind == 1 ? 448px : root.m-skin == 0 ? 320px : root.m-skin == 1 ? 340px : 344px;
+        need: menu.need;
+        in-ms: root.m-skin == 0 ? 140ms : root.m-skin == 1 ? (root.m-kind == 0 ? 650ms : 700ms) : 520ms;
+        out-ms: root.m-skin == 0 ? 100ms : root.m-skin == 1 ? 180ms : 200ms;
+        close => { root.close-menu(); }
+        menu := MusicMenu {
+            x: host.menu-x; y: host.menu-y; width: host.menu-w; height: host.menu-h;
+            skin: root.m-skin; kind: root.m-kind; open: host.open; t-in: host.t-in; t-out: host.t-out;
+            players: root.players; style: root.style; holds: root.holds; wood: root.wood; woods: root.woods;
+            scroll: root.scroll; scroll-speed: root.scroll-speed; cover-blur: root.cover-blur; cs-cover: root.cs-cover;
+            tape: root.acc;
+            pick-look(i) => {
+                if i != root.style {
+                    root.look-next = i;
+                    Act.act("music.settings-close", "");
                 }
-                Text { text: p.now; font-size: 12px; color: Theme.muted; vertical-alignment: center; overflow: elide; horizontal-stretch: 1; }
             }
-            // transfer (not for the shown one)
-            if !p.active: Rectangle {
-                x: parent.width - 96px; y: (parent.height - 36px) / 2; width: 36px; height: 36px; border-radius: 18px;
-                border-width: 1.5px; border-color: Theme.text.with-alpha(0.3);
-                Icon { text: "\u{F04E1}"; font-size: 20px; color: Theme.text; }
-                TouchArea { clicked => { Act.act("music.transfer", i); } }
-            }
-            // shown one: check; others: + to play there too, filled check when grouped
-            Rectangle {
-                x: parent.width - 52px; y: (parent.height - 36px) / 2; width: 36px; height: 36px; border-radius: 18px;
-                background: p.active ? root.acc : p.grouped ? Theme.text.with-alpha(0.18) : transparent;
-                border-width: p.active || p.grouped ? 0px : 1.5px; border-color: Theme.text.with-alpha(0.3);
-                Icon { text: p.active || p.grouped ? "\u{F012C}" : "\u{F0415}"; font-size: 20px; color: Theme.text; }
-                TouchArea { enabled: !p.active; clicked => { Act.act("music.group", i); } }
-            }
-        }
-        }
-        Text { x: 20px; y: 22px; text: "Play on"; font-size: 20px; font-weight: 600; color: Theme.text; }
-        Rectangle {
-            x: parent.width - 96px; y: 18px; width: 36px; height: 36px; border-radius: 18px; background: root.picker-info ? Theme.surface-raised : transparent;
-            Icon { text: "\u{F02FD}"; font-size: 20px; color: Theme.muted; }
-            TouchArea { x: -4px; y: -6px; width: parent.width + 8px; height: parent.height + 12px; clicked => { root.picker-info = !root.picker-info; } }
-        }
-        Rectangle {
-            x: parent.width - 52px; y: 18px; width: 36px; height: 36px; border-radius: 18px; background: Theme.surface-raised;
-            Icon { text: "\u{F0156}"; font-size: 20px; color: Theme.text; }
-            TouchArea { x: -4px; y: -6px; width: parent.width + 8px; height: parent.height + 12px; clicked => { root.picker-info = false; Act.act("music.picker-close", ""); } }
-        }
-        // the info: what the two buttons of a row do
-        if root.picker-info: Rectangle {
-            x: 16px; y: 60px; width: parent.width - 32px; height: it.preferred-height + 24px; border-radius: 14px; background: Theme.surface-raised;
-            drop-shadow-blur: 16px; drop-shadow-color: #00000059;
-            it := Text { x: 14px; y: 12px; width: parent.width - 28px; wrap: word-wrap; font-size: 14px; color: Theme.text;
-                text: "\u{21C4} moves the music to that player, + plays it there too (a group). A tap on a name shows that player here."; }
-            TouchArea { clicked => { root.picker-info = false; } }
+            done => { Act.act("music.settings-close", ""); }
         }
     }
 }

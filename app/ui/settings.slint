@@ -2,7 +2,7 @@
 // microphone, theme, do not disturb, screen off); the PanelOS mark in it opens the full settings after a hold (so children
 // do not wander in). Editors for the pages stay in Home Assistant. Every text here is fixed: one line per place, the same
 // every time.
-import { Icon, MarkButton, CheckBox, Brand, TouchSlider } from "widgets.slint";
+import { Icon, MarkButton, CheckBox, Brand, TouchSlider, PageMenu } from "widgets.slint";
 export { Brand }
 import { TimerItem } from "timers.slint";
 import { InfoNote } from "info.slint";
@@ -183,6 +183,8 @@ export component SettingsLayer inherits Rectangle {
     in property <bool> moving;                // a drag on the open shade runs (its directions stay on)
     callback shade-move(length, bool);        // a vertical drag on the open shade: how far (px, + down), and whether the finger let go
     callback shade-step(int);                 // the chevron: the second step
+    in property <bool> page-row;              // the second step shows the page row (the page on screen has settings, PageMenu)
+    callback page-open();                     // its tap: the shade closes and the page opens its settings in its look's menu
 
     // the hold popup: a scrim (#000 @65 %) fades in over 200 ms and the card pops 0.96 → 1 with a fade
     property <float> pop-k: root.view == 2 ? 1 : 0;
@@ -194,14 +196,17 @@ export component SettingsLayer inherits Rectangle {
     // and a chevron, the second the rows of 27.1; under both: what runs now (timers, the newest notifications).
     property <float> e: clamp(root.shade-pos - 1, 0, 1);
     property <float> e2: root.e * root.e;
-    property <length> over: max(0, root.shade-pos - 2) * 136px;          // pulled on past the second step (the rubber)
+    // the page row (spec 32.0) sits under the tiles on the second step: what runs now moves 60 px further down
+    property <length> row-h: root.page-row ? 60px : 0px;
+    property <length> morph: 136px + root.row-h;                         // the finger travel of the morph
+    property <length> over: max(0, root.shade-pos - 2) * root.morph;     // pulled on past the second step (the rubber)
     property <int> nt: root.now-timers.length;
     property <int> nn: min(6, root.now-notes.length);
     property <length> now-h: (root.nt > 0 ? 28px + root.nt * 60px : 0px)
         + (root.nn > 0 ? 28px + root.nn * 60px + (root.now-notes.length > 6 ? 40px : 0px) : 0px);
-    property <length> now-y: 182px + 136px * root.e;                         // where "Now" starts (screen y, unscrolled)
+    property <length> now-y: 182px + root.morph * root.e;                    // where "Now" starts (screen y, unscrolled)
     property <length> h1: min(472px, 182px + root.now-h + 20px);
-    property <length> h2: min(472px, 318px + root.now-h + 20px);
+    property <length> h2: min(472px, 318px + root.row-h + root.now-h + 20px);
     property <length> bottom: root.h1 + (root.h2 - root.h1) * root.e + root.over;
     property <length> slide: (Math.min(1, root.shade-pos) - 1) * root.h1;   // sliding in from the top (P < 1)
     pure function lerp(a: length, b: length, k: float) -> length { a + (b - a) * k }
@@ -315,6 +320,21 @@ export component SettingsLayer inherits Rectangle {
                     if root.e < 0.99: Rectangle { x: (parent.width - 48px) / 2; y: 110px + root.dip; width: 48px; height: 22px; opacity: 1 - root.e;
                         Icon { width: parent.width; height: parent.height; text: "\u{F0140}"; font-size: 22px; color: Brand.muted; }
                         TouchArea { clicked => { root.shade-step(2); } } }
+                    // the second step: the page row (a 28.11 navigation row): the page's settings in its look's menu
+                    // ("Music settings" over "Turntable", the look's lead icon); a tap closes the shade, then the page
+                    // opens them
+                    if root.e > 0.01 && root.page-row: Rectangle {
+                        x: 16px; y: 314px - 46px; width: 448px; height: 52px; border-radius: 16px; opacity: root.e2;
+                        background: page-ta.pressed ? Brand.pressed : Brand.raised;
+                        Rectangle { x: 7px; y: 7px; width: 38px; height: 38px; border-radius: 12px; background: Brand.surface;
+                            Icon { text: PageMenu.icon; font-size: 21px; color: Brand.text; } }
+                        Text { x: 57px; y: 8px; width: parent.width - 57px - 42px; height: 20px; text: PageMenu.title; font-size: 15px; font-weight: 600;
+                            color: Brand.text; vertical-alignment: center; }
+                        Text { x: 57px; y: 28px; width: parent.width - 57px - 42px; height: 16px; text: PageMenu.look; font-size: 12px;
+                            color: Brand.muted; vertical-alignment: center; }
+                        Icon { x: parent.width - 30px; y: 0; width: 22px; height: parent.height; text: "\u{F0142}"; font-size: 22px; color: Brand.muted; }
+                        page-ta := TouchArea { enabled: root.e > 0.9; clicked => { root.page-open(); } }
+                    }
                     // what runs now
                     Rectangle { x: 0; y: root.now-y - 46px; width: parent.width; height: root.now-h;
                         if root.nt > 0: Text { x: 20px; y: 6px; height: 16px; text: "TIMERS"; font-size: 11px; font-weight: 600; color: Brand.muted; vertical-alignment: center; }

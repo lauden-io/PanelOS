@@ -18,7 +18,7 @@ import "./fonts/CourierPrime-Regular.ttf";
 import "./fonts/CourierPrime-Bold.ttf";
 
 import { Theme, Act, Clock, Words } from "theme.slint";
-import { Jelly } from "widgets.slint";
+import { Jelly, PageMenu } from "widgets.slint";
 import { PairingScreen, FoundHa, SetupScreen, WifiNet, WifiScreen, WifiPasswordScreen, HiddenNetworkScreen, HaPickScreen, ConnectingScreen, OfflineScreen, Phrases } from "overlays.slint";
 import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData, WeatherPanel } from "panels.slint";
 import { HomeItem, HomeEvent, HomeMusic, HomeGrid, WxIcons } from "home.slint";
@@ -1058,6 +1058,7 @@ export component AppWindow inherits Window {
                     cs-back: root.music-cs-back; cs-front: root.music-cs-front; cs-hub: root.music-cs-hub; cs-hub-r: root.music-cs-hub-r;
                     tt-arm-r: root.music-tt-arm-r; tt-lift: root.music-tt-lift; tape-rem: root.music-tape-rem;
                     scroll: root.music-scroll; scroll-speed: root.music-scroll-speed; settings: root.music-settings; holds: root.music-holds; wood: root.music-wood; woods: root.music-woods;
+                    shown: root.page == i && !root.screensaver-on;
                 }
                 if slot.kind == "timers": TimersPage {
                     timers: root.timers-list; ringing: root.timers-ringing; ring-label: root.timers-ring-label; ring-over: root.timers-ring-over;
@@ -1284,26 +1285,39 @@ export component AppWindow inherits Window {
     property <duration> pull-t;
     property <length> pull-last;
     property <float> pull-v;                 // px per ms, + downwards
-    // the shade in two steps (29.5): P 0 closed … 1 the first step … 2 the second; 136 px of finger travel morph one into
-    // the other; past the second a rubber band (24 px at most)
+    // the shade in two steps (29.5): P 0 closed … 1 the first step … 2 the second; `shade-morph` of finger travel morphs one
+    // into the other; past the second a rubber band (24 px at most)
     property <int> shade-step: 1;
     property <bool> shade-moving;            // a vertical drag on the open shade
     property <length> shade-d;               // … how far (+ down)
     property <int> shade-from: 1;            // … from which step
+    // the quick shade's page row (spec 32.0): the page on screen has settings in its look's menu (the page fills in
+    // PageMenu); kinds without page settings never show it, whatever an earlier page left there
+    pure function menu-kind(kind: string) -> bool {
+        kind == "music" || kind == "thermostat" || kind == "timers" || kind == "calendar" || kind == "camera" || kind == "info"
+            || kind == "todo" || kind == "quick"
+    }
+    property <bool> page-row: PageMenu.has-settings && !root.screensaver-on && root.pages.length > 0
+        && root.page >= 0 && root.page < root.pages.length && root.menu-kind(root.pages[root.page].kind);
+    // its tap: the shade closes, then (300 ms later, the shade gone) the page opens its settings
+    property <bool> page-row-pending;
+    Timer { interval: 300ms; running: root.page-row-pending; triggered => { root.page-row-pending = false; PageMenu.open-request += 1; } }
+    // the finger travel that morphs the first step into the second: what "Now" moves by (60 px more with the page row)
+    property <length> shade-morph: root.page-row ? 196px : 136px;
     pure function shade-band(d: length) -> float {
-        return 24px * (1 - Math.pow(2.71828, -(d / 80px))) / 136px;
+        return 24px * (1 - Math.pow(2.71828, -(d / 80px))) / root.shade-morph;
     }
     // the first step's height (what the shade slides in by): its controls, what runs now, the handle band
     property <length> shade-h1: min(472px, 182px + (root.timers-list.length > 0 ? 28px + root.timers-list.length * 60px : 0px)
         + (root.info-notes.length > 0 ? 28px + min(6, root.info-notes.length) * 60px + (root.info-notes.length > 6 ? 40px : 0px) : 0px) + 20px);
     pure function p-of-pull(d: length) -> float {
         return d <= root.shade-h1 ? max(0, d / root.shade-h1)
-            : d <= root.shade-h1 + 136px ? 1 + (d - root.shade-h1) / 136px
-            : 2 + root.shade-band(d - root.shade-h1 - 136px);
+            : d <= root.shade-h1 + root.shade-morph ? 1 + (d - root.shade-h1) / root.shade-morph
+            : 2 + root.shade-band(d - root.shade-h1 - root.shade-morph);
     }
     pure function p-of-move(from: int, d: length) -> float {
-        return from == 1 ? (d >= 0 ? (d <= 136px ? 1 + d / 136px : 2 + root.shade-band(d - 136px)) : max(0, 1 + d / root.shade-h1))
-            : (d >= 0 ? 2 + root.shade-band(d) : d >= -136px ? 2 + d / 136px : max(0, 1 + (d + 136px) / root.shade-h1));
+        return from == 1 ? (d >= 0 ? (d <= root.shade-morph ? 1 + d / root.shade-morph : 2 + root.shade-band(d - root.shade-morph)) : max(0, 1 + d / root.shade-h1))
+            : (d >= 0 ? 2 + root.shade-band(d) : d >= -root.shade-morph ? 2 + d / root.shade-morph : max(0, 1 + (d + root.shade-morph) / root.shade-h1));
     }
     // P springs to its step with J-edge(60, 320)
     property <float> p-from;
@@ -1447,6 +1461,8 @@ export component AppWindow inherits Window {
         confirm-title: root.set-confirm-title; confirm-line: root.set-confirm-line;
         theme-mode: root.theme-mode;
         auto-bright: root.set-auto; now-timers: root.timers-list; now-notes: root.info-notes; moving: root.shade-moving;
+        page-row: root.page-row;
+        page-open => { root.page-row-pending = true; root.p-go(root.shade-pos, 0); }
         shade-move(d, done) => {
             if !done {
                 if !root.shade-moving {
