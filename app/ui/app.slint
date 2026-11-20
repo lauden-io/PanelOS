@@ -297,6 +297,10 @@ export component AppWindow inherits Window {
     in property <bool> todo-show-done;
     in property <length> todo-scroll;
     in property <bool> todo-picker;
+    in property <bool> todo-settings;          // the to-do page settings in the look's own menu (spec 40)
+    in property <int> todo-pend-look: -1;      // the terminal look's config: a look chosen there, applied when it is left
+    in property <string> todo-menu-stamp;
+    in property <[image]> todo-menu-tapes;
     in property <string> todo-empty-title;
     in property <string> todo-empty-sub;
     in property <bool> todo-adding;
@@ -1122,7 +1126,9 @@ export component AppWindow inherits Window {
                 }
                 if slot.kind == "todo": TodoPage {
                     lists: root.todo-lists; sel: root.todo-sel; open-items: root.todo-open; leaving: root.todo-leaving; done-items: root.todo-done; show-done: root.todo-show-done;
-                    scroll: root.todo-scroll; picker: root.todo-picker; empty-title: root.todo-empty-title; empty-sub: root.todo-empty-sub;
+                    scroll: root.todo-scroll; picker: root.todo-picker; settings: root.todo-settings; pend-look: root.todo-pend-look;
+                    menu-stamp: root.todo-menu-stamp; menu-tapes: root.todo-menu-tapes; on-screen: i == root.shown-page && !root.screensaver-on;
+                    empty-title: root.todo-empty-title; empty-sub: root.todo-empty-sub;
                     adding: root.todo-adding; draft: root.todo-draft; can-due: root.todo-can-due; due-pick: root.todo-due-pick; due-picked: root.todo-due-picked;
                     kb-layer: root.todo-kb-layer; kb-layout: root.kb-layout; look: slot.variant; note-draft: root.todo-note-draft; note-on: root.todo-note-on; can-note: root.todo-can-note; stamp: root.todo-stamp;
                     receipt-footer: root.todo-receipt-footer; receipt-empty: root.todo-receipt-empty; term-empty: root.todo-term-empty;
@@ -1203,7 +1209,7 @@ export component AppWindow inherits Window {
     property <bool> sheet-open: root.quick-sheet || root.thermo-sheet || root.thermo-picker || root.thermo-settings || root.music-picker
         || root.music-settings || root.cal-detail || root.cal-settings || root.cal-day-sheet || root.cal-edit || root.timers-quick
         || root.timers-sheet >= 0 || root.timers-settings || root.timers-edit || root.timers-edit-keyboard || root.todo-picker
-        || root.todo-adding || root.cam-settings || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker
+        || root.todo-settings || root.todo-adding || root.cam-settings || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker
         || root.home-settings >= 0;
     // a sheet opening while a page drag runs (the pager stops taking swipes): the drag snaps back, never left halfway
     changed sheet-open => {

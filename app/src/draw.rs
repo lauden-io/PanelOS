@@ -44,6 +44,9 @@ pub enum Ink {
 pub enum Job {
     /// One label tape (small: the due date's and the note's size).
     Tape { text: String, tint: Tint, small: bool, seed: u32 },
+    /// A label in a menu: its text on as many tapes as it needs under each other (wrapped at the words, each line at
+    /// most `max_w` px), with a white rim round each when `rim` (the list shown). "▶" marks it, embossed like a letter.
+    TapeLabel { text: String, tint: Tint, small: bool, seed: u32, max_w: u32, rim: bool },
     /// A to-do item on tapes: its own, the due date to the right, the note under it.
     TapeItem { text: String, tint: Tint, seed: u32, due: String, due_state: i32, note: String, struck: bool },
     /// The label look's header: the list name and what is left.
@@ -207,6 +210,7 @@ mod skia {
     fn draw(f: &mut Fonts, job: &Job) -> Option<Pic> {
         match job {
             Job::Tape { text, tint, small, seed } => tape(f, text, *tint, *small as u8, *seed, false, false, 448.0),
+            Job::TapeLabel { text, tint, small, seed, max_w, rim } => tape_label(f, text, *tint, *small as u8, *seed, *max_w as f32, *rim),
             Job::DeskTape { text, tint, seed } => tape(f, text, *tint, 2, *seed, false, false, 72.0),
             Job::TapeItem { text, tint, seed, due, due_state, note, struck } => {
                 tape_item(f, text, *tint, *seed, due, *due_state, note, *struck)
@@ -447,19 +451,128 @@ mod skia {
     /// edges, raised capitals sitting a little unevenly; struck: a raised bar over each letter.
     #[allow(clippy::too_many_arguments)]
     fn tape(f: &mut Fonts, text: &str, tint: Tint, size: u8, seed: u32, struck: bool, faded: bool, max_w: f32) -> Option<Pic> {
+        tape_with(f, text, tint, size, seed, struck, faded, max_w, false)
+    }
+
+    /// The marker of the list shown ("▶"): not in the tape's font, drawn as a raised triangle this wide (in em).
+    const MARK: char = '\u{25B6}';
+    const MARK_EM: f32 = 0.62;
+
+    /// The tape's size: height, font size, letter spacing and the padding at the ends (0 an item's tape, 1 the due
+    /// date's and the note's, 2 the mixing desk's).
+    fn tape_metrics(size: u8) -> (usize, f32, f32, f32) {
+        match size {
+            2 => (21usize, 10.0, 0.5, 5.0),
+            1 => (28usize, 12.0, 1.0, 12.0),
+            _ => (44usize, 18.0, 1.6, 17.0),
+        }
+    }
+
+    /// The width of a tape's capitals (without the ends), as the tape lays them out.
+    fn tape_text_w(f: &mut Fonts, text: &str, size: u8) -> Option<f32> {
+        let (_, fs, ls, _) = tape_metrics(size);
+        let font = f.font(NOTO, 700, fs * 2.0)?;
+        let chars: Vec<char> = text.to_uppercase().chars().collect();
+        Some(chars.iter().map(|c| if *c == MARK { fs * MARK_EM } else { adv(&font, *c) / 2.0 }).sum::<f32>() + ls * chars.len().saturating_sub(1) as f32)
+    }
+
+    /// A white rim `r` px wide round what is drawn (the shown list's tape in a menu).
+    fn outline(src: &Pic, r: i32) -> Pic {
+        let (w, h) = (src.w as i32 + 2 * r, src.h as i32 + 2 * r);
+        let mut out = Pic::blank(w as u32, h as u32);
+        let alpha = |x: i32, y: i32| -> u8 {
+            if x < 0 || y < 0 || x >= src.w as i32 || y >= src.h as i32 {
+                0
+            } else {
+                src.px[((y * src.w as i32 + x) * 4 + 3) as usize]
+            }
+        };
+        for y in 0..h {
+            for x in 0..w {
+                let mut a = 0u8;
+                for dy in -r..=r {
+                    for dx in -r..=r {
+                        if dx * dx + dy * dy <= r * r + 1 {
+                            a = a.max(alpha(x - r + dx, y - r + dy));
+                        }
+                    }
+                }
+                if a > 0 {
+                    let i = ((y * w + x) * 4) as usize;
+                    out.px[i..i + 4].copy_from_slice(&[255, 255, 255, a]);
+                }
+            }
+        }
+        out.over(src, r, r);
+        out
+    }
+
+    /// A label on tapes under each other: wrapped at the words (a word longer than a tape at its letters), each line
+    /// its own tape, so nothing is cut off.
+    fn tape_label(f: &mut Fonts, text: &str, tint: Tint, size: u8, seed: u32, max_w: f32, rim: bool) -> Option<Pic> {
+        let (_, _, _, pad) = tape_metrics(size);
+        let limit = max_w - 2.0 * pad - 8.0;
+        let mut lines: Vec<String> = Vec::new();
+        let mut cur = String::new();
+        for word in text.split_whitespace() {
+            let tryline = if cur.is_empty() { word.to_string() } else { format!("{cur} {word}") };
+            if tape_text_w(f, &tryline, size)? <= limit {
+                cur = tryline;
+                continue;
+            }
+            if !cur.is_empty() {
+                lines.push(std::mem::take(&mut cur));
+            }
+            // a word wider than a tape: cut at its letters
+            let mut part = String::new();
+            for c in word.chars() {
+                let mut t = part.clone();
+                t.push(c);
+                if !part.is_empty() && tape_text_w(f, &t, size)? > limit {
+                    lines.push(std::mem::take(&mut part));
+                    t = c.to_string();
+                }
+                part = t;
+            }
+            cur = part;
+        }
+        if !cur.is_empty() || lines.is_empty() {
+            lines.push(cur);
+        }
+        let pics: Vec<Pic> = lines
+            .iter()
+            .enumerate()
+            .map(|(k, l)| tape_with(f, l, tint, size, seed.wrapping_add(31 * k as u32), false, false, max_w + 64.0, rim))
+            .collect::<Option<Vec<Pic>>>()?;
+        if pics.len() == 1 {
+            return pics.into_iter().next();
+        }
+        // each line overlaps the one above by its shadow and tilt margins
+        let step = |p: &Pic| p.h as i32 - 10;
+        let w = pics.iter().enumerate().map(|(k, p)| p.w as i32 + (k as i32 % 2) * 4).max().unwrap_or(1);
+        let h = pics.iter().take(pics.len() - 1).map(step).sum::<i32>() + pics.last().map(|p| p.h as i32).unwrap_or(1);
+        let mut out = Pic::blank(w.max(1) as u32, h.max(1) as u32);
+        let mut y = 0;
+        for (k, p) in pics.iter().enumerate() {
+            out.over(p, (k as i32 % 2) * 4, y);
+            y += step(p);
+        }
+        Some(out)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn tape_with(f: &mut Fonts, text: &str, tint: Tint, size: u8, seed: u32, struck: bool, faded: bool, max_w: f32, rim: bool) -> Option<Pic> {
         const S: usize = 2;
         let sf = S as f32;
         let mut rng = Rng::new(seed as u64);
         let printed = matches!(tint, Tint::Yellow | Tint::White);
         // size 0: an item's tape, 1: the due date's and the note's, 2: the mixing desk's
-        let (h, fs, ls, pad) = match size {
-            2 => (21usize, 10.0, 0.5, 5.0),
-            1 => (28usize, 12.0, 1.0, 12.0),
-            _ => (44usize, 18.0, 1.6, 17.0),
-        };
+        let (h, fs, ls, pad) = tape_metrics(size);
         let small = size > 0;
         let font = f.font(NOTO, 700, fs * sf)?;
-        let width_of = |t: &[char]| t.iter().map(|c| adv(&font, *c) / sf).sum::<f32>() + ls * t.len().saturating_sub(1) as f32;
+        let width_of = |t: &[char]| {
+            t.iter().map(|c| if *c == MARK { fs * MARK_EM } else { adv(&font, *c) / sf }).sum::<f32>() + ls * t.len().saturating_sub(1) as f32
+        };
         let mut chars: Vec<char> = text.to_uppercase().chars().collect();
         let limit = max_w - 2.0 * pad - 8.0;
         if width_of(&chars) > limit {
@@ -518,8 +631,20 @@ mod skia {
                 let mut boxes = Vec::new();
                 for ch in &chars {
                     let jy = rng.uniform(-0.45, 0.45) * sf;
-                    let s = ch.to_string();
                     let base = y0 + jy + asc;
+                    if *ch == MARK {
+                        // a triangle the height of the capitals
+                        let (mw, ch_h) = (fs * MARK_EM * sf, asc * 0.72);
+                        let mut pb = PathBuilder::new();
+                        pb.move_to((x + 0.06 * mw, base - ch_h));
+                        pb.line_to((x + 0.94 * mw, base - ch_h / 2.0));
+                        pb.line_to((x + 0.06 * mw, base));
+                        pb.close();
+                        canvas.draw_path(&pb.detach(), &p);
+                        x += mw + ls * sf;
+                        continue;
+                    }
+                    let s = ch.to_string();
                     canvas.draw_str(&s, (x, base), &font, &p);
                     let (a, b) = font.measure_str(&s, Some(&p));
                     if *ch != ' ' {
@@ -619,6 +744,7 @@ mod skia {
             }
         }
         let ang = rng.uniform(0.6, 2.6) * rng.sign() * if small { 0.6 } else { 1.0 };
+        let pic = if rim { outline(&pic, 2) } else { pic };
         tilt(&pic, ang, 6.0, 2.2, 0.0, 2.0, if faded { 0.22 } else { 0.38 })
     }
 

@@ -1139,6 +1139,9 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_sheet(-1);
     ui.set_timers_settings(false);
     ui.set_todo_picker(false);
+    ui.set_todo_settings(false);
+    ui.set_todo_pend_look(-1);
+    ui.set_todo_adding(false);
     ui.set_cam_settings(false);
     ui.set_info_settings(false);
     ui.set_home_bg_sheet(false);
