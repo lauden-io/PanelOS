@@ -122,7 +122,7 @@ const MODE_WORDS: [&str; 6] = ["Off", "Heat", "Cool", "Auto", "Dry", "Fan"];
 const ACTION_WORDS: [&str; 6] = ["", "heating", "cooling", "", "drying", "fan"];
 
 /// A device's line in the rooms menu: its mode, the target and what it does now ("Heat 23° · heating",
-/// "Heat 20° · idle", "Dry · drying", "Off").
+/// "Heat 20° · idle", "Dry", "Off").
 fn device_line(code: i32, action: i32, target: Option<f32>) -> String {
     let code = code.clamp(0, 5) as usize;
     if code == 0 {
@@ -132,7 +132,12 @@ fn device_line(code: i32, action: i32, target: Option<f32>) -> String {
     if let Some(t) = target {
         line += &format!(" {}°", deg(t));
     }
-    let busy = ACTION_WORDS.get(action.clamp(0, 5) as usize).copied().unwrap_or("");
+    // what it does, unless the mode already says it (dry: drying, fan only: blowing)
+    let busy = if code >= 4 && action as usize == code {
+        ""
+    } else {
+        ACTION_WORDS.get(action.clamp(0, 5) as usize).copied().unwrap_or("")
+    };
     if !busy.is_empty() {
         line += &format!(" · {busy}");
     } else if target.is_some() {
@@ -380,8 +385,9 @@ mod tests {
         assert_eq!(device_line(1, 0, Some(20.0)), "Heat 20° · idle");
         assert_eq!(device_line(2, 2, Some(24.5)), "Cool 24.5° · cooling");
         assert_eq!(device_line(3, 1, Some(22.0)), "Auto 22° · heating");
-        assert_eq!(device_line(4, 4, None), "Dry · drying");
+        assert_eq!(device_line(4, 4, None), "Dry");
         assert_eq!(device_line(5, 0, None), "Fan");
+        assert_eq!(device_line(5, 5, None), "Fan");
         assert_eq!(device_line(0, 0, Some(21.0)), "Off");
     }
 
