@@ -1143,6 +1143,13 @@ class PanelOSPage extends HTMLElement {
       }
       this._endPress();
     };
+    // In a still sheet (_render leaves it alone) a click anywhere but on a bubble or an ⓘ closes the open bubble in
+    // place, before the click's own handler (a row that is picked, a play button: they keep the click to themselves).
+    this._onClickCapture = (ev) => {
+      if (!this._ui.info || !this._stillSheet()) return;
+      if (ev.composedPath().some((n) => n.classList && (n.classList.contains("pop") || n.classList.contains("info")))) return;
+      this._closePopsInPlace();
+    };
     this._onKey = (ev) => {
       if (ev.key !== "Escape") return;
       if (this._menu) this._closeMenu();
@@ -1215,6 +1222,7 @@ class PanelOSPage extends HTMLElement {
     for (const ev of USE_EVENTS) window.addEventListener(ev, this._onUse, { capture: true, passive: true });
     this.shadowRoot.addEventListener("scroll", this._onUse, { capture: true, passive: true });
     this.shadowRoot.addEventListener("click", this._onClick);
+    this.shadowRoot.addEventListener("click", this._onClickCapture, true);
     this.shadowRoot.addEventListener("focusout", this._onFocusOut);
     this.shadowRoot.addEventListener("pointerdown", this._onPointerDown, true);
     window.addEventListener("pointerup", this._onPointerUp, true);
@@ -2401,9 +2409,37 @@ class PanelOSPage extends HTMLElement {
   _infoBtn(key, text) {
     const open = this._ui.info === key || this._ui.allInfo;
     return [
-      h("button", { class: "ib info", "aria-label": "More about this", "aria-expanded": open ? "true" : "false", onclick: (e) => { e.stopPropagation(); this._ui.info = open ? null : key; this._render(); if (this._ui.sheet && STILL_SHEETS.has(this._ui.sheet.kind)) this._renderLayer(); } }, icon("information-outline")),
+      h("button", { class: "ib info", "aria-label": "More about this", "aria-expanded": open ? "true" : "false", onclick: (e) => {
+        e.stopPropagation();
+        if (this._stillSheet() && this._layer.contains(e.currentTarget)) { this._infoInPlace(e.currentTarget, key, text); return; }
+        this._ui.info = open ? null : key;
+        this._render();
+      } }, icon("information-outline")),
       open && this._ui.info === key ? h("div", { class: "pop", role: "note", onclick: (e) => e.stopPropagation() }, text) : null,
     ];
+  }
+
+  // A sheet that background redraws leave alone (a list under the finger) is open.
+  _stillSheet() {
+    return Boolean(this._ui.sheet && STILL_SHEETS.has(this._ui.sheet.kind));
+  }
+
+  // In a still sheet the ⓘ opens and closes its bubble in place: the sheet is not drawn again, so a scrolled list
+  // stays where it is.
+  _infoInPlace(btn, key, text) {
+    const wasOpen = this._ui.info === key;
+    this._closePopsInPlace();
+    if (wasOpen) return;
+    this._ui.info = key;
+    btn.setAttribute("aria-expanded", "true");
+    btn.after(h("div", { class: "pop", role: "note", onclick: (e) => e.stopPropagation() }, text));
+    this._placePops();
+  }
+
+  _closePopsInPlace() {
+    this._ui.info = null;
+    this._layer.querySelectorAll(".pop").forEach((p) => p.remove());
+    this._layer.querySelectorAll(".ib.info[aria-expanded=true]").forEach((b) => b.setAttribute("aria-expanded", "false"));
   }
 
   _card(title, opts, ...body) {
@@ -2724,12 +2760,22 @@ class PanelOSPage extends HTMLElement {
       }
     }
     if (node && !this._ui.sheetFresh) node.classList.add("noanim");
+    // the same sheet drawn again keeps its scroll (a pick, an upload, a search result)
+    const oldBody = this._layer.querySelector(".sheet-body");
+    const keepScroll = node && !this._ui.sheetFresh && this._layerSheet === sh && oldBody ? oldBody.scrollTop : 0;
+    this._layerSheet = node ? sh : null;
     this._ui.sheetFresh = false;
     // a field being typed in keeps the focus and the caret when the sheet is drawn again (a search's results)
     const a = this.shadowRoot && this.shadowRoot.activeElement;
     const keep = a && a.tagName === "INPUT" && this._layer.contains(a) && a.getAttribute("aria-label")
       ? { label: a.getAttribute("aria-label"), start: a.selectionStart, end: a.selectionEnd } : null;
     this._layer.replaceChildren(node || "");
+    if (keepScroll) {
+      const body = this._layer.querySelector(".sheet-body");
+      if (body) body.scrollTop = keepScroll;
+    }
+    // an open bubble is placed by its button again
+    if (this._ui.info && this._layer.querySelector(".pop")) this._placePops();
     if (keep) {
       const n = [...this._layer.querySelectorAll("input")].find((x) => x.getAttribute("aria-label") === keep.label);
       if (n) {
