@@ -191,11 +191,8 @@ Without `app.json` the app shows the setup screen "Connect to Home Assistant": H
 | `app/src/voice.rs` | Microphone, echo cancellation, wake words, audio player, conversation state machine, microphone level for the voice view |
 | `app/src/hw.rs`, `settings.rs`, `config.rs` | Backlight, light/proximity sensor, Wi-Fi/SoC readings, volume; panel settings; `app.json` |
 | `app/src/roam.rs` | Idle Wi-Fi roam check |
-<<<<<<< HEAD
 | `app/src/visit.rs` | Pages the panel visits by itself (a ring, a view shown for some seconds) and the way back |
-=======
 | `app/src/device_options.rs`, `app/ui/device_layers.slint` | What switches the Auto theme, Wi-Fi roaming on or off, the wake distance and its calibration, the child lock |
->>>>>>> agent/device-options
 | `app/src/ha.rs`, `auth.rs`, `pairing.rs` | WebSocket client; tokens; QR pairing |
 | `app/src/web.rs`, `loading_text.rs` | Dashboard mode web view; its loading lines |
 | `app/src/mdns.rs`, `clock.rs`, `icons.rs`, `touch.rs` | mDNS; wall clock from Home Assistant until NTP; Material Design Icons; touch from evdev |
