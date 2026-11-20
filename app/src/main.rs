@@ -29,6 +29,7 @@ mod glass_gl;
 #[cfg(feature = "gpu")]
 mod gpu;
 mod ha;
+mod home_edit;
 mod hw;
 mod icons;
 mod info;
@@ -531,6 +532,8 @@ fn extra_entities(s: &UiState) -> Vec<String> {
         out.push(sp);
     }
     out.extend(s.states.keys().filter(|k| k.starts_with("person.")).cloned());
+    // the sensor widgets' sensors
+    out.extend(home_edit::item_entities(s));
     if let Some(list) = s.panel_config.as_ref().and_then(|c| c.get("entities")).and_then(Value::as_array) {
         out.extend(list.iter().filter_map(Value::as_str).map(str::to_string));
     }
@@ -990,6 +993,8 @@ fn refresh_pages(ui: &AppWindow) {
         } else {
             None
         };
+        // the sensor widgets' values
+        home_edit::refresh(ui, s);
         s.weather_refreshed = Instant::now();
         (art, player)
     });
@@ -1245,12 +1250,14 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_edit(false);
     ui.set_timers_edit_keyboard(false);
     ui.set_todo_picker(false);
+    ui.set_todo_settings(false);
+    ui.set_todo_pend_look(-1);
+    ui.set_todo_adding(false);
     ui.set_cam_settings(false);
     ui.set_cam_replies(false);
     ui.set_info_settings(false);
     info::leave(ui);
-    ui.set_home_bg_sheet(false);
-    ui.set_home_settings(-1);
+    home_edit::close(ui);
 }
 
 thread_local! {
@@ -2759,6 +2766,8 @@ fn handle_event(ui: &AppWindow, event: Event) {
                     }
                 }
                 s.panel_config = config;
+                // widgets changed on the panel a moment ago stay until Home Assistant has them
+                home_edit::keep_pending(&mut s.panel_config);
                 // Development settings stay on top of what Home Assistant sends.
                 if let Some(dev) = s.dev_config.clone() {
                     overlay(&mut s.panel_config, &dev);
@@ -2985,6 +2994,7 @@ fn start_screensaver(ui: &AppWindow, s: &mut UiState) {
     ui.set_set_view(0);
     ui.set_strip_on(false);
     info::pop(ui, None);
+    home_edit::close(ui);
     saver_clock(ui, s);
     ui.set_screensaver_on(true);
 }
@@ -3733,7 +3743,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         // weather now / curve / hours / days / details → weather, music → music.
         "home.tap" => {
             let kind = match value {
-                "0" => "timers",
+                "0" | "9" => "timers",
                 "1" | "3" => "calendar",
                 "2" | "4" | "5" | "6" | "11" => "weather",
                 "7" => "music",
@@ -3743,6 +3753,8 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 open_temporary_page(ui, kind);
             }
         }
+        // the weather page's edit mode on the panel
+        w if w.starts_with("home.") => home_edit::act(ui, w, value),
         // the pages' settings sheets (look and options): open and close
         "music.settings" => {
             ui.set_music_picker(false);
@@ -4270,6 +4282,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     // UI callbacks
+    home_edit::init(&ui);
     let weak = ui.as_weak();
     ui.on_act(move |what, value| {
         if let Some(ui) = weak.upgrade() {

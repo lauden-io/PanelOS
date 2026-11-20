@@ -1,9 +1,13 @@
 // To-do panel: one HA to-do list (shopping, tasks …). Open items with a round check (a ticked item stays struck through for a
-// moment, then moves down), due dates and notes under the item, the completed items folded under a header, a list picker,
-// adding with the keyboard. Which lists show is set in the HA integration.
-import { Theme, Act, Words } from "theme.slint";
-import { Icon, GlowText, DragSheet, Dropdown, Segmented } from "widgets.slint";
+// moment, then moves down), due dates and notes under the item, the completed items folded under a header, the chip's list
+// picker and the page settings in the look's own menus (todo_menus.slint), adding with the keyboard. Which lists show is set
+// in the HA integration.
+import { Theme, Act, Words, Clock } from "theme.slint";
+import { Icon, GlowText, Segmented, MenuHost, PageMenu } from "widgets.slint";
 import { Keyboard } from "overlays.slint";
+import { TodoList, TodoBrandPicker, TodoBrandSettings, TodoReceiptPicker, TodoReceiptSettings, TodoTermPicker, TodoTermSettings,
+    TodoTapePicker, TodoTapeSettings, TodoPadPicker, TodoPadSettings } from "todo_menus.slint";
+export { TodoList }
 
 export struct TodoItem {
     text: string,
@@ -16,32 +20,37 @@ export struct TodoItem {
     fresh: bool,           // just added (the app marks it for 900 ms): the looks that print or write it in do so (25.D3-D5)
 }
 
-export struct TodoList {
-    name: string,
-    icon: string,
-    open: int,             // items still to do
-    tint: int,             // the list's colour in the label maker look: 0 red, 1 blue, 2 green, 3 black
-}
-
 // one item: check, text (up to two lines), the due date and note under it
 component TodoRow inherits Rectangle {
     in property <TodoItem> item;
     in property <bool> completed;          // under "Completed": a muted check
-    // M24: ticked in the open list, the check draws itself (200 ms), the strike runs left to right (200 ms), then the row
-    // folds away (200 ms); the app moves it down after that
+    // M24: ticked in the open list, the check draws itself (200 ms), the strike runs left to right (200 ms), the row
+    // stays struck in place until 1.5 s, then folds away (250 ms); the app moves it down after that (todo.rs LEAVE_MS)
     property <bool> ticked: root.item.done && !root.completed;
     property <duration> tk0;
     property <bool> ticking;
     property <bool> folded;
-    init => { if root.ticked { root.folded = true; } }
+    init => {
+        if root.ticked { root.folded = true; }
+        if root.item.fresh && !root.completed { root.gr0 = animation-tick(); root.growing = true; }
+    }
     changed ticked => {
         if root.ticked { root.tk0 = animation-tick(); root.ticking = true; root.folded = false; } else { root.ticking = false; root.folded = false; }
     }
-    Timer { interval: 620ms; running: root.ticking; triggered => { root.ticking = false; root.folded = true; } }
-    property <float> tt: root.ticking ? (animation-tick() - root.tk0) / 1ms : root.folded ? 1000 : 0;
+    Timer { interval: 1760ms; running: root.ticking; triggered => { root.ticking = false; root.folded = true; } }
+    property <float> tt: root.ticking ? (animation-tick() - root.tk0) / 1ms : root.folded ? 2000 : 0;
     property <float> draw: root.ticked ? clamp(root.tt / 200, 0, 1) : 1;
     property <float> strike: root.ticked ? clamp((root.tt - 200) / 200, 0, 1) : 1;
-    out property <float> fold: root.ticked ? clamp((root.tt - 400) / 200, 0, 1) : 0;
+    property <float> fold-k: root.ticked ? clamp((root.tt - 1500) / 250, 0, 1) : 0;
+    // a new item (added here or elsewhere) opens in its place in 250 ms (ease-out)
+    property <bool> fresh: root.item.fresh;
+    property <bool> growing;
+    property <duration> gr0;
+    changed fresh => { if root.fresh && !root.completed { root.gr0 = animation-tick(); root.growing = true; } }
+    Timer { interval: 260ms; running: root.growing; triggered => { root.growing = false; } }
+    property <float> grow: root.growing ? 1 - Math.pow(1 - clamp((animation-tick() - root.gr0) / 250ms, 0, 1), 3) : 1;
+    // how much of the row shows: 0 folded away, 1 whole
+    out property <float> fold: 1 - (1 - root.fold-k) * root.grow;
     min-height: 0px;
     max-height: root.fold > 0 ? hl.preferred-height * (1 - root.fold) : 100000px;
     clip: root.fold > 0;
@@ -394,7 +403,12 @@ export component TodoPage inherits Rectangle {
     in property <[TodoItem]> done-items;
     in property <bool> show-done;          // the completed items unfolded
     in property <length> scroll;           // how far the list is scrolled
-    in property <bool> picker;             // the sheet of the list chip: the lists and the look
+    in property <bool> picker;             // the chip's list picker (spec 40), in the look's own object
+    in property <bool> settings;           // the page settings (the quick shade's page row): look and time format
+    in property <int> pend-look: -1;       // the terminal's config: a look chosen there, applied when its menu is left
+    in property <string> menu-stamp;       // the receipt's menus: date and time under the head
+    in property <[image]> menu-tapes;      // the label maker's menus: LISTS, SETTINGS, LOOK, TIME FORMAT, DONE on the app's tapes
+    in property <bool> on-screen;          // the page is the one on screen (fills in the shade's page row, closes its menus)
     in property <string> empty-title;      // nothing left to do (the app picks the texts)
     in property <string> empty-sub;
     // adding an item
@@ -408,7 +422,7 @@ export component TodoPage inherits Rectangle {
     in property <string> due-picked;       // the picked date's label
     in property <int> kb-layer;
     in property <int> kb-layout;           // letters: 0 Latin, 1 Cyrillic (the globe key)
-    // looks: 0 plain, 1 receipt, 2 terminal, 3 label maker, 4 notepad; the page's look sheet
+    // looks: 0 plain, 1 receipt, 2 terminal, 3 label maker, 4 notepad (chosen in the page settings)
     in property <int> look;
     in property <string> stamp;            // receipt: date and time
     in property <string> receipt-footer;   // the app picks these texts
@@ -504,32 +518,88 @@ export component TodoPage inherits Rectangle {
         TouchArea { y: -6px; height: parent.height + 12px; clicked => { Act.act("todo.picker", ""); } }
     }
 
-    // ---------------------------------------------------------------- the chip's sheet: the lists, the look
-    property <length> picker-rows: root.lists.length * 56px;
-    property <length> picker-need: 64px + root.picker-rows + 40px + 48px + 24px;
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.picker; need: root.picker-need;
+    // ---------------------------------------------------------------- the menus (spec 40): the chip picks the list, the page
+    // settings (look, time format) come from the quick shade's page row; each is an object of the look
+    property <[string]> look-names: [Words.line("ui.looks.todo.0"), Words.line("ui.looks.todo.1"), Words.line("ui.looks.todo.2"),
+        Words.line("ui.looks.todo.3"), Words.line("ui.looks.todo.4")];
+    property <image> no-tape;
+    pure function tape(i: int) -> image { return i < root.menu-tapes.length ? root.menu-tapes[i] : root.no-tape; }
+    pick-host := MenuHost {
+        kind: 0;
+        open: root.picker;
+        menu-w: root.look == 1 ? 292px : root.look == 2 ? 320px : 300px;
+        in-ms: root.look == 0 ? 140ms : root.look == 1 ? 360ms : root.look == 2 ? 400ms : root.look == 3 ? (180 + root.lists.length * 50) * 1ms : 380ms;
+        out-ms: root.look == 0 ? 100ms : root.look == 1 ? 140ms : root.look == 2 ? 20ms : root.look == 3 ? 100ms : 160ms;
         close => { Act.act("todo.picker-close", ""); }
-        Text { x: 24px; y: 24px; height: 28px; text: "Lists"; font-size: 18px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Text { x: parent.width - 24px - self.preferred-width; y: 24px; height: 28px; text: "Done"; font-size: 16px; font-weight: 600; color: Theme.text; vertical-alignment: center;
-            TouchArea { x: -12px; y: -10px; width: parent.width + 24px; height: parent.height + 20px; clicked => { Act.act("todo.picker-close", ""); } } }
-        for li[i] in root.lists: Rectangle {
-            x: 16px; y: 64px + i * 56px; width: parent.width - 32px; height: 52px; border-radius: 14px;
-            background: i == root.sel ? Theme.surface-raised : transparent;
-            Icon { x: 14px; y: 0; width: 24px; height: parent.height; text: li.icon != "" ? li.icon : "\u{F0C52}"; font-size: 22px; color: i == root.sel ? Theme.accent : Theme.muted; }
-            Text { x: 50px; y: 0; width: parent.width - 140px; height: parent.height; text: li.name; font-size: 16px; font-weight: i == root.sel ? 600 : 400;
-                color: Theme.text; vertical-alignment: center; overflow: elide; }
-            Text { x: parent.width - 80px; y: 0; width: 40px; height: parent.height; text: li.open > 0 ? li.open : ""; font-size: 15px; color: Theme.muted;
-                horizontal-alignment: right; vertical-alignment: center; }
-            if i == root.sel: Icon { x: parent.width - 34px; y: 0; width: 22px; height: parent.height; text: "\u{F012C}"; font-size: 20px; color: Theme.accent; }
-            TouchArea { clicked => { Act.act("todo.pick", i); } }
-        }
-        Text { x: 24px; y: 64px + root.picker-rows + 8px; height: 28px; text: "Look"; font-size: 15px; font-weight: 600; color: Theme.muted; vertical-alignment: center; }
-        Dropdown { x: 24px; y: 64px + root.picker-rows + 40px; width: parent.width - 48px;
-            options: [Words.line("ui.looks.todo.0"), Words.line("ui.looks.todo.1"), Words.line("ui.looks.todo.2"), Words.line("ui.looks.todo.3"), Words.line("ui.looks.todo.4")];
-            selected: root.look; picked(i) => { Act.act("todo.look", i); } }
+        if root.look == 0 && pick-host.shown: TodoBrandPicker {
+            x: pick-host.menu-x; y: pick-host.menu-y; width: pick-host.menu-w; max-h: pick-host.max-h;
+            lists: root.lists; sel: root.sel; t-in: pick-host.t-in; t-out: pick-host.t-out; leaving: !root.picker; }
+        if root.look == 1 && pick-host.shown: TodoReceiptPicker {
+            paper-x: pick-host.menu-x; max-h: pick-host.max-h; lists: root.lists; sel: root.sel; stamp: root.menu-stamp;
+            t-in: pick-host.t-in; t-out: pick-host.t-out; leaving: !root.picker; }
+        if root.look == 2 && pick-host.shown && root.picker: TodoTermPicker {
+            x: pick-host.menu-x; y: pick-host.menu-y; width: pick-host.menu-w; max-h: pick-host.max-h;
+            lists: root.lists; sel: root.sel; t-in: pick-host.t-in; }
+        if root.look == 3 && pick-host.shown: TodoTapePicker {
+            x: pick-host.menu-x; y: pick-host.menu-y; width: pick-host.menu-w; max-h: pick-host.max-h; head: root.tape(0);
+            lists: root.lists; sel: root.sel; t-in: pick-host.t-in; t-out: pick-host.t-out; leaving: !root.picker; }
+        if root.look == 4 && pick-host.shown: TodoPadPicker {
+            x: pick-host.menu-x; y: pick-host.menu-y; width: pick-host.menu-w; max-h: pick-host.max-h;
+            lists: root.lists; sel: root.sel; t-in: pick-host.t-in; t-out: pick-host.t-out; leaving: !root.picker; }
     }
+    set-host := MenuHost {
+        kind: 1;
+        open: root.settings;
+        in-ms: root.look == 0 ? 140ms : root.look == 1 ? 360ms : root.look == 2 ? 420ms : 380ms;
+        out-ms: root.look == 0 ? 100ms : root.look == 1 ? 140ms : root.look == 2 ? 20ms : root.look == 3 ? 100ms : 160ms;
+        close => { Act.act("todo.settings-close", ""); }
+        if root.look == 0 && set-host.shown: TodoBrandSettings {
+            x: set-host.menu-x; y: set-host.menu-y; width: set-host.menu-w;
+            look: root.look; look-names: root.look-names; t-in: set-host.t-in; t-out: set-host.t-out; leaving: !root.settings; }
+        if root.look == 1 && set-host.shown: TodoReceiptSettings {
+            look: root.look; look-names: root.look-names; stamp: root.menu-stamp;
+            t-in: set-host.t-in; t-out: set-host.t-out; leaving: !root.settings; }
+        if root.look == 2 && set-host.shown && root.settings: TodoTermSettings {
+            x: set-host.menu-x; y: set-host.menu-y; width: set-host.menu-w;
+            look: root.look; pend-look: root.pend-look; look-names: root.look-names; t-in: set-host.t-in; }
+        if root.look == 3 && set-host.shown: TodoTapeSettings {
+            x: set-host.menu-x; y: set-host.menu-y; width: set-host.menu-w;
+            look: root.look; look-names: root.look-names; head: root.tape(1); label-tapes: [root.tape(2), root.tape(3)]; done-tape: root.tape(4);
+            t-in: set-host.t-in; t-out: set-host.t-out; leaving: !root.settings; }
+        if root.look == 4 && set-host.shown: TodoPadSettings {
+            x: set-host.menu-x; y: set-host.menu-y; width: set-host.menu-w;
+            look: root.look; look-names: root.look-names; t-in: set-host.t-in; t-out: set-host.t-out; leaving: !root.settings; }
+    }
+
+    // the quick shade's page row while this page is on screen ("To-do settings · <look>", the look's lead icon); the row's
+    // request opens the settings; leaving the screen closes the menus and the adding form (and gives the row back)
+    property <string> look-icon: root.look == 1 ? "\u{F19DC}" : root.look == 2 ? "\u{F018D}" : root.look == 3 ? "\u{F0316}" : root.look == 4 ? "\u{F0EBF}" : "\u{F0756}";
+    function claim-row() {
+        PageMenu.title = "To-do settings";
+        PageMenu.look = root.look-names[root.look];
+        PageMenu.icon = root.look-icon;
+        PageMenu.has-settings = true;
+    }
+    init => { if root.on-screen { root.claim-row(); } }
+    changed on-screen => {
+        if root.on-screen {
+            root.claim-row();
+        } else {
+            if PageMenu.title == "To-do settings" {
+                PageMenu.has-settings = false;
+                PageMenu.title = "";
+                PageMenu.look = "";
+                PageMenu.icon = "";
+            }
+            if root.picker || root.settings || root.adding { Act.act("todo.menus-close", ""); }
+        }
+    }
+    changed look => { if root.on-screen { root.claim-row(); } }
+    property <int> row-request: PageMenu.open-request;
+    changed row-request => { if root.on-screen { Act.act("todo.settings", ""); } }
+    // the time format changed (anywhere): the due times are written again
+    property <bool> h24: Clock.h24;
+    changed h24 => { Act.act("todo.refresh", ""); }
 
     // ---------------------------------------------------------------- adding an item: the field, due date chips (lists that take one), keyboard
     if root.adding: Rectangle {

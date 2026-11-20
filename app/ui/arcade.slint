@@ -3,10 +3,12 @@
 // 40 ms frames (no springs, no easing, no squash); the screen's own switch-on and switch-off are drawn at 30 frames
 // per second (whole 33 ms steps).
 //
-// - ArcadeScreen: the glass with its scanlines, the tube border with its glow, the chrome title, an optional
-//   "CREDIT 99 · © PANELOS" foot; the content goes in as children, placed in the body (`body-x`, `body-y`, `body-w`).
+// - ArcadeScreen: the glass with its scanlines, the tube border with its glow, the chrome title, the
+//   "CREDIT 99 · © PANELOS" foot (`foot`); the content goes in as children, placed in the body (x from 16 px, under
+//   the title: `body-x`, `body-y`, `body-w`; the room it has: `body-space`). Give it the content's height (`body-h`)
+//   and its height `need`, or any height (a scrolling body).
 // - ArcadeBlocks: a single choice as words in the pixel font; the current one is an inverse block in the tube colour.
-//   Blocks wrap to a new line instead of cutting.
+//   Blocks wrap to a new line instead of cutting. `picked` after the blink, `tapped` at the tap.
 // - ArcadeBlock: one action block (Done, +1 MIN, PAUSE, i …): filled with the tube colour, or a dim fill (`fill`) that
 //   lights up when pressed.
 // - ArcadeText: the pixel font with a soft glow; it wraps.
@@ -80,19 +82,22 @@ export component RoundedGlass inherits Rectangle {
 // Switching off: the picture collapses to a line (110 ms), the line to a dot that fades (90 ms).
 export component ArcadeScreen inherits Rectangle {
     in property <color> tube: #ff2bd6;
-    in property <string> title;
-    in property <bool> foot;                        // "CREDIT 99" / "© PANELOS" under the body
-    // the motion clocks (MenuHost: t-in / t-out in ms): `leaving` from the moment the screen starts to switch off
+    in property <string> title;                     // "SELECT ROOM", "OPTIONS", "SETTINGS", "BACKGROUND" …
+    in property <bool> foot: true;                  // "CREDIT 99" / "© PANELOS" under the body
+    in property <length> body-h;                    // the content's height (for `need`)
+    // the motion clocks (MenuHost: t-in / t-out in ms); `open` false: switching off
+    in property <bool> open: true;
     in property <float> t-in: 1000;
     in property <float> t-out;
-    in property <bool> leaving;
+    property <bool> leaving: !root.open;
     out property <length> pad-x: 16px;
     out property <length> head-h: 12px + 4px + title-t.preferred-height + 12px;
     out property <length> foot-h: root.foot ? 9px + 10px + 10px : 10px;
+    out property <length> need: root.head-h + root.body-h + root.foot-h;
     out property <length> body-x: root.pad-x;
     out property <length> body-y: root.head-h;
     out property <length> body-w: root.width - 2 * root.pad-x;
-    out property <length> body-h: root.height - root.head-h - root.foot-h;
+    out property <length> body-space: root.height - root.head-h - root.foot-h;
     out property <length> radius: 16px;
     // the motion, in whole 33 ms steps
     property <float> tq-in: Math.floor(root.t-in / 33) * 33;
@@ -110,18 +115,18 @@ export component ArcadeScreen inherits Rectangle {
     property <float> fade: root.leaving && root.tq-out >= 110 ? 1 - root.ei((root.tq-out - 110) / 90) : 1;
     // the picture: hidden while the tube warms up, a flicker (on, off for a step, on), hidden while switching off
     property <bool> picture: !root.leaving && ((root.tq-in >= 165 && root.tq-in < 198) || root.tq-in >= 231);
-    property <bool> settled: !root.leaving && root.tq-in >= 250;
+    property <bool> opened: !root.leaving && root.tq-in >= 250;
     property <color> line: root.tube.mix(#ffffff, 0.72);
 
     // the outer glow, once the screen is open
     for g[i] in [{ d: 2, a: 0.30 }, { d: 4, a: 0.14 }, { d: 6, a: 0.06 }]: Rectangle {
-        visible: root.settled;
+        visible: root.opened;
         x: -g.d * 1px; y: -g.d * 1px; width: root.width + 2 * g.d * 1px; height: root.height + 2 * g.d * 1px;
         border-radius: root.radius + g.d * 1px; border-width: 2px; border-color: root.tube.with-alpha(g.a);
     }
     win := Rectangle {
         x: root.ix; y: root.iy; width: root.width - 2 * root.ix; height: Math.max(2px, root.height - 2 * root.iy);
-        clip: !root.settled;
+        clip: !root.opened;
         opacity: root.fade;
         Rectangle {
             x: -root.ix; y: -root.iy; width: root.width; height: root.height;
@@ -158,7 +163,7 @@ export component ArcadeScreen inherits Rectangle {
                     }
                 }
                 Rectangle {
-                    x: root.body-x; y: root.body-y; width: root.body-w; height: root.body-h;
+                    x: root.body-x; y: root.body-y; width: root.body-w; height: root.body-space;
                     @children
                 }
                 if root.foot: Rectangle {
@@ -169,10 +174,10 @@ export component ArcadeScreen inherits Rectangle {
                 }
             }
             // scanlines over everything but the rounded corners
-            Image { x: 0; y: root.radius; width: root.width; height: root.height - 2 * root.radius; source: @image-url("images/scanlines.png");
+            Image { x: 0; y: root.radius; width: root.width; height: root.height - 2 * root.radius; source: @image-url("arcade/scanlines.png");
                 image-fit: fill; source-clip-x: 0; source-clip-y: 0; source-clip-width: root.width / 1px; source-clip-height: (root.height - 2 * root.radius) / 1px; }
             for b in [0, 1]: Image { x: root.radius; y: b * (root.height - root.radius); width: root.width - 2 * root.radius; height: root.radius;
-                source: @image-url("images/scanlines.png"); image-fit: fill; source-clip-x: 0; source-clip-y: 0;
+                source: @image-url("arcade/scanlines.png"); image-fit: fill; source-clip-x: 0; source-clip-y: 0;
                 source-clip-width: (root.width - 2 * root.radius) / 1px; source-clip-height: root.radius / 1px; }
             // the inner glow and the tube
             for g in [{ d: 9, w: 5, a: 0.05 }, { d: 5, w: 4, a: 0.10 }, { d: 2, w: 3, a: 0.20 }]: Rectangle {
@@ -191,16 +196,16 @@ struct FlowPos { x: length, row: int }
 // A single choice as arcade blocks: words in the pixel font (white 75 %); the current one an inverse block (the tube
 // colour, dark text, a glow, radius 2). Each block at least 40 × 44 px, 7 px side padding, 2 px apart; a row that does
 // not fit wraps (up to 16 choices). A tap moves the block at once and it blinks twice (on, off, on, off, on: 40 ms
-// frames); `picked` fires at the tap, `settled` after the blink (a new look or scene is applied then). A tap on the
-// current block lights it at 55 % for two frames.
+// frames); `tapped` fires at the tap (a choice sent at once), `picked` after the blink (a new look or scene is applied
+// then). A tap on the current block lights it at 55 % for two frames.
 export component ArcadeBlocks inherits Rectangle {
     in property <[string]> options;
     in property <int> selected;
     in property <color> tube: #ff2bd6;
     in property <length> font-size: 9px;
     in property <bool> align-right;                // an inline row: the blocks end at the right edge
+    callback tapped(int);
     callback picked(int);
-    callback settled(int);
     property <length> gap: 2px;
     property <length> bh: 44px;
     // the block shown lit: follows `selected`, moves at once on a tap
@@ -212,7 +217,7 @@ export component ArcadeBlocks inherits Rectangle {
     property <int> zap-frame;
     Timer { interval: 40ms; running: root.blinking; triggered => {
         root.frame += 1;
-        if root.frame >= 5 { root.blinking = false; root.settled(root.lit); }
+        if root.frame >= 5 { root.blinking = false; root.picked(root.lit); }
     } }
     Timer { interval: 40ms; running: root.zap >= 0; triggered => { root.zap-frame += 1; if root.zap-frame >= 2 { root.zap = -1; } } }
     pure function bw(i: int) -> length {
@@ -275,7 +280,7 @@ export component ArcadeBlocks inherits Rectangle {
                     root.zap = i; root.zap-frame = 0;
                 } else if i != root.lit {
                     root.lit = i; root.frame = 0; root.blinking = true;
-                    root.picked(i);
+                    root.tapped(i);
                 }
             }
         }

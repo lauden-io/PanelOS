@@ -656,10 +656,10 @@ export component CrtRooms inherits MenuHost {
     scr := ArcadeScreen {
         x: root.menu-x; y: root.menu-y; width: root.menu-w; height: root.menu-h;
         title: "SELECT ROOM"; foot: true; tube: root.tube;
-        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
-        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-h; }
+        t-in: root.t-in; t-out: root.t-out; open: root.open;
+        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-space; }
         Flickable {
-            x: 0; y: 0; width: scr.body-w; height: scr.body-h;
+            x: 0; y: 0; width: scr.body-w; height: scr.body-space;
             viewport-height: list.preferred-height;
             interactive: root.scrolls;
             list := VerticalLayout {
@@ -690,7 +690,7 @@ component CrtOptRow inherits HorizontalLayout {
     padding-left: 2px; padding-right: 2px; padding-top: 6px; padding-bottom: 6px; spacing: 8px;
     VerticalLayout { alignment: start; padding-top: 12px;
         GlowIcon { width: 26px; glyph: root.glyph; size: 21px; ink: #ffffff; glow: root.tube; } }
-    ArcadeBlocks { options: root.items; selected: root.cur; tube: root.tube; picked(i) => { Act.act(root.act, i); } }
+    ArcadeBlocks { options: root.items; selected: root.cur; tube: root.tube; tapped(i) => { Act.act(root.act, i); } }
 }
 
 export component CrtOptions inherits MenuHost {
@@ -701,11 +701,11 @@ export component CrtOptions inherits MenuHost {
     property <length> h: Math.min(root.need, 350px);
     scr := ArcadeScreen {
         x: root.menu-x; y: 398px - root.h; width: root.menu-w; height: root.h;
-        title: "OPTIONS"; tube: root.tube;
-        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
-        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-h; }
+        title: "OPTIONS"; foot: false; tube: root.tube;
+        t-in: root.t-in; t-out: root.t-out; open: root.open;
+        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-space; }
         Flickable {
-            x: 0; y: 0; width: scr.body-w; height: scr.body-h;
+            x: 0; y: 0; width: scr.body-w; height: scr.body-space;
             viewport-height: col.preferred-height;
             interactive: root.need > 350px;
             col := VerticalLayout {
@@ -729,11 +729,11 @@ export component CrtSettings inherits MenuHost {
     need: scr.head-h + col.preferred-height + scr.foot-h;
     scr := ArcadeScreen {
         x: root.menu-x; y: root.menu-y; width: root.menu-w; height: root.menu-h;
-        title: "SETTINGS"; tube: root.tube;
-        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
-        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-h; }
+        title: "SETTINGS"; foot: false; tube: root.tube;
+        t-in: root.t-in; t-out: root.t-out; open: root.open;
+        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-space; }
         Flickable {
-            x: 0; y: 0; width: scr.body-w; height: scr.body-h;
+            x: 0; y: 0; width: scr.body-w; height: scr.body-space;
             viewport-height: col.preferred-height;
             interactive: root.scrolls;
             col := VerticalLayout {
@@ -744,7 +744,7 @@ export component CrtSettings inherits MenuHost {
                     ArcadeBlocks {
                         options: [root.data.looks[0].to-uppercase(), root.data.looks[1].to-uppercase(), root.data.looks[2].to-uppercase(), root.data.looks[3].to-uppercase()];
                         selected: root.data.look; tube: root.tube;
-                        settled(i) => { root.look-picked(i); }
+                        picked(i) => { root.look-picked(i); }
                     }
                 }
                 VerticalLayout {
@@ -753,14 +753,14 @@ export component CrtSettings inherits MenuHost {
                     ArcadeBlocks {
                         options: [root.data.scenes[0].to-uppercase(), root.data.scenes[1].to-uppercase(), root.data.scenes[2].to-uppercase(), root.data.scenes[3].to-uppercase()];
                         selected: root.data.scene; tube: root.tube;
-                        settled(i) => { Act.act("thermo.scene", i); }
+                        picked(i) => { Act.act("thermo.scene", i); }
                     }
                 }
                 HorizontalLayout {
                     padding-top: 8px; padding-bottom: 8px; padding-left: 2px; padding-right: 2px; spacing: 10px;
                     ArcadeText { text: root.data.cars-name.to-uppercase(); color: #ffffffd1; horizontal-stretch: 1; }
                     ArcadeBlocks { width: 2 * 44px + 2px; options: ["ON", "OFF"]; selected: root.data.cars ? 0 : 1; tube: root.tube; align-right: true;
-                        settled(i) => { if (i == 0) != root.data.cars { Act.act("thermo.cars", ""); } } }
+                        picked(i) => { if (i == 0) != root.data.cars { Act.act("thermo.cars", ""); } } }
                 }
                 HorizontalLayout {
                     padding-top: 8px; padding-left: 2px; padding-right: 2px; alignment: end;

@@ -235,7 +235,8 @@ fn items_from(a: &[Value], accent: Color, neon: bool) -> Vec<HomeItem> {
                 row: n("row", 0),
                 w: n("w", 4),
                 h: n("h", 1),
-                style: n("style", 0),
+                // the sensor widget: its sensor's place in the page's sensor list
+                style: if n("kind", 0) == 8 { crate::home_edit::sensor_slot(i) } else { n("style", 0) },
                 accent: i.get("accent").and_then(Value::as_str).and_then(parse_color).unwrap_or(accent),
                 weight: n("weight", 600),
                 tap: i.get("tap").and_then(Value::as_bool).unwrap_or(true),

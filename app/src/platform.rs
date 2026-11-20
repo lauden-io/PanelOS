@@ -291,6 +291,12 @@ impl PanelPlatform {
 
     fn dispatch_touch(&self, event: TouchEvent) {
         note_activity();
+        // a finger resting on a weather page opens its edit lock (it needs no part of the page under it)
+        match event {
+            TouchEvent::Down(x, y) => crate::home_edit::finger(0, x, y),
+            TouchEvent::Move(x, y) => crate::home_edit::finger(1, x, y),
+            TouchEvent::Up(x, y) => crate::home_edit::finger(2, x, y),
+        }
         let window_event = match event {
             TouchEvent::Down(x, y) => WindowEvent::PointerPressed {
                 position: LogicalPosition::new(x, y),
