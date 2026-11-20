@@ -88,7 +88,7 @@ Known limits:
 
 - Synthwave timers page: with two or more timers running, one frame a second takes 40–60 ms, so the page does not hold 60 fps.
 
-Heat: the SoC temperature after eight minutes in each view, one after the other at night, with the app's CPU share. The SoC throttles passively from 70 °C.
+Heat: the SoC temperature after eight minutes in each view, one after the other at night, with the app's CPU share. The SoC's first trip point is at 70 °C, but no cooling is bound to it: the CPU is slowed from 85 °C, and the GPU has a single frequency that nothing lowers.
 
 | View | SoC | App CPU |
 |---|---|---|
