@@ -623,6 +623,7 @@ export component MenuHost inherits Rectangle {
     in property <length> menu-w: root.kind == 0 ? 320px : 448px;
     in property <length> need: 200px;
     in property <bool> deep;
+    in property <bool> dim: true;                 // false: a menu over another one (the page is dimmed once)
     in property <duration> in-ms: 400ms;
     in property <duration> out-ms: 200ms;
     callback close();
@@ -660,7 +661,7 @@ export component MenuHost inherits Rectangle {
     x: 0; y: 0; width: 480px; height: 480px;
     Rectangle {
         background: #000000;
-        opacity: (root.deep ? 0.55 : 0.30) * root.dk;
+        opacity: root.dim ? (root.deep ? 0.55 : 0.30) * root.dk : 0;
     }
     TouchArea { enabled: root.open; clicked => { root.close(); } }
     @children
@@ -697,8 +698,13 @@ export component Segmented inherits Rectangle {
     in property <color> tk-text: Theme.text;
     in property <color> tk-on-text: Theme.background;
     in property <color> tk-accent: Theme.accent;
+    // the look's letters and corners (defaults: the plain look's)
+    in property <string> tk-font;
+    in property <length> tk-size: 15px;
+    in property <int> tk-weight: 500;
+    in property <length> tk-radius: 20px;
     height: 40px;
-    border-radius: 20px;
+    border-radius: root.tk-radius;
     background: root.tk-raised;
     property <int> n: Math.max(1, root.options.length);
     property <length> pad: 2px;
@@ -734,7 +740,8 @@ export component Segmented inherits Rectangle {
     property <length> pw: root.moving ? Math.max(0.6 * root.seg, root.pr - root.pl) : root.seg;
     property <length> px: root.moving ? (root.pl + root.pr) / 2 - root.pw / 2 : root.l1;
     property <length> phh: root.moving ? Math.max(0.8 * root.ph, Math.min(root.height - 2px, root.ph * Math.sqrt(root.seg / Math.max(1px, root.pw)))) : root.ph;
-    if root.selected >= 0: Rectangle { x: root.px; y: (root.height - root.phh) / 2; width: root.pw; height: root.phh; border-radius: self.height / 2; background: root.tk-text; }
+    if root.selected >= 0: Rectangle { x: root.px; y: (root.height - root.phh) / 2; width: root.pw; height: root.phh;
+        border-radius: Math.min(self.height / 2, Math.max(0px, root.tk-radius - root.pad)); background: root.tk-text; }
     for o[i] in root.options: seg-item := Rectangle {
         x: root.pad + i * root.seg; y: 0; width: root.seg; height: root.height;
         // the labels change colour 70 ms after the tap, over 160 ms
@@ -744,7 +751,8 @@ export component Segmented inherits Rectangle {
         HorizontalLayout {
             alignment: center; spacing: 6px;
             if i < root.icons.length && root.icons[i] != "": Icon { text: root.icons[i]; font-size: 18px; color: root.tk-text.mix(root.tk-accent, 1 - seg-item.ck); vertical-alignment: center; }
-            Text { text: o; font-size: 15px; font-weight: 500; color: root.tk-text.mix(root.tk-on-text, 1 - seg-item.ck); vertical-alignment: center; overflow: elide; }
+            Text { text: o; font-family: root.tk-font; font-size: root.tk-size; font-weight: root.tk-weight; color: root.tk-text.mix(root.tk-on-text, 1 - seg-item.ck);
+                vertical-alignment: center; overflow: elide; }
         }
         TouchArea { clicked => { root.picked(i); } }
     }
@@ -766,41 +774,56 @@ export component Dropdown inherits Rectangle {
     in property <color> tk-menu: Theme.surface-raised;
     in property <color> tk-pressed: Theme.surface-pressed;
     in property <color> tk-accent: Theme.accent;
+    // the look's letters and corners (defaults: the plain look's)
+    in property <string> tk-font;
+    in property <length> tk-size: 15px;
+    in property <int> tk-weight: 500;
+    in property <length> tk-radius: 14px;
     height: 48px;
-    border-radius: 14px;
+    border-radius: root.tk-radius;
     background: root.tk-raised;
     border-width: pop-open ? 1px : 0px;
     border-color: root.tk-accent.with-alpha(0.45);
     property <bool> pop-open;
-    // the menu opens upwards by itself when it would not fit under the field on the 480 px screen
+    // the list stays on the screen between the status bar and the bottom edge (y 48-468): under the field, else above
+    // it, else as far up as it must go (a long list may then cover its field)
     property <length> menu-h: Math.min(8, root.options.length) * 48px + 12px;
-    property <bool> opens-up: root.up || root.absolute-position.y + root.height + 6px + root.menu-h > 480px;
+    property <length> field-y: root.absolute-position.y;
+    property <length> below-y: root.field-y + root.height + 6px;
+    property <length> above-y: root.field-y - root.menu-h - 6px;
+    property <length> list-y: !root.up && root.below-y + root.menu-h <= 468px ? root.below-y
+        : root.above-y >= 48px ? root.above-y : Math.max(48px, Math.min(root.below-y, 468px - root.menu-h));
     Text { x: 16px; y: 0; width: parent.width - 52px; height: parent.height; text: root.selected >= 0 && root.selected < root.options.length ? root.options[root.selected] : root.placeholder;
-        font-size: 15px; font-weight: 500; color: root.selected >= 0 ? root.tk-text : root.tk-muted; vertical-alignment: center; overflow: elide; }
+        font-family: root.tk-font; font-size: root.tk-size; font-weight: root.tk-weight; color: root.selected >= 0 ? root.tk-text : root.tk-muted; vertical-alignment: center; overflow: elide; }
     Icon { x: parent.width - 36px; y: 0; width: 24px; height: parent.height; text: root.pop-open ? "\u{F0143}" : "\u{F0140}"; font-size: 22px; color: root.tk-muted; }
     TouchArea { clicked => { root.pop-open = true; menu.show(); } }
+    // the popup's own size is the list's: Slint hit-tests a popup by its root, so a popup without a height takes no
+    // taps (every press counts as outside and only closes it) and draws its list centred on a zero-high root
     menu := PopupWindow {
         x: 0;
-        y: root.opens-up ? -root.menu-h - 6px : root.height + 6px;
+        y: root.list-y - root.field-y;
         width: root.width;
+        height: root.menu-h;
         close-policy: close-on-click-outside;
         Rectangle {
             property <float> k: 0;
             init => { self.k = 1; }
             animate k { duration: 140ms; easing: ease-out; }
             opacity: self.k;
+            x: 0; y: 0;
             width: root.width;
-            height: Math.min(8, root.options.length) * 48px + 12px;
-            border-radius: 14px; background: root.tk-menu; border-width: 1px; border-color: root.tk-line;
+            height: root.menu-h;
+            border-radius: root.tk-radius; background: root.tk-menu; border-width: 1px; border-color: root.tk-line;
             drop-shadow-blur: 16px; drop-shadow-color: #00000070;
             Flickable {
                 x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px;
                 content-height: root.options.length * 48px;
                 for o[i] in root.options: Rectangle {
-                    y: i * 48px; width: parent.width; height: 48px; border-radius: 10px;
+                    y: i * 48px; width: parent.width; height: 48px; border-radius: Math.min(10px, root.tk-radius);
                     background: row-ta.pressed ? root.tk-pressed : transparent;
                     if i == root.selected: Icon { x: 10px; y: 0; width: 22px; height: parent.height; text: "\u{F012C}"; font-size: 18px; color: root.tk-accent; }
-                    Text { x: 40px; y: 0; width: parent.width - 50px; height: parent.height; text: o; font-size: 15px; font-weight: i == root.selected ? 600 : 400;
+                    Text { x: 40px; y: 0; width: parent.width - 50px; height: parent.height; text: o; font-family: root.tk-font; font-size: root.tk-size;
+                        font-weight: i == root.selected ? Math.max(600, root.tk-weight) : Math.min(400, root.tk-weight);
                         color: root.tk-text; vertical-alignment: center; overflow: elide; }
                     row-ta := TouchArea { clicked => { root.pop-open = false; menu.close(); root.picked(i); } }
                 }
@@ -857,17 +880,23 @@ export component TextButton inherits Rectangle {
     in property <color> tk-pressed: Theme.surface-pressed;
     in property <color> tk-text: Theme.text;
     in property <color> tk-on-text: Theme.background;
+    // the look's letters and corners (defaults: the plain look's)
+    in property <string> tk-font;
+    in property <length> tk-size: 16px;
+    in property <int> tk-weight: 600;
+    in property <length> tk-radius: 999px;
     height: 48px;
     property <float> sq: touch.pressed ? 0.96 : 1;
     animate sq { duration: touch.pressed ? 60ms : 180ms; easing: cubic-bezier(0.34, 1.6, 0.64, 1); }
     Rectangle {
         x: root.width * (1 - root.sq) / 2; y: root.height * (1 - root.sq) / 2; width: root.width * root.sq; height: root.height * root.sq;
-        border-radius: self.height / 2;
+        border-radius: Math.min(self.height / 2, root.tk-radius);
         background: root.primary ? (touch.pressed ? root.tk-text.with-alpha(0.8) : root.tk-text) : (touch.pressed ? root.tk-pressed : root.tk-raised);
         Text {
             text: root.text;
-            font-size: 16px;
-            font-weight: 600;
+            font-family: root.tk-font;
+            font-size: root.tk-size;
+            font-weight: root.tk-weight;
             color: root.primary ? root.tk-on-text : root.danger ? (Theme.dark ? #FF6A4D : #C7361B) : root.tint;
             horizontal-alignment: center;
             vertical-alignment: center;
