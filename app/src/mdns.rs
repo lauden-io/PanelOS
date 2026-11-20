@@ -464,7 +464,7 @@ mod tests {
             record(HA_SERVICE, T_PTR, CLASS_IN, 4500, &name_bytes(instance)),
             record(instance, T_SRV, CLASS_IN | TOP_BIT, 120, &srv),
             record(instance, T_TXT, CLASS_IN | TOP_BIT, 4500, &txt),
-            record("homeassistant.local", T_A, CLASS_IN | TOP_BIT, 120, &[192, 168, 1, 9]),
+            record("homeassistant.local", T_A, CLASS_IN | TOP_BIT, 120, &[192, 168, 1, 10]),
         ];
         let mut p = vec![0, 0, 0x84, 0, 0, 0, 0, 4, 0, 0, 0, 0];
         for r in &records {
@@ -480,7 +480,7 @@ mod tests {
         let records = [
             record(HA_SERVICE, T_PTR, CLASS_IN, 4500, &name_bytes(instance)),
             record(instance, T_SRV, CLASS_IN | TOP_BIT, 120, &srv),
-            record("homeassistant.local", T_A, CLASS_IN | TOP_BIT, 120, &[192, 168, 1, 9]),
+            record("homeassistant.local", T_A, CLASS_IN | TOP_BIT, 120, &[192, 168, 1, 10]),
         ];
         let mut p = vec![0, 0, 0x84, 0, 0, 0, 0, 3, 0, 0, 0, 0];
         for r in &records {
