@@ -125,11 +125,79 @@ fn has_own_layout(page: &Value, homes_before: usize) -> bool {
 
 /// The pages of the integration's list that the panel knows, in their order.
 fn known_pages(config: Option<&Value>) -> Vec<&Value> {
+    config_pages(config).into_iter().map(|(_, p)| p).collect()
+}
+
+/// The pages of the integration's list that the panel knows, each with its place in that list (the index
+/// `panelos/page_set` names; the list may hold kinds the panel does not know).
+pub fn config_pages(config: Option<&Value>) -> Vec<(usize, &Value)> {
     config
         .and_then(|c| c.get("pages"))
         .and_then(Value::as_array)
-        .map(|a| a.iter().filter(|p| p.get("kind").and_then(Value::as_str).is_some_and(|k| KINDS.contains(&k))).collect())
+        .map(|a| {
+            a.iter().enumerate().filter(|(_, p)| p.get("kind").and_then(Value::as_str).is_some_and(|k| KINDS.contains(&k))).collect()
+        })
         .unwrap_or_default()
+}
+
+/// Every page of `kind`, in the list's order: the place of each here is its instance number (`PageSlot.n`, the row
+/// of the kind's per-page data); with its place in the integration's list.
+pub fn kind_pages<'a>(config: Option<&'a Value>, kind: &str) -> Vec<(usize, &'a Value)> {
+    config_pages(config).into_iter().filter(|(_, p)| p.get("kind").and_then(Value::as_str) == Some(kind)).collect()
+}
+
+/// A page's entities (the integration's page list).
+pub fn entities_of(page: &Value) -> Vec<String> {
+    page.get("entities").and_then(Value::as_array).map(|l| l.iter().filter_map(Value::as_str).map(str::to_string).collect()).unwrap_or_default()
+}
+
+/// One of a page's options.
+pub fn option_of<'a>(page: &'a Value, key: &str) -> Option<&'a Value> {
+    page.get("options")?.get(key)
+}
+
+/// A page's look.
+pub fn variant_of(page: &Value) -> i32 {
+    page.get("variant").and_then(Value::as_i64).unwrap_or(0) as i32
+}
+
+/// The page of `kind` the panel acts on, as a place among `slots`: the page on screen when it is of that kind (a tap
+/// always comes from the page on screen), else the first page of the kind. A request that goes to a page of a kind
+/// (a ring, a shown view, the status bar's marks) goes to the same one: it stays on the page on screen.
+pub fn acting_slot(slots: &[PageSlot], page: usize, kind: &str) -> Option<usize> {
+    if slots.get(page).is_some_and(|p| p.kind == kind) {
+        return Some(page);
+    }
+    slots.iter().position(|p| p.kind == kind)
+}
+
+/// A page's own slot: the per-page data's row (`n`) and the place in the integration's list (`cfg`).
+fn slot_of(kind: &str, p: &Value, cfg: usize, n: usize, first_home_theme: i32) -> PageSlot {
+    let opts = p.get("options");
+    PageSlot {
+        kind: kind.into(),
+        variant: variant_of(p),
+        theme: match kind {
+            "home" => own_theme(p).unwrap_or(-1),
+            "weather" => own_theme(p).unwrap_or(first_home_theme),
+            _ => -1,
+        },
+        layout: -1,
+        // drawn, line and plain backgrounds: the panel's setting, or always light / dark
+        light: match opts.and_then(|o| o.get("light")).and_then(Value::as_str) {
+            Some("light") => 1,
+            Some("dark") => 2,
+            _ => 0,
+        },
+        n: n as i32,
+        cfg: cfg as i32,
+    }
+}
+
+/// A slot of a page that is not on the integration's list (the panel's own list, a temporary page): the kind's first
+/// page data.
+pub fn plain_slot(kind: &str, variant: i32) -> PageSlot {
+    PageSlot { kind: kind.into(), variant, theme: -1, layout: -1, light: 0, n: 0, cfg: -1 }
 }
 
 /// The pages in their order. Until the integration sets a list: the home page
@@ -137,34 +205,17 @@ fn known_pages(config: Option<&Value>) -> Vec<&Value> {
 pub fn page_slots(config: Option<&Value>) -> Vec<PageSlot> {
     // a weather details page without a background of its own has the first custom page's
     let first_home_theme = known_pages(config).into_iter().find(|p| p.get("kind").and_then(Value::as_str) == Some("home")).and_then(own_theme).unwrap_or(-1);
-    let list: Vec<PageSlot> = config
-        .and_then(|c| c.get("pages"))
-        .and_then(Value::as_array)
-        .map(|a| {
-            a.iter()
-                .filter_map(|p| {
-                    let kind = p.get("kind").and_then(Value::as_str)?;
-                    let opts = p.get("options");
-                    KINDS.contains(&kind).then(|| PageSlot {
-                        kind: kind.into(),
-                        variant: p.get("variant").and_then(Value::as_i64).unwrap_or(0) as i32,
-                        theme: match kind {
-                            "home" => own_theme(p).unwrap_or(-1),
-                            "weather" => own_theme(p).unwrap_or(first_home_theme),
-                            _ => -1,
-                        },
-                        layout: -1,
-                        // drawn, line and plain backgrounds: the panel's setting, or always light / dark
-                        light: match opts.and_then(|o| o.get("light")).and_then(Value::as_str) {
-                            Some("light") => 1,
-                            Some("dark") => 2,
-                            _ => 0,
-                        },
-                    })
-                })
-                .collect()
+    let mut seen: HashMap<String, usize> = HashMap::new();
+    let list: Vec<PageSlot> = config_pages(config)
+        .into_iter()
+        .filter_map(|(cfg, p)| {
+            let kind = p.get("kind").and_then(Value::as_str)?;
+            let n = seen.entry(kind.to_string()).or_insert(0);
+            let slot = slot_of(kind, p, cfg, *n, first_home_theme);
+            *n += 1;
+            Some(slot)
         })
-        .unwrap_or_default();
+        .collect();
     if !list.is_empty() {
         // the pages with widgets of their own: their layout's index
         let mut n = 0;
@@ -181,7 +232,54 @@ pub fn page_slots(config: Option<&Value>) -> Vec<PageSlot> {
         }
         return list;
     }
-    ["home", "weather", "music", "timers"].iter().map(|k| PageSlot { kind: (*k).into(), variant: 0, theme: -1, layout: -1, light: 0 }).collect()
+    ["home", "weather", "music", "timers"].iter().map(|k| plain_slot(k, 0)).collect()
+}
+
+/// The pages of a kind as the per-page data is made from them: each row's page (None for the row of a kind without a
+/// page), cloned out of the settings.
+pub fn inst_pages(config: Option<&Value>, kind: &str) -> Vec<(Option<usize>, Value)> {
+    let list: Vec<(Option<usize>, Value)> = kind_pages(config, kind).into_iter().map(|(cfg, p)| (Some(cfg), p.clone())).collect();
+    if list.is_empty() {
+        vec![(None, Value::Null)]
+    } else {
+        list
+    }
+}
+
+/// Row `n` of a kind's per-page data, changed by `f` (rows added up to it as needed); set only when it changed, so the
+/// other pages of the kind are not touched. `set` takes a new model when the property has none of its own yet.
+pub fn with_inst<T: Clone + Default + PartialEq + 'static>(m: ModelRc<T>, set: impl FnOnce(ModelRc<T>), n: usize, f: impl FnOnce(&mut T)) {
+    let m = if m.as_any().downcast_ref::<VecModel<T>>().is_some() {
+        m
+    } else {
+        let fresh = ModelRc::new(VecModel::<T>::default());
+        set(fresh.clone());
+        fresh
+    };
+    let Some(v) = m.as_any().downcast_ref::<VecModel<T>>() else { return };
+    while v.row_count() <= n {
+        v.push(T::default());
+    }
+    let Some(old) = v.row_data(n) else { return };
+    let mut row = old.clone();
+    f(&mut row);
+    if row != old {
+        v.set_row_data(n, row);
+    }
+}
+
+/// A kind's per-page data keeps `count` rows (the rows of pages that went are dropped).
+pub fn keep_insts<T: Clone + 'static>(m: &ModelRc<T>, count: usize) {
+    if let Some(v) = m.as_any().downcast_ref::<VecModel<T>>() {
+        while v.row_count() > count {
+            v.remove(v.row_count() - 1);
+        }
+    }
+}
+
+/// Row `n` of a kind's per-page data (the defaults when it has none).
+pub fn inst<T: Clone + Default + 'static>(m: &ModelRc<T>, n: usize) -> T {
+    m.row_data(n).unwrap_or_default()
 }
 
 /// The widget layouts of the pages that have their own (see `has_own_layout`), in page order.
@@ -733,8 +831,8 @@ fn mmss(s: u32) -> String {
 
 /// The timer island's list (spec 29.3): the nearest first, running before paused, then by the time left; each with
 /// its colour, the part left and its place on the timers page.
-pub fn timer_chips(timers: &HashMap<String, Timer>, accent: Color, colourful: bool) -> Vec<TimerInfo> {
-    let items = timer_items(timers, accent, colourful);
+pub fn timer_chips(timers: &HashMap<String, Timer>, accent: Color, colourful: bool, own: &[Color]) -> Vec<TimerInfo> {
+    let items = timer_items(timers, accent, colourful, own);
     let mut list: Vec<(usize, &Timer)> = ordered_timers(timers).into_iter().map(|(_, t)| t).enumerate().collect();
     list.sort_by_key(|(_, t)| (!t.active, t.remaining()));
     list.iter()
@@ -765,14 +863,9 @@ pub fn ordered_timers(timers: &HashMap<String, Timer>) -> Vec<(&String, &Timer)>
 /// Colourful timers: each its own vibrant colour, by order of arrival (the integration may set its own).
 pub const TIMER_TINTS: [u32; 6] = [0xff5a36, 0xffb21e, 0x3d9bff, 0x2fd27a, 0xc86bfa, 0xff4fa0];
 
-thread_local! {
-    /// The colours chosen in the integration for the 1st, 2nd, … timer (empty: the panel's own).
-    pub static TIMER_COLOURS: std::cell::RefCell<Vec<Color>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-/// A timer's own colour: by its place in the arrival order (colourful mode), else the panel's accent.
-pub fn timer_tint(seq: u64, accent: Color, colourful: bool) -> Color {
-    let own = TIMER_COLOURS.with(|c| c.borrow().clone());
+/// A timer's own colour: by its place in the arrival order (colourful mode; `own`: the colours a timers page sets for
+/// the 1st, 2nd, … timer, empty: the panel's own), else the panel's accent.
+pub fn timer_tint(seq: u64, accent: Color, colourful: bool, own: &[Color]) -> Color {
     let k = seq as usize;
     if !colourful {
         accent
@@ -785,11 +878,11 @@ pub fn timer_tint(seq: u64, accent: Color, colourful: bool) -> Color {
 }
 
 /// The timers page's list.
-pub fn timer_items(timers: &HashMap<String, Timer>, accent: Color, colourful: bool) -> Vec<TimerItem> {
+pub fn timer_items(timers: &HashMap<String, Timer>, accent: Color, colourful: bool, own: &[Color]) -> Vec<TimerItem> {
     ordered_timers(timers)
         .iter()
         .map(|(_, t)| {
-            let tint = timer_tint(t.seq as u64, accent, colourful);
+            let tint = timer_tint(t.seq as u64, accent, colourful, own);
             // the last minute of a running timer: its ring and time turn the alert colour (as on the island)
             let tint = if t.active && t.remaining_exact() < 60.0 { Color::from_rgb_u8(0xff, 0x5a, 0x5f) } else { tint };
             TimerItem {
@@ -1000,5 +1093,93 @@ mod tests {
         assert_eq!(start_seen(Some(&paused), "paused", 160.0), Some(false));
         // the first look at a player
         assert_eq!(start_seen(None, "playing", 100.0), Some(false));
+    }
+
+    fn many() -> Value {
+        json!({ "pages": [
+            { "kind": "home" },
+            { "kind": "music", "variant": 3, "entities": ["media_player.one"] },
+            { "kind": "unknown" },
+            { "kind": "quick", "entities": ["light.a", "light.b"] },
+            { "kind": "music", "variant": 3, "entities": ["media_player.two"] },
+            { "kind": "quick", "variant": 2, "entities": ["switch.c"] },
+            { "kind": "music", "variant": 4 },
+        ] })
+    }
+
+    #[test]
+    fn each_page_of_a_kind_has_its_own_row_and_its_place_in_the_list() {
+        let c = many();
+        let slots = page_slots(Some(&c));
+        let seen: Vec<(&str, i32, i32)> = slots.iter().map(|s| (s.kind.as_str(), s.n, s.cfg)).collect();
+        // the unknown kind is left out of the pager, but counted in the integration's list
+        assert_eq!(seen, [("home", 0, 0), ("music", 0, 1), ("quick", 0, 3), ("music", 1, 4), ("quick", 1, 5), ("music", 2, 6)]);
+        assert_eq!(slots[5].variant, 4);
+        // without a list: the panel's own pages, one of each, not on any list
+        let own = page_slots(None);
+        assert!(own.iter().all(|s| s.n == 0 && s.cfg == -1));
+    }
+
+    #[test]
+    fn a_kinds_pages_in_order_with_their_settings() {
+        let c = many();
+        let music = kind_pages(Some(&c), "music");
+        assert_eq!(music.iter().map(|(i, _)| *i).collect::<Vec<_>>(), [1, 4, 6]);
+        assert_eq!(entities_of(music[1].1), ["media_player.two"]);
+        assert!(entities_of(music[2].1).is_empty());
+        assert_eq!(variant_of(music[0].1), 3);
+        // the rows of the per-page data: one per page, one of defaults for a kind without a page
+        let rows = inst_pages(Some(&c), "quick");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[1].0, Some(5));
+        let none = inst_pages(Some(&c), "calendar");
+        assert_eq!(none.len(), 1);
+        assert!(none[0].0.is_none() && none[0].1.is_null());
+    }
+
+    #[test]
+    fn the_page_acted_on_is_the_one_on_screen_else_the_first_of_its_kind() {
+        let slots = page_slots(Some(&many()));
+        // on the second music page: its taps, menus and settings are its own
+        assert_eq!(acting_slot(&slots, 3, "music"), Some(3));
+        assert_eq!(slots[acting_slot(&slots, 3, "music").unwrap()].cfg, 4);
+        // from another page (a ring, a shown view, the status bar): the first of the kind
+        assert_eq!(acting_slot(&slots, 0, "music"), Some(1));
+        assert_eq!(acting_slot(&slots, 3, "quick"), Some(2));
+        // a page out of range counts as no page on screen
+        assert_eq!(acting_slot(&slots, 99, "quick"), Some(2));
+        assert_eq!(acting_slot(&slots, 0, "camera"), None);
+    }
+
+    #[test]
+    fn a_rows_change_leaves_the_other_pages_rows_alone() {
+        let model: ModelRc<i32> = ModelRc::new(VecModel::from(vec![1, 2]));
+        fn set(_: ModelRc<i32>) {
+            panic!("a model of its own already");
+        }
+        // a row past the end: rows of defaults up to it
+        with_inst(model.clone(), set, 3, |v| *v = 7);
+        assert_eq!(model.iter().collect::<Vec<_>>(), [1, 2, 0, 7]);
+        with_inst(model.clone(), set, 1, |v| *v += 10);
+        assert_eq!(model.iter().collect::<Vec<_>>(), [1, 12, 0, 7]);
+        // pages that went: their rows go
+        keep_insts(&model, 2);
+        assert_eq!(model.iter().collect::<Vec<_>>(), [1, 12]);
+        assert_eq!(inst(&model, 1), 12);
+        assert_eq!(inst(&model, 5), 0);
+        // a property without a model of its own gets one
+        let fresh = std::cell::RefCell::new(None);
+        with_inst(ModelRc::<i32>::default(), |m| *fresh.borrow_mut() = Some(m), 0, |v| *v = 5);
+        assert_eq!(fresh.borrow().as_ref().map(|m| m.iter().collect::<Vec<_>>()), Some(vec![5]));
+    }
+
+    #[test]
+    fn a_timers_pages_own_colours() {
+        let accent = Color::from_rgb_u8(1, 2, 3);
+        let own = [Color::from_rgb_u8(9, 9, 9)];
+        assert_eq!(timer_tint(5, accent, false, &own), accent);
+        assert_eq!(timer_tint(5, accent, true, &own), own[0]);
+        let c = TIMER_TINTS[2];
+        assert_eq!(timer_tint(2, accent, true, &[]), Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8));
     }
 }

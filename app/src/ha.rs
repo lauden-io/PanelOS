@@ -374,8 +374,15 @@ fn session(
                     if let Some(v) = variant {
                         msg["variant"] = json!(v);
                     }
-                    if options.is_object() {
-                        msg["options"] = options;
+                    if let Some(o) = options.as_object() {
+                        // the page's entities go beside its options (the music page's player picked on the panel)
+                        let mut o = o.clone();
+                        if let Some(e) = o.remove("entities") {
+                            msg["entities"] = e;
+                        }
+                        if !o.is_empty() {
+                            msg["options"] = Value::Object(o);
+                        }
                     }
                     send_json(&mut ws, &msg)?;
                 }

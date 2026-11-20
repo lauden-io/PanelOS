@@ -14,6 +14,10 @@ thread_local! {
     static CONTROL: std::cell::RefCell<Option<CameraControl>> = const { std::cell::RefCell::new(None) };
     /// All cameras: they take turns in the fetcher, one frame each.
     static GRID: slint::Timer = slint::Timer::default();
+    /// The cameras taking turns (another cameras page's start the round again).
+    static GRID_SET: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// Each cameras page's fit and start view as the integration had them last (a change there is taken over).
+    static SEEN: std::cell::RefCell<Vec<(Option<String>, String)>> = const { std::cell::RefCell::new(Vec::new()) };
 }
 
 /// Starts the frame fetcher (once Home Assistant's address and login are known).
@@ -40,12 +44,15 @@ fn ensure_started(ui: &AppWindow, s: &crate::UiState) {
     CONTROL.with(|c| *c.borrow_mut() = Some(control));
 }
 
-/// A frame for the camera on screen: into its tile, the blur behind it and
-/// the corner colours.
+/// A frame for the camera on screen: into its tile on the cameras page on screen (the only one the fetcher feeds), the
+/// blur behind it and the corner colours.
 fn show_frame(ui: &AppWindow, entity: &str, frame: SharedPixelBuffer<Rgba8Pixel>, small: SharedPixelBuffer<Rgb8Pixel>) {
-    let cams = ui.get_cam_items();
-    let sel = ui.get_cam_sel().max(0) as usize;
-    let index = with_state(|s| crate::page_entities(s, "camera").iter().position(|e| e == entity)).unwrap_or(sel);
+    let n = crate::acting_n("camera");
+    let entities = with_state(|s| crate::page_entities(s, "camera"));
+    let d = crate::pages::inst(&ui.get_cam_inst(), n);
+    let cams = d.items.clone();
+    let sel = d.sel.max(0) as usize;
+    let index = entities.iter().position(|e| e == entity).unwrap_or(sel);
     if let Some(mut c) = slint::Model::row_data(&cams, index) {
         c.frame = slint::Image::from_rgba8(frame);
         c.state = 0;
@@ -55,7 +62,8 @@ fn show_frame(ui: &AppWindow, entity: &str, frame: SharedPixelBuffer<Rgba8Pixel>
     if index != sel {
         return;
     }
-    if ui.get_cam_ring() {
+    let ring = ui.get_cam_ring() && ui.get_cam_ring_n() == n as i32;
+    if ring {
         if let Some(c) = slint::Model::row_data(&cams, index) {
             ui.set_cam_ring_frame(c.frame);
         }
@@ -67,11 +75,14 @@ fn show_frame(ui: &AppWindow, entity: &str, frame: SharedPixelBuffer<Rgba8Pixel>
         Color::from_rgb_u8(p.r, p.g, p.b)
     };
     let corners = vec![at(0, 0), at(w - 1, 0), at(0, h - 1), at(w - 1, h - 1)];
-    ui.set_cam_bg_corners(ModelRc::new(VecModel::from(corners)));
-    ui.set_cam_bg(slint::Image::from_rgba8(rgba(&small)));
-    if ui.get_cam_ring() {
-        ui.set_cam_ring_bg(ui.get_cam_bg());
+    let bg = slint::Image::from_rgba8(rgba(&small));
+    if ring {
+        ui.set_cam_ring_bg(bg.clone());
     }
+    crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), n, |d| {
+        d.bg_corners = ModelRc::new(VecModel::from(corners));
+        d.bg = bg;
+    });
 }
 
 pub fn rgba(src: &SharedPixelBuffer<Rgb8Pixel>) -> SharedPixelBuffer<Rgba8Pixel> {
@@ -237,26 +248,33 @@ pub fn shrink(frame: &SharedPixelBuffer<Rgb8Pixel>, n: u32) -> SharedPixelBuffer
     out
 }
 
-/// The cameras page from the states; frames only while it is on screen.
+/// Every cameras page from the states, each from its own cameras and options; frames only for the one on screen.
 pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
-    let pages = ui.get_pages();
-    let index = (0..slint::Model::row_count(&pages)).find(|&i| slint::Model::row_data(&pages, i).is_some_and(|p| p.kind == "camera"));
-    let entities = crate::page_entities(s, "camera");
-    let shown = index.is_some_and(|i| i as i32 == ui.get_page()) && !ui.get_screensaver_on();
-    let sel = (ui.get_cam_sel().max(0) as usize).min(entities.len().saturating_sub(1));
-    let grid = shown && ui.get_cam_view() == 1 && entities.len() > 1;
+    let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "camera").into_iter().map(|(cfg, p)| (cfg, p.clone())).collect::<Vec<_>>();
+    // the cameras page on screen (only it gets frames)
+    let slots = ui.get_pages();
+    let on = slint::Model::row_data(&slots, ui.get_page().max(0) as usize).filter(|p| p.kind == "camera" && !ui.get_screensaver_on());
+    let shown = on.as_ref().map(|p| p.n.max(0) as usize);
+    let entities = shown.and_then(|n| pages.get(n)).map(|(_, p)| crate::pages::entities_of(p)).unwrap_or_default();
+    let d = crate::pages::inst(&ui.get_cam_inst(), shown.unwrap_or(0));
+    let sel = (d.sel.max(0) as usize).min(entities.len().saturating_sub(1));
+    let grid = shown.is_some() && d.view == 1 && entities.len() > 1;
     CONTROL.with(|c| {
         if let Some(c) = c.borrow().as_ref() {
             if !grid {
                 *c.entity.lock().unwrap() = entities.get(sel).cloned();
             }
-            c.mode.store(if !shown { OFF } else if grid { LIST } else { FULL }, Ordering::SeqCst);
+            c.mode.store(if shown.is_none() || entities.is_empty() { OFF } else if grid { LIST } else { FULL }, Ordering::SeqCst);
         }
     });
     GRID.with(|t| {
-        if !grid {
+        // a new set of cameras (another cameras page) starts the round again
+        let key = entities.join(",");
+        let same = GRID_SET.with(|g| g.replace(key.clone()) == key);
+        if !grid || !same {
             t.stop();
-        } else if !t.running() {
+        }
+        if grid && !t.running() {
             let list = entities.clone();
             let turn = std::cell::Cell::new(0usize);
             t.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(1100), move || {
@@ -270,51 +288,60 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             });
         }
     });
-    if index.is_none() || entities.is_empty() {
+    if pages.iter().all(|(_, p)| crate::pages::entities_of(p).is_empty()) {
+        crate::pages::keep_insts(&ui.get_cam_inst(), pages.len());
         return;
     }
     ensure_started(ui, s);
-    let cams = ui.get_cam_items();
-    let rows: Vec<CamItem> = entities
-        .iter()
-        .enumerate()
-        .map(|(i, id)| {
-            let st = s.states.get(id);
-            let state = match st.map(|e| e.state.as_str()).unwrap_or("unavailable") {
-                "unavailable" | "unknown" => 1,
-                _ => 0,
-            };
-            let old = slint::Model::row_data(&cams, i);
-            CamItem {
-                name: st
-                    .and_then(|e| e.attrs.get("friendly_name"))
-                    .and_then(serde_json::Value::as_str)
-                    .unwrap_or(id)
-                    .into(),
-                frame: old.map(|o| o.frame).unwrap_or_default(),
-                state,
+    for (n, (_, page)) in pages.iter().enumerate() {
+        let entities = crate::pages::entities_of(page);
+        let option = |k: &str| crate::pages::option_of(page, k).and_then(|v| v.as_str()).unwrap_or_default().to_string();
+        // the picture: whole (over its blurred copy) or filling the screen (the default), taken when it changes in the
+        // integration (the page's settings set it on the panel at once); the start view ("one" / "all") the same
+        let (fit, view) = (option("fit"), option("view"));
+        let (fit_new, view_new) = SEEN.with(|seen| {
+            let mut seen = seen.borrow_mut();
+            if seen.len() <= n {
+                seen.resize(n + 1, (None, String::new()));
             }
-        })
-        .collect();
-    if let Some(m) = crate::pages::update_rows(&cams, rows) {
-        ui.set_cam_items(m);
+            let fit_new = seen[n].0.as_ref() != Some(&fit);
+            let view_new = seen[n].1 != view && !view.is_empty();
+            seen[n] = (Some(fit.clone()), view.clone());
+            (fit_new, view_new)
+        });
+        crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), n, |d| {
+            let rows: Vec<CamItem> = entities
+                .iter()
+                .enumerate()
+                .map(|(i, id)| {
+                    let st = s.states.get(id);
+                    let state = match st.map(|e| e.state.as_str()).unwrap_or("unavailable") {
+                        "unavailable" | "unknown" => 1,
+                        _ => 0,
+                    };
+                    let old = slint::Model::row_data(&d.items, i);
+                    CamItem {
+                        name: st.and_then(|e| e.attrs.get("friendly_name")).and_then(serde_json::Value::as_str).unwrap_or(id).into(),
+                        frame: old.map(|o| o.frame).unwrap_or_default(),
+                        state,
+                    }
+                })
+                .collect();
+            if let Some(m) = crate::pages::update_rows(&d.items, rows) {
+                d.items = m;
+            }
+            d.sel = (d.sel.max(0) as usize).min(entities.len().saturating_sub(1)) as i32;
+            if fit_new {
+                d.fit = fit_index(&fit);
+            }
+            if view_new {
+                d.view = if view == "all" && entities.len() > 1 { 1 } else { 0 };
+            }
+        });
     }
-    ui.set_cam_sel(sel as i32);
-    // the picture: whole (over its blurred copy) or filling the screen (the default), taken when it changes in the
-    // integration (the page's settings set it on the panel at once)
-    thread_local!(static FIT: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) });
-    let fit = crate::page_option(s, "camera", "fit").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    if FIT.with(|f| f.replace(Some(fit.clone()))).as_ref() != Some(&fit) {
-        ui.set_cam_fit(fit_index(&fit));
-    }
-    // the start view ("one" / "all"), taken when it changes in the integration (the chip switches it on the panel)
-    thread_local!(static VIEW: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) });
-    let view = crate::page_option(s, "camera", "view").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
-    if VIEW.with(|v| v.replace(view.clone())) != view && !view.is_empty() {
-        ui.set_cam_view(if view == "all" && entities.len() > 1 { 1 } else { 0 });
-    }
+    crate::pages::keep_insts(&ui.get_cam_inst(), pages.len());
     door_replies_state(ui, s);
-    doorbell(ui, s);
+    doorbell(ui, s, &pages);
 }
 
 /// The picture's setting as the page draws it: 0 the whole picture, 1 filling the screen (the default).
@@ -414,33 +441,36 @@ fn speak_reply(ui: &AppWindow, index: usize) {
 }
 
 thread_local! {
-    /// The visitor alert: the doorbell's last state, when it rang.
-    static RING_STATE: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
+    /// The visitor alert: each doorbell's last state, when one rang.
+    static RING_STATE: std::cell::RefCell<std::collections::HashMap<String, String>> = std::cell::RefCell::new(std::collections::HashMap::new());
     static RING_AT: std::cell::Cell<Option<std::time::Instant>> = const { std::cell::Cell::new(None) };
 }
 
 /// How long the visitor alert stays when nobody answers.
 const RING_SECONDS: u64 = 60;
 
-/// The doorbell (the camera page's `ring` option, a binary sensor): when it turns on, the panel wakes
-/// on the camera page with the picture big, a chime (if do not disturb lets it through), and the door
-/// lock's "hold to open" when the page has a `lock`. Called with the states.
-fn doorbell(ui: &AppWindow, s: &crate::UiState) {
-    let Some(entity) = crate::page_option(s, "camera", "ring").and_then(|v| v.as_str().map(str::to_string)) else { return };
-    let state = s.states.get(&entity).map(|e| e.state.clone()).unwrap_or_default();
-    let before = RING_STATE.with(|r| r.replace(state.clone()));
-    let rang = state == "on" && before != "on" && !before.is_empty();
+/// The doorbells (each cameras page's `ring` option, a binary sensor): when one turns on, the panel wakes on its cameras
+/// page with the picture big, a chime (if do not disturb lets it through), and the door lock's "hold to open" when the
+/// page has a `lock`. Called with the states.
+fn doorbell(ui: &AppWindow, s: &crate::UiState, pages: &[(usize, serde_json::Value)]) {
     // over by itself after a minute
     if RING_AT.with(|r| r.get()).is_some_and(|t| t.elapsed().as_secs() >= RING_SECONDS) {
         RING_AT.with(|r| r.set(None));
         ui.set_cam_ring(false);
     }
-    if !rang {
-        return;
+    let mut rang = None;
+    for (n, (cfg, page)) in pages.iter().enumerate() {
+        let Some(entity) = crate::pages::option_of(page, "ring").and_then(|v| v.as_str()).filter(|e| !e.is_empty()) else { continue };
+        let state = s.states.get(entity).map(|e| e.state.clone()).unwrap_or_default();
+        let before = RING_STATE.with(|r| r.borrow_mut().insert(entity.to_string(), state.clone())).unwrap_or_default();
+        if state == "on" && before != "on" && !before.is_empty() && rang.is_none() {
+            rang = Some((n, *cfg, page));
+        }
     }
+    let Some((n, cfg, page)) = rang else { return };
     RING_AT.with(|r| r.set(Some(std::time::Instant::now())));
-    let entities = crate::page_entities(s, "camera");
-    let sel = (ui.get_cam_sel().max(0) as usize).min(entities.len().saturating_sub(1));
+    let entities = crate::pages::entities_of(page);
+    let sel = (crate::pages::inst(&ui.get_cam_inst(), n).sel.max(0) as usize).min(entities.len().saturating_sub(1));
     let name = entities
         .get(sel)
         .and_then(|id| s.states.get(id))
@@ -450,21 +480,22 @@ fn doorbell(ui: &AppWindow, s: &crate::UiState) {
         .to_string();
     ui.set_cam_ring_title("Someone is at the door".into());
     ui.set_cam_ring_sub(format!("{name} · {}", crate::clock::local_hm(crate::pages::now())).into());
-    ui.set_cam_can_open(crate::page_option(s, "camera", "lock").and_then(|v| v.as_str().map(|l| !l.is_empty())).unwrap_or(false));
+    ui.set_cam_can_open(crate::pages::option_of(page, "lock").and_then(|v| v.as_str()).is_some_and(|l| !l.is_empty()));
     // the page's settings close; the replies start closed
     ui.set_cam_settings(false);
     ui.set_cam_replies(false);
-    ui.set_cam_view(0);
+    crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), n, |d| d.view = 0);
+    ui.set_cam_ring_n(n as i32);
     ui.set_cam_ring(true);
     if crate::dnd_allows(s, "ring") {
         s.player.play(crate::voice::Sound::Chime);
     }
-    // the camera page (a temporary one when the list has none), after this state update
+    // the doorbell's cameras page, after this state update
     let weak = ui.as_weak();
     slint::Timer::single_shot(std::time::Duration::ZERO, move || {
         let Some(ui) = weak.upgrade() else { return };
         crate::wake(&ui);
-        if !crate::go_to_page(&ui, "camera") {
+        if !crate::go_to_cfg(&ui, cfg) && !crate::go_to_page(&ui, "camera") {
             crate::open_temporary_page(&ui, "camera");
         }
         with_state(|s| refresh(&ui, s));
@@ -486,7 +517,8 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         "cam.reply" => speak_reply(ui, n.max(0) as usize),
         // the page's settings: the picture changes at once, the integration keeps it
         "cam.fit" => {
-            ui.set_cam_fit(fit_index(value));
+            let n = crate::acting_n("camera");
+            crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), n, |d| d.fit = fit_index(value));
             crate::page_set(ui, "camera", None, serde_json::json!({ "fit": value }));
         }
         "cam.open" => {
@@ -500,11 +532,11 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             ui.set_cam_replies(false);
             ui.set_cam_ring(false);
         }
-        "cam.view" => ui.set_cam_view(n),
-        "cam.pick" => {
-            ui.set_cam_sel(n);
-            ui.set_cam_view(0);
-        }
+        "cam.view" => crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), crate::acting_n("camera"), |d| d.view = n),
+        "cam.pick" => crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), crate::acting_n("camera"), |d| {
+            d.sel = n;
+            d.view = 0;
+        }),
         _ => eprintln!("nspanel-app: act {what} {value} (not handled)"),
     }
     with_state(|s| refresh(ui, s));

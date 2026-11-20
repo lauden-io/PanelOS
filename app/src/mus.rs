@@ -18,7 +18,7 @@ thread_local! {
 
 fn open(ui: &AppWindow) {
     ui.set_music_picker(true);
-    let (url, auth, active) = with_state(|s| (s.config.as_ref().map(|c| c.ha_url.clone()), s.auth.clone(), crate::media_entity(s)));
+    let (url, auth, active) = with_state(|s| (s.config.as_ref().map(|c| c.ha_url.clone()), s.auth.clone(), crate::tap_player(ui, s)));
     let (Some(url), Some(auth)) = (url, auth) else { return };
     let weak = ui.as_weak();
     std::thread::spawn(move || {
@@ -122,6 +122,30 @@ fn open(ui: &AppWindow) {
     });
 }
 
+/// The music page on screen shows another player: its page keeps it (the integration has it as the page's player);
+/// a music page that is not on the integration's list keeps it on the panel.
+fn show_player(ui: &AppWindow, id: String) {
+    let on_list = crate::acting("music").is_some_and(|p| p.cfg >= 0);
+    let first = crate::acting_n("music") == 0;
+    with_state(|s| {
+        if !on_list {
+            s.settings.music_player = id.clone();
+        } else if first {
+            // the first page's older pick on the panel gives way to the page's own player
+            s.settings.music_player.clear();
+        }
+        s.settings.save();
+        // the holds of the player shown before do not carry over to this one
+        s.music_hold = None;
+        s.music_skip = None;
+    });
+    if on_list {
+        crate::page_set(ui, "music", None, json!({ "entities": [id] }));
+    }
+    ui.set_music_picker(false);
+    crate::apply_panel_config(ui);
+}
+
 /// Taps on the music page's picker (`music.picker`, `music.show` …).
 pub fn act(ui: &AppWindow, what: &str, value: &str) {
     let id = value.parse::<usize>().ok().and_then(|i| IDS.with(|ids| ids.borrow().get(i).cloned()));
@@ -130,34 +154,18 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         "music.picker-close" => ui.set_music_picker(false),
         "music.show" => {
             let Some(id) = id else { return };
-            with_state(|s| {
-                s.settings.music_player = id;
-                s.settings.save();
-                // the holds of the player shown before do not carry over to this one
-                s.music_hold = None;
-                s.music_skip = None;
-            });
-            ui.set_music_picker(false);
-            crate::apply_panel_config(ui);
+            show_player(ui, id);
         }
         // Music Assistant moves the queue; the page follows the music.
         "music.transfer" => {
             let Some(id) = id else { return };
-            let from = with_state(|s| crate::media_entity(s));
+            let from = with_state(|s| crate::tap_player(ui, s));
             crate::call("music_assistant", "transfer_queue", &id, json!({ "source_player": from }));
-            with_state(|s| {
-                s.settings.music_player = id;
-                s.settings.save();
-                // the holds of the player shown before do not carry over to this one
-                s.music_hold = None;
-                s.music_skip = None;
-            });
-            ui.set_music_picker(false);
-            crate::apply_panel_config(ui);
+            show_player(ui, id);
         }
         "music.group" => {
             let Some(id) = id else { return };
-            let active = with_state(|s| crate::media_entity(s));
+            let active = with_state(|s| crate::tap_player(ui, s));
             let grouped = ui.get_music_players().iter().enumerate().any(|(i, p)| p.grouped && IDS.with(|ids| ids.borrow().get(i) == Some(&id)));
             if grouped {
                 crate::call("media_player", "unjoin", &id, json!({}));

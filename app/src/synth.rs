@@ -165,7 +165,7 @@ fn scene_choice(s: &crate::UiState) -> usize {
             && p.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64) == Some(8)
     });
     own.and_then(|p| p.get("options")?.get("scene")?.as_u64())
-        .or_else(|| crate::page_option(s, "home", "scene").and_then(|v| v.as_u64()))
+        .or_else(|| crate::first_page_option(s, "home", "scene").and_then(|v| v.as_u64()))
         .or_else(|| s.panel_config.as_ref().and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
         .unwrap_or(0)
         .min(3) as usize
@@ -237,9 +237,14 @@ fn patrol_went() {
 const SCENE_WRAP_S: f32 = 1200.0;
 
 thread_local! {
-    /// The timers page's scene while its option says "random": the scene, whether the page has been shown with it,
-    /// and the scene clock's ticks since the timers page was last shown or a swipe moved the pages.
-    static TIMERS_RANDOM: std::cell::Cell<(usize, bool, u32)> = std::cell::Cell::new((random() as usize % 4, false, 0));
+    /// Each timers page's scene while its option says "random": the scene, whether the page has been shown with it,
+    /// and the scene clock's ticks since the page was last shown or a swipe moved the pages.
+    static TIMERS_RANDOM: std::cell::RefCell<Vec<(usize, bool, u32)>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
+thread_local! {
+    /// The timers pages' scene pictures (loaded once each).
+    static TIMERS_SCENES: std::cell::RefCell<std::collections::HashMap<String, slint::Image>> = std::cell::RefCell::new(std::collections::HashMap::new());
 }
 
 /// The next random scene: any of the other three (never the same twice in a row).
@@ -250,8 +255,9 @@ fn next_random_scene(current: usize, roll: u64) -> usize {
 /// The pages moved (a swipe settled on another page): the timers page's next scene waits until it is out of sight.
 pub fn page_changed() {
     TIMERS_RANDOM.with(|r| {
-        let (scene, seen, _) = r.get();
-        r.set((scene, seen, 0));
+        for (_, _, away) in r.borrow_mut().iter_mut() {
+            *away = 0;
+        }
     });
 }
 
@@ -259,12 +265,16 @@ pub fn page_changed() {
 /// has been shown with the last one: two ticks after it went (by then a swipe's slide has settled) and with no finger
 /// moving the pages, so however the page is opened (a swipe, a timer on the island, the status bar's mark, a ring) it
 /// comes with its new scene from the first frame, and the scene never changes while the page is in view.
-fn timers_random_scene(ui: &AppWindow) -> usize {
+fn timers_random_scene(ui: &AppWindow, n: usize) -> usize {
     let pages = ui.get_pages();
-    let showing = slint::Model::row_data(&pages, ui.get_page().max(0) as usize).is_some_and(|p| p.kind == "timers");
+    let showing = slint::Model::row_data(&pages, ui.get_page().max(0) as usize).is_some_and(|p| p.kind == "timers" && p.n == n as i32);
     let dragging = ui.get_dragging();
     TIMERS_RANDOM.with(|r| {
-        let (mut scene, mut seen, mut away) = r.get();
+        let mut r = r.borrow_mut();
+        while r.len() <= n {
+            r.push((random() as usize % 4, false, 0));
+        }
+        let (mut scene, mut seen, mut away) = r[n];
         if showing || dragging {
             seen |= showing;
             away = 0;
@@ -275,7 +285,7 @@ fn timers_random_scene(ui: &AppWindow) -> usize {
                 seen = false;
             }
         }
-        r.set((scene, seen, away));
+        r[n] = (scene, seen, away);
         scene
     })
 }
@@ -314,17 +324,27 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
         ui.set_home_fl_back_c(if scene == 2 { pic("dawn", false) } else { slint::Image::default() });
         ui.set_home_fl_floor_c(if scene == 2 { pic("dawn", true) } else { slint::Image::default() });
     }
-    // the timers page's own scene (its option; -1 = a new random one every time the page is opened; none = the
-    // home page's)
-    let tscene = match crate::page_option(s, "timers", "scene").and_then(|v| v.as_i64()) {
-        Some(-1) => timers_random_scene(ui),
-        Some(n) => n.clamp(0, 3) as usize,
-        None => scene,
-    };
-    if ui.get_timers_sw_scene() != tscene as i32 || ui.get_timers_sw_back().size().width == 0 {
-        ui.set_timers_sw_scene(tscene as i32);
-        ui.set_timers_sw_back(crate::quick::picture(&format!("timers/sw/scene-{tscene}-back.png")));
-        ui.set_timers_sw_floor(crate::quick::picture(&format!("timers/sw/scene-{tscene}-floor.png")));
+    // each synthwave timers page's own scene (its option; -1 = a new random one every time the page is opened; none =
+    // the home page's)
+    let tpages: Vec<serde_json::Value> = crate::pages::kind_pages(s.panel_config.as_ref(), "timers").into_iter().map(|(_, p)| p.clone()).collect();
+    for (n, page) in tpages.iter().enumerate() {
+        if crate::pages::variant_of(page) != 3 {
+            continue;
+        }
+        let tscene = match crate::pages::option_of(page, "scene").and_then(|v| v.as_i64()) {
+            Some(-1) => timers_random_scene(ui, n),
+            Some(k) => k.clamp(0, 3) as usize,
+            None => scene,
+        };
+        let pic = |part: &str| TIMERS_SCENES.with(|m| {
+            m.borrow_mut().entry(format!("{tscene}-{part}")).or_insert_with(|| crate::quick::picture(&format!("timers/sw/scene-{tscene}-{part}.png"))).clone()
+        });
+        let (back, floor) = (pic("back"), pic("floor"));
+        crate::pages::with_inst(ui.get_timers_inst(), |m| ui.set_timers_inst(m), n, |d| {
+            d.sw_scene = tscene as i32;
+            d.sw_back = back;
+            d.sw_floor = floor;
+        });
     }
     if (ui.get_home_fl_mix() - mix).abs() > 0.004 {
         ui.set_home_fl_mix(mix);
@@ -396,7 +416,7 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     // integration's synthwave page) only sets how often a new one starts: light = one at a time (a new
     // one when the last is gone), more = up to 2, busy = up to 3, a new one once the newest is a third /
     // a fifth of its way.
-    let traffic = crate::page_option(s, "home", "traffic").and_then(|v| v.as_u64()).unwrap_or(0).min(2) as usize;
+    let traffic = crate::first_page_option(s, "home", "traffic").and_then(|v| v.as_u64()).unwrap_or(0).min(2) as usize;
     let now = ui.get_scene_t();
     let all: Vec<SwCar> = (0..slint::Model::row_count(&cars)).filter_map(|i| slint::Model::row_data(&cars, i)).collect();
     // a shoved car lost up to 0.64 s of its trip (spec 25.H5)

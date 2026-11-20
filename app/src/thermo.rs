@@ -188,50 +188,52 @@ fn rooms(devices: &[ClimateDev], sel: usize) -> Vec<ClimateRoom> {
         .collect()
 }
 
-/// The thermostat page from the states (only when the panel has one).
+/// Every thermostat page from the states (only when the panel has one), each from its own climate entities.
 pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
-    let pages = ui.get_pages();
-    let Some(slot) =
-        (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i)).find(|p| p.kind == "thermostat")
-    else {
-        return;
-    };
-    ui.set_thermo_look(slot.variant);
-    let entities = crate::page_entities(s, "thermostat");
-    let devices: Vec<ClimateDev> = entities
-        .iter()
-        .map(|id| {
-            let mut d = device(id, s.states.get(id));
-            // a value just set stays shown until Home Assistant reports it (or 5 s pass)
-            if let Some(t) = pending(id) {
-                if (d.target - t).abs() < 0.01 {
-                    PENDING.with(|p| p.borrow_mut().remove(id));
-                } else {
-                    d.target = t;
+    let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "thermostat").into_iter().map(|(_, p)| p.clone()).collect::<Vec<_>>();
+    for (n, page) in pages.iter().enumerate() {
+        let entities = crate::pages::entities_of(page);
+        let devices: Vec<ClimateDev> = entities
+            .iter()
+            .map(|id| {
+                let mut d = device(id, s.states.get(id));
+                // a value just set stays shown until Home Assistant reports it (or 5 s pass)
+                if let Some(t) = pending(id) {
+                    if (d.target - t).abs() < 0.01 {
+                        PENDING.with(|p| p.borrow_mut().remove(id));
+                    } else {
+                        d.target = t;
+                    }
                 }
+                d
+            })
+            .collect();
+        crate::pages::with_inst(ui.get_thermo_inst(), |m| ui.set_thermo_inst(m), n, |d| {
+            if devices.is_empty() {
+                // none picked (or all gone): the chip says so and opens nothing
+                if slint::Model::row_count(&d.devices) > 0 {
+                    d.devices = ModelRc::default();
+                    d.rooms = ModelRc::default();
+                }
+                return;
             }
-            d
-        })
-        .collect();
-    if devices.is_empty() {
-        // none picked (or all gone): the chip says so and opens nothing
-        if slint::Model::row_count(&ui.get_thermo_devices()) > 0 {
-            ui.set_thermo_devices(ModelRc::default());
-            ui.set_thermo_rooms(ModelRc::default());
+            let sel = (d.sel.max(0) as usize).min(devices.len() - 1);
+            let rooms = rooms(&devices, sel);
+            if let Some(m) = crate::pages::update_rows(&d.devices, devices) {
+                d.devices = m;
+            }
+            if let Some(m) = crate::pages::update_rows(&d.rooms, rooms) {
+                d.rooms = m;
+            }
+            d.sel = sel as i32;
+        });
+        // the menus of a page without devices close
+        if entities.is_empty() && crate::acting_n("thermostat") == n {
+            ui.set_thermo_picker(false);
+            ui.set_thermo_sheet(false);
         }
-        ui.set_thermo_picker(false);
-        ui.set_thermo_sheet(false);
-        return;
     }
-    let sel = (ui.get_thermo_sel().max(0) as usize).min(devices.len() - 1);
-    let rooms = rooms(&devices, sel);
-    if let Some(m) = crate::pages::update_rows(&ui.get_thermo_devices(), devices) {
-        ui.set_thermo_devices(m);
-    }
-    if let Some(m) = crate::pages::update_rows(&ui.get_thermo_rooms(), rooms) {
-        ui.set_thermo_rooms(m);
-    }
-    ui.set_thermo_sel(sel as i32);
+    crate::pages::keep_insts(&ui.get_thermo_inst(), pages.len());
 }
 
 thread_local! {
@@ -265,11 +267,13 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         _ => {}
     }
     let (entities, states) = with_state(|s| (crate::page_entities(s, "thermostat"), s.states.clone()));
-    let sel = ui.get_thermo_sel().max(0) as usize;
+    // the page on screen's devices and the one it shows
+    let n = crate::acting_n("thermostat");
+    let sel = crate::pages::inst(&ui.get_thermo_inst(), n).sel.max(0) as usize;
     let Some(id) = entities.get(sel).cloned() else { return };
     let st: Option<&EntityState> = states.get(&id);
     let attr = |k: &str| st.and_then(|s| s.attrs.get(k));
-    let n: usize = value.parse().unwrap_or(0);
+    let idx: usize = value.parse().unwrap_or(0);
     match what {
         "thermo.minus" | "thermo.plus" => {
             let d = device(&id, st);
@@ -280,11 +284,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             set_pending(&id, t);
             call("set_temperature", &id, json!({"temperature": t}));
             // Shown at once; Home Assistant's new state follows.
-            let devs = ui.get_thermo_devices();
-            if let Some(mut cur) = slint::Model::row_data(&devs, sel) {
-                cur.target = t;
-                slint::Model::set_row_data(&devs, sel, cur);
-            }
+            show_target(ui, n, sel, t);
         }
         // a value from a turned knob or dial (wall, dial and neon looks), to the device's step
         "thermo.target" => {
@@ -293,15 +293,11 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             let t = ((v / d.step).round() * d.step).clamp(d.tmin, d.tmax);
             set_pending(&id, t);
             call("set_temperature", &id, json!({"temperature": t}));
-            let devs = ui.get_thermo_devices();
-            if let Some(mut cur) = slint::Model::row_data(&devs, sel) {
-                cur.target = t;
-                slint::Model::set_row_data(&devs, sel, cur);
-            }
+            show_target(ui, n, sel, t);
         }
         "thermo.mode" => {
             let hvac: Vec<String> = strings(attr("hvac_modes")).into_iter().filter(|m| mode_code(m).is_some()).collect();
-            if let Some(mode) = hvac.get(n) {
+            if let Some(mode) = hvac.get(idx) {
                 call("set_hvac_mode", &id, json!({"hvac_mode": mode}));
             }
         }
@@ -311,7 +307,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 "thermo.swing" => ("swing_modes", "set_swing_mode", "swing_mode"),
                 _ => ("preset_modes", "set_preset_mode", "preset_mode"),
             };
-            if let Some(v) = strings(attr(key)).get(n) {
+            if let Some(v) = strings(attr(key)).get(idx) {
                 call(service, &id, json!({ field: v }));
             }
         }
@@ -326,7 +322,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 let i = list.iter().position(|v| v == cur).map(|i| (i + 1) % list.len()).unwrap_or(0);
                 Some(list[i].clone())
             };
-            match n {
+            match idx {
                 0 => call(if state == "off" { "turn_on" } else { "turn_off" }, &id, json!({})),
                 1 => {
                     let modes: Vec<String> = strings(attr("hvac_modes")).into_iter().filter(|m| m != "off" && mode_code(m).is_some()).collect();
@@ -353,13 +349,22 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         }
         // a device picked in the rooms menu (its index among the page's devices)
         "thermo.room" => {
-            if n < entities.len() {
-                ui.set_thermo_sel(n as i32);
+            if idx < entities.len() {
+                crate::pages::with_inst(ui.get_thermo_inst(), |m| ui.set_thermo_inst(m), n, |d| d.sel = idx as i32);
             }
             ui.set_thermo_picker(false);
             with_state(|s| refresh(ui, s));
         }
         _ => eprintln!("nspanel-app: act {what} {value} (not handled)"),
+    }
+}
+
+/// A target set on the panel, shown on its page at once (the device's row in place).
+fn show_target(ui: &AppWindow, n: usize, sel: usize, t: f32) {
+    let devs = crate::pages::inst(&ui.get_thermo_inst(), n).devices;
+    if let Some(mut cur) = slint::Model::row_data(&devs, sel) {
+        cur.target = t;
+        slint::Model::set_row_data(&devs, sel, cur);
     }
 }
 
