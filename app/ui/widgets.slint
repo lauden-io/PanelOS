@@ -812,7 +812,6 @@ export component Dropdown inherits Rectangle {
             init => { self.k = 1; }
             animate k { duration: 140ms; easing: ease-out; }
             opacity: self.k;
-            x: 0; y: 0;
             width: root.width;
             height: Math.min(8, root.options.length) * 48px + 12px;
             border-radius: root.tk-radius >= 0px ? root.tk-radius : 14px; background: root.tk-menu; border-width: 1px; border-color: root.tk-line;
