@@ -305,6 +305,24 @@ function svgNode(markup, cls) {
 }
 
 const clone = (x) => JSON.parse(JSON.stringify(x));
+
+// ---------------------------------------------------------------- jelly motion (spec 28.15)
+// The switch, the segmented control, the weekday row and the checkbox move as on the panel. Each motion is a
+// closed-form function of the time t since the change: J-edge(t; τ, T) = 1 − e^(−t/τ)·(cos ωt + sin ωt / (ωτ)),
+// ω = 2π/T (it starts at rest, overshoots and rings out); a wobble that keeps the area, sx = 1 + A·e^(−t/τ)·cos(2πt/T),
+// sy = 1/sx; an overshoot past a target softly capped at cap·tanh(x/cap).
+const J_TAU = Math.PI * 2;
+const jEdge = (t, tau, T) => (t <= 0 ? 0 : 1 - Math.exp(-t / tau) * (Math.cos((J_TAU * t) / T) + (T / (J_TAU * tau)) * Math.sin((J_TAU * t) / T)));
+const jWob = (t, A, tau = 150, T = 170) => (t < 0 ? 1 : 1 + A * Math.exp(-t / tau) * Math.cos((J_TAU * t) / T));
+const jSoft = (x, cap) => (x <= 0 ? x : cap * Math.tanh(x / cap));
+const jEo = (u) => 1 - Math.pow(1 - Math.min(1, Math.max(0, u)), 3);
+const J_LEAD = [90, 240];
+const J_TRAIL = [130, 340];
+const J_LAG = 30;
+// reduced motion: no overshoot or wobble, 150 ms ease-out
+const jReduce = () => Boolean(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+const jScale = (el, sx, sy) => { if (el) el.style.transform = `scale(${sx.toFixed(4)}, ${sy.toFixed(4)})`; };
+const J_TICK = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" pathLength="1"/></svg>';
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 const mb = (bytes) => (bytes >= 1048576 ? `${(bytes / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`);
 const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
@@ -661,11 +679,17 @@ button { cursor: pointer; }
 .below { padding: 0 0 14px; margin-top: -4px; }
 
 /* controls */
-.seg { display: inline-flex; flex-wrap: wrap; background: var(--raised); border-radius: 20px; padding: 3px; gap: 2px; max-width: 100%; }
-.seg button { border: 0; background: none; font-size: 14px; padding: 7px 15px; border-radius: 999px; color: var(--muted); text-align: center; }
+.seg { position: relative; display: inline-flex; flex-wrap: wrap; background: var(--raised); border-radius: 20px; padding: 3px; gap: 2px; max-width: 100%; }
+.seg button { position: relative; z-index: 1; border: 0; background: none; font-size: 14px; font-weight: 500; padding: 7px 15px; border-radius: 999px; color: var(--muted); text-align: center; transition: color .16s; }
 .seg button:hover { color: var(--text); }
 .seg button.on { background: var(--text); color: var(--ground); }
 .seg button:disabled { opacity: .4; cursor: default; }
+.seg .pill { position: absolute; left: 0; top: 0; display: none; border-radius: 999px; background: var(--text); pointer-events: none; }
+.seg.jm .pill { display: block; }
+.seg.jm button.on { background: none; }
+.seg.jm.jpre button { transition: none; }
+.seg.jm.jpre button.on { color: var(--muted); }
+.seg.jm.jpre button.jwas { color: var(--ground); }
 .sel { position: relative; max-width: 100%; min-width: 0; flex: 0 1 auto; display: inline-block; }
 .sel.disabled { opacity: .45; pointer-events: none; }
 .sel select { appearance: none; -webkit-appearance: none; max-width: 100%; font-size: 14px; color: var(--text); background: var(--raised); border: 1px solid transparent; border-radius: 12px; padding: 9px 36px 9px 14px; }
@@ -675,14 +699,16 @@ button { cursor: pointer; }
 .inp { font-size: 14px; background: var(--raised); border: 1px solid transparent; border-radius: 12px; padding: 9px 13px; color: var(--text); min-width: 0; width: 100%; }
 .inp.time { width: 112px; font-variant-numeric: tabular-nums; }
 .inp.short { width: 200px; max-width: 100%; }
-.switch { position: relative; width: 48px; height: 28px; flex: none; display: inline-block; }
-.switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; }
-.switch span { position: absolute; inset: 0; border-radius: 999px; background: var(--raised); border: 1px solid var(--line); transition: background .15s; }
-.switch span::after { content: ""; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px; border-radius: 50%; background: var(--faint); transition: transform .15s, background .15s; }
-.switch input:checked + span { background: var(--signal); border-color: var(--signal); }
-.switch input:checked + span::after { transform: translateX(20px); background: #F5F3EE; }
+.switch { --swW: 48px; --swH: 28px; --kn: 20px; position: relative; width: var(--swW); height: var(--swH); flex: none; display: inline-block; touch-action: pan-y; }
+.switch input { opacity: 0; width: 100%; height: 100%; margin: 0; position: absolute; cursor: pointer; z-index: 1; touch-action: pan-y; }
+.switch span { --on: 0; position: absolute; inset: 0; border-radius: 999px; background: var(--raised); box-shadow: inset 0 0 0 1px var(--line); }
+.switch span::before { content: ""; position: absolute; inset: 0; border-radius: inherit; background: var(--signal); opacity: var(--on); }
+.switch span i { position: absolute; left: 4px; top: 4px; width: var(--kn); height: var(--kn); border-radius: 999px; background: color-mix(in srgb, #F5F3EE calc(var(--on) * 100%), var(--faint)); }
+.switch input:checked + span { --on: 1; }
+.switch input:checked + span i { left: calc(var(--swW) - 4px - var(--kn)); }
 .switch input:disabled { cursor: default; }
 .switch input:disabled + span { opacity: .45; }
+.switch input:focus-visible + span { outline: 2px solid var(--signal); outline-offset: 2px; }
 .slider { display: flex; align-items: center; gap: 12px; min-width: 0; }
 input[type=range] { -webkit-appearance: none; appearance: none; width: 220px; max-width: 46vw; height: 28px; background: transparent; cursor: pointer; margin: 0; }
 input[type=range]::-webkit-slider-runnable-track { height: 6px; border-radius: 3px; background: linear-gradient(to right, var(--signal) var(--fill, 0%), var(--raised) var(--fill, 0%)); }
@@ -728,27 +754,37 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .ddr .sp { width: 18px; flex: none; }
 .ddr .t { min-width: 0; overflow-wrap: anywhere; }
 .ddr:disabled { opacity: .4; }
-.ddr .cb { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--faint); flex: none; display: grid; place-items: center; transition: background .16s, border-color .16s; }
-.ddr .cb.on { background: var(--signal); border-color: var(--signal); animation: cbpop .23s cubic-bezier(.34,1.6,.64,1); }
-.ddr .cb .mdi { --mdc-icon-size: 14px; color: #F5F3EE; }
-@keyframes cbpop { from { transform: scale(.6); } to { transform: none; } }
+.jck { position: relative; width: 18px; height: 18px; flex: none; display: block; color: #F5F3EE; }
+.jck .bw { position: absolute; inset: 0; display: block; }
+.jck .bx { position: absolute; inset: 0; border-radius: 5px; border: 1.5px solid var(--faint); transition: background .08s, border-color .08s; }
+.jck.round .bx { border-radius: 50%; }
+.jck svg { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+.jck path { stroke-dasharray: 1; stroke-dashoffset: 1; }
+.jck.on .bx { background: var(--signal); border-color: var(--signal); }
+.jck.on path { stroke-dashoffset: 0; }
 .ddbar { display: flex; gap: 4px; padding: 0 0 6px; border-bottom: 1px solid var(--line); margin-bottom: 6px; }
 .dds { margin-bottom: 6px; }
 .dddone { display: none; padding-top: 6px; justify-content: flex-end; }
 .wdays { display: flex; gap: 6px; flex-wrap: wrap; }
-.wd { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--raised); color: var(--muted); font-size: 13px; font-weight: 500; display: grid; place-items: center; padding: 0; transition: background .16s, color .16s; }
-.wd.on { background: var(--text); color: var(--ground); animation: cbpop .23s cubic-bezier(.34,1.6,.64,1); }
+.wd { position: relative; width: 32px; height: 32px; border-radius: 50%; border: 0; background: none; color: var(--muted); font-size: 13px; font-weight: 500; display: grid; place-items: center; padding: 0; transition: color .08s; }
+.wd .base, .wd .blob { position: absolute; inset: 0; border-radius: 50%; display: block; }
+.wd .base { background: var(--raised); }
+.wd .blob { background: var(--text); transform: scale(0); }
+.wd span { position: relative; }
+.wd.on { color: var(--ground); }
+.wd.on .blob { transform: none; }
+.wdays .wd.jl { color: var(--muted); }
+.wdays .wd.jl.lit { color: var(--ground); }
 /* the touch density (the Home Assistant app on a phone): the panel's sizes (spec 28) */
 @media (pointer: coarse) {
   .dd { height: 48px; font-size: 15px; border-radius: 14px; }
   .ddr { min-height: 48px; font-size: 15px; }
-  .ddr .cb { width: 22px; height: 22px; border-radius: 6px; }
+  .jck { width: 22px; height: 22px; }
+  .jck .bx { border-radius: 6px; }
   .dddone { display: flex; }
   .seg { padding: 2px; border-radius: 20px; }
   .seg button { min-height: 36px; font-size: 15px; padding: 8px 16px; }
-  .switch { width: 56px; height: 32px; }
-  .switch span::after { width: 24px; height: 24px; left: 3px; top: 3px; }
-  .switch input:checked + span::after { transform: translateX(24px); }
+  .switch { --swW: 56px; --swH: 32px; --kn: 24px; }
   .btn { min-height: 48px; font-size: 16px; font-weight: 600; padding: 0 22px; }
   .btn.small { min-height: 36px; font-size: 14px; padding: 0 16px; }
   .wd { width: 40px; height: 40px; }
@@ -917,7 +953,9 @@ input[type=range]:disabled { opacity: .4; cursor: default; }
 .group > .row:first-child { border-top: 0; }
 .opt { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); cursor: pointer; min-width: 0; }
 .opt:first-child { border-top: 0; }
-.opt input[type=checkbox], .opt input[type=radio] { width: 20px; height: 20px; accent-color: var(--signal); flex: none; margin: 0; cursor: pointer; }
+.opt { position: relative; }
+.opt input[type=checkbox], .opt input[type=radio] { position: absolute; left: 0; top: 50%; width: 22px; height: 22px; margin: -11px 0 0; opacity: 0; cursor: pointer; }
+.opt input:focus-visible + .jck { outline: 2px solid var(--signal); outline-offset: 2px; border-radius: 6px; }
 .opt .t { flex: 1; min-width: 0; display: flex; flex-direction: column; overflow-wrap: anywhere; }
 .opt .t small { color: var(--muted); font-size: 12.5px; }
 .opt.disabled { cursor: default; opacity: .6; }
@@ -1150,6 +1188,14 @@ class PanelOSPage extends HTMLElement {
       if (ev.composedPath().some((n) => n.classList && (n.classList.contains("pop") || n.classList.contains("info")))) return;
       this._closePopsInPlace();
     };
+    // the jelly controls (spec 28.15): bound once, so the listeners can be added and removed
+    this._jRuns = new Map();
+    this._jShapes = new Map();
+    this._jDown = (ev) => this._jPointerDown(ev);
+    this._jMove = (ev) => this._jPointerMove(ev);
+    this._jUp = (ev) => this._jPointerUp(ev);
+    this._jClick = (ev) => this._jOnClick(ev);
+    this._jChange = (ev) => this._jOnChange(ev);
     this._onKey = (ev) => {
       if (ev.key !== "Escape") return;
       if (this._menu) this._closeMenu();
@@ -1223,6 +1269,14 @@ class PanelOSPage extends HTMLElement {
     this.shadowRoot.addEventListener("scroll", this._onUse, { capture: true, passive: true });
     this.shadowRoot.addEventListener("click", this._onClick);
     this.shadowRoot.addEventListener("click", this._onClickCapture, true);
+    // the jelly controls: their press, drag and change, before the controls' own handlers (a handler may draw the
+    // page again at once)
+    this.shadowRoot.addEventListener("pointerdown", this._jDown, true);
+    this.shadowRoot.addEventListener("pointermove", this._jMove, true);
+    this.shadowRoot.addEventListener("click", this._jClick, true);
+    this.shadowRoot.addEventListener("change", this._jChange, true);
+    window.addEventListener("pointerup", this._jUp, true);
+    window.addEventListener("pointercancel", this._jUp, true);
     this.shadowRoot.addEventListener("focusout", this._onFocusOut);
     this.shadowRoot.addEventListener("pointerdown", this._onPointerDown, true);
     window.addEventListener("pointerup", this._onPointerUp, true);
@@ -1242,6 +1296,8 @@ class PanelOSPage extends HTMLElement {
     window.removeEventListener("keydown", this._onKey);
     window.removeEventListener("pointerup", this._onPointerUp, true);
     window.removeEventListener("pointercancel", this._onPointerUp, true);
+    window.removeEventListener("pointerup", this._jUp, true);
+    window.removeEventListener("pointercancel", this._jUp, true);
     this._resize.disconnect();
     this._stopSound();
     clearTimeout(this._pic.timer);
@@ -2245,12 +2301,14 @@ class PanelOSPage extends HTMLElement {
 
   // -- controls ----------------------------------------------------------------------
 
+  // (the jelly of the switch, the segmented control, the weekday row and the checkbox: see _jDown and the ones after)
   _toggle(checked, onchange, { label = "On", disabled = false } = {}) {
-    return h("label", { class: "switch" }, h("input", { type: "checkbox", role: "switch", checked, disabled, "aria-label": label, onchange: (e) => onchange(e.target.checked) }), h("span"));
+    return h("label", { class: "switch", "data-jelly": "sw", "data-jl": label }, h("input", { type: "checkbox", role: "switch", checked, disabled, "aria-label": label, onchange: (e) => onchange(e.target.checked) }), h("span", null, h("i")));
   }
 
   _seg(options, value, onchange, { label = null } = {}) {
-    return h("div", { class: "seg", role: "radiogroup", "aria-label": label },
+    return h("div", { class: "seg", role: "radiogroup", "aria-label": label, "data-jelly": "seg", "data-jl": label || options.map((o) => o[1]).join("|") },
+      h("span", { class: "pill", "aria-hidden": "true" }),
       options.map(([v, text, dis]) => h("button", {
         class: v === value ? "on" : "", role: "radio", "aria-checked": v === value ? "true" : "false",
         disabled: Boolean(dis), title: typeof dis === "string" ? dis : null, onclick: () => onchange(v),
@@ -2308,7 +2366,7 @@ class PanelOSPage extends HTMLElement {
         this._btn("None", () => rows.filter((r) => r.on).forEach((r) => r.onclick()), { cls: "small ghost" })) : null,
       h("div", { class: "ddl" }, shown.map((r) => h("button", { class: `ddr${(multi ? r.on : r.value === current) ? " on" : ""}`, type: "button", role: "option", disabled: Boolean(r.disabled),
         "aria-selected": (multi ? r.on : r.value === current) ? "true" : "false", onclick: () => pick(r) },
-        multi ? h("span", { class: `cb${r.on ? " on" : ""}` }, r.on ? icon("check") : null) : (r.value === current ? icon("check") : h("span", { class: "sp" })),
+        multi ? this._ckBox(r.on, String(r.label)) : (r.value === current ? icon("check") : h("span", { class: "sp" })),
         h("span", { class: "t" }, r.label)))),
       multi ? h("div", { class: "dddone" }, this._btn("Done", close, { cls: "primary" })) : null) : null;
     return h("div", { class: `ddw${full ? " full" : ""}`, "data-dd": id }, field, menu);
@@ -2353,10 +2411,488 @@ class PanelOSPage extends HTMLElement {
     return { on: Boolean(on), label, onclick };
   }
 
+  // -- jelly motion (spec 28.15) -------------------------------------------------------
+  // A control's motion survives the page being drawn again: it is kept by the control's place (its kind, its label
+  // and its position among the controls of that kind and label, in the page or in the sheet), and each frame draws it
+  // on whichever element stands there now.
+
+  _jScope(el) {
+    return this._layer.contains(el) ? this._layer : this.shadowRoot.querySelector(".app");
+  }
+
+  _jSame(scope, kind, label) {
+    return [...scope.querySelectorAll(`[data-jelly="${kind}"]`)].filter((x) => (x.dataset.jl || "") === label);
+  }
+
+  _jKey(el) {
+    const scope = el && this._jScope(el);
+    if (!scope) return null;
+    const kind = el.dataset.jelly;
+    const label = el.dataset.jl || "";
+    const n = this._jSame(scope, kind, label).indexOf(el);
+    return n < 0 ? null : JSON.stringify([scope === this._layer ? "L" : "A", kind, label, n]);
+  }
+
+  _jFind(key) {
+    const [sc, kind, label, n] = JSON.parse(key);
+    const scope = sc === "L" ? this._layer : this.shadowRoot.querySelector(".app");
+    return scope ? this._jSame(scope, kind, label)[n] || null : null;
+  }
+
+  // One motion per control part. frame(el, t, done) draws it at t ms since the start and returns its shape (kept for a
+  // motion that starts during this one: it goes on from the shape, without a jump) or null (back at rest).
+  _jRun(el, part, dur, frame) {
+    const key = this._jKey(el);
+    if (!key) return;
+    const id = `${key}#${part}`;
+    const old = this._jRuns.get(id);
+    if (old) cancelAnimationFrame(old.raf);
+    const rec = { el, t0: performance.now(), raf: 0 };
+    this._jRuns.set(id, rec);
+    const step = (now) => {
+      if (this._jRuns.get(id) !== rec) return;
+      if (!rec.el.isConnected) rec.el = this._jFind(key) || rec.el;
+      const t = Math.max(0, now - rec.t0);
+      const done = t >= dur;
+      if (rec.el.isConnected) {
+        const shape = frame(rec.el, done ? dur : t, done);
+        if (shape === null) this._jShapes.delete(id);
+        else if (shape !== undefined) this._jShapes.set(id, shape);
+      }
+      if (done) this._jRuns.delete(id);
+      else rec.raf = requestAnimationFrame(step);
+    };
+    rec.raf = requestAnimationFrame(step);
+  }
+
+  _jShape(el, part) {
+    const key = this._jKey(el);
+    return key ? this._jShapes.get(`${key}#${part}`) || null : null;
+  }
+
+  // A press holds its squashed shape until the change takes over or the press ends without one (then it springs back).
+  _jHold(el, relax) {
+    this._jHeld = { el, relax };
+  }
+
+  _jPointerDown(ev) {
+    if (ev.button > 0) return;
+    const t = ev.target;
+    const sw = t.closest?.(".switch[data-jelly]");
+    if (sw) {
+      const input = sw.querySelector("input");
+      if (input.disabled) return;
+      this._jPress = { sw, sx: ev.clientX, flipped: false };
+      this._jSwPress(sw);
+      return;
+    }
+    const day = t.closest?.(".wdays[data-jelly] > .wd");
+    if (day) { this._jDayPress(day); return; }
+    const opt = t.closest?.(".opt, .ddr");
+    const box = opt && !opt.disabled && opt.querySelector(".jck[data-jelly]");
+    if (box && !opt.querySelector("input:disabled")) this._jBoxPress(box);
+  }
+
+  // a sideways drag of 30 % of the switch's width flips it before the release
+  _jPointerMove(ev) {
+    const pr = this._jPress;
+    if (!pr || pr.flipped || !pr.sw.isConnected) return;
+    const input = pr.sw.querySelector("input");
+    const d = ev.clientX - pr.sx;
+    const w = pr.sw.offsetWidth || 48;
+    if ((d > w * 0.3 && !input.checked) || (d < -w * 0.3 && input.checked)) {
+      pr.flipped = true;
+      input.checked = !input.checked;
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      this._jNoClick = { sw: pr.sw, until: Date.now() + 800 };
+    }
+  }
+
+  _jPointerUp() {
+    this._jPress = null;
+    const held = this._jHeld;
+    if (!held) return;
+    // the click (and its change) comes right after the release; without one the press springs back
+    setTimeout(() => { if (this._jHeld === held) { this._jHeld = null; held.relax(); } }, 150);
+  }
+
+  _jOnClick(ev) {
+    const t = ev.target;
+    // the click after a drag that flipped the switch already: it does not flip it back
+    const nc = this._jNoClick;
+    if (nc) {
+      this._jNoClick = null;
+      if (Date.now() < nc.until && nc.sw.contains(t)) { ev.preventDefault(); return; }
+    }
+    const b = t.closest?.(".seg[data-jelly] > button");
+    if (b && !b.disabled && !b.classList.contains("on")) { this._jSegGo(b.parentElement, b); return; }
+    const day = t.closest?.(".wdays[data-jelly] > .wd");
+    if (day) { this._jDayToggle(day); return; }
+    const row = t.closest?.(".ddr");
+    const box = row && !row.disabled && row.querySelector(".jck[data-jelly]");
+    if (box) this._jBoxTick(box, !box.classList.contains("on"));
+  }
+
+  _jOnChange(ev) {
+    const input = ev.target;
+    if (!(input instanceof HTMLInputElement)) return;
+    const sw = input.closest(".switch[data-jelly]");
+    if (sw) { this._jSwFlip(sw); return; }
+    const opt = input.closest(".opt");
+    const box = opt && opt.querySelector(".jck[data-jelly]");
+    if (!box) return;
+    this._jBoxTick(box, input.checked);
+    // a radio: the one that was chosen in the same group lets go
+    if (input.type === "radio" && input.name) {
+      this._jScope(input)?.querySelectorAll(`.opt input[type=radio][name="${CSS.escape(input.name)}"]`).forEach((o) => {
+        const ob = o !== input && o.closest(".opt")?.querySelector(".jck.on");
+        if (ob) this._jBoxTick(ob, false);
+      });
+    }
+  }
+
+  // ---- switch (28.3): the knob flattens 7 px toward its travel on a press; on a flip its leading edge races to the
+  // far end (J-edge 90/240 ms) and presses flat against the track's inner wall, the trailing edge follows 30 ms later
+  // (130/340 ms); the height keeps the area (kn² / w, 0.7 kn … the track's height − 4 px), the width at least 0.72 kn;
+  // the track crossfades over 160 ms. Sizes come from the design values (--swW, --swH, --kn), never from the layout box.
+  _jSwGeo(sw) {
+    const cs = getComputedStyle(sw);
+    const kn = parseFloat(cs.getPropertyValue("--kn")) || 20;
+    const W = parseFloat(cs.getPropertyValue("--swW")) || 48;
+    const H = parseFloat(cs.getPropertyValue("--swH")) || 28;
+    return { kn, W, H, minL: 4, maxR: W - 4 };
+  }
+
+  _jSwRest(g, on) {
+    return on ? { L: g.maxR - g.kn, R: g.maxR } : { L: g.minL, R: g.minL + g.kn };
+  }
+
+  _jSwPut(sw, g, L, R, k) {
+    const knob = sw.querySelector("span > i");
+    const track = sw.querySelector("span");
+    if (!knob || !track) return;
+    const w = Math.max(1, R - L);
+    const hh = Math.min(g.H - 4, Math.max(g.kn * 0.7, (g.kn * g.kn) / w));
+    knob.style.left = `${L}px`;
+    knob.style.width = `${w}px`;
+    knob.style.height = `${hh}px`;
+    knob.style.top = `${(g.H - hh) / 2}px`;
+    if (k != null) track.style.setProperty("--on", k.toFixed(3));
+  }
+
+  _jSwClear(sw) {
+    const knob = sw.querySelector("span > i");
+    const track = sw.querySelector("span");
+    if (knob) knob.style.cssText = "";
+    if (track) track.style.removeProperty("--on");
+    return null;
+  }
+
+  _jSwPress(sw) {
+    if (jReduce()) return;
+    const on = sw.querySelector("input").checked;
+    const g = this._jSwGeo(sw);
+    const r = this._jSwRest(g, on);
+    const s0 = this._jShape(sw, "m") || r;
+    this._jRun(sw, "m", 90, (el, t) => {
+      const u = jEo(t / 90);
+      const L = on ? s0.L + (r.L - 7 - s0.L) * u : s0.L + (r.L - s0.L) * u;
+      const R = on ? s0.R + (r.R - s0.R) * u : s0.R + (r.R + 7 - s0.R) * u;
+      this._jSwPut(el, g, L, R, null);
+      return { L, R, k: on ? 1 : 0 };
+    });
+    this._jHold(sw, () => this._jSwRelax(sw));
+  }
+
+  _jSwFlip(sw) {
+    if (this._jHeld?.el === sw) this._jHeld = null;
+    const to = sw.querySelector("input").checked;
+    const g = this._jSwGeo(sw);
+    const e = this._jSwRest(g, to);
+    const s0 = this._jShape(sw, "m") || { ...this._jSwRest(g, !to), k: to ? 0 : 1 };
+    const k0 = s0.k ?? (to ? 0 : 1);
+    const k1 = to ? 1 : 0;
+    const kAt = (t) => k0 + (k1 - k0) * Math.min(1, t / 160);
+    if (jReduce()) {
+      this._jRun(sw, "m", 150, (el, t, done) => {
+        if (done) return this._jSwClear(el);
+        const u = jEo(t / 150);
+        const L = s0.L + (e.L - s0.L) * u;
+        const R = s0.R + (e.R - s0.R) * u;
+        this._jSwPut(el, g, L, R, kAt(t));
+        return { L, R, k: kAt(t) };
+      });
+      return;
+    }
+    this._jRun(sw, "m", 700, (el, t, done) => {
+      if (done) return this._jSwClear(el);
+      let L;
+      let R;
+      if (to) {
+        R = Math.min(g.maxR, s0.R + (e.R - s0.R) * jEdge(t, ...J_LEAD));
+        L = s0.L + (e.L - s0.L) * jEdge(t - J_LAG, ...J_TRAIL);
+      } else {
+        L = Math.max(g.minL, s0.L + (e.L - s0.L) * jEdge(t, ...J_LEAD));
+        R = s0.R + (e.R - s0.R) * jEdge(t - J_LAG, ...J_TRAIL);
+      }
+      if (R - L < g.kn * 0.72) { if (to) L = R - g.kn * 0.72; else R = L + g.kn * 0.72; }
+      this._jSwPut(el, g, L, R, kAt(t));
+      return { L, R, k: kAt(t) };
+    });
+  }
+
+  // let go without a flip: back to rest with a small wobble (J-edge 70/220)
+  _jSwRelax(sw) {
+    if (!sw.isConnected) return;
+    const s0 = this._jShape(sw, "m");
+    if (!s0) return;
+    const g = this._jSwGeo(sw);
+    const e = this._jSwRest(g, sw.querySelector("input").checked);
+    this._jRun(sw, "m", jReduce() ? 150 : 500, (el, t, done) => {
+      if (done) return this._jSwClear(el);
+      const a = jReduce() ? jEo(t / 150) : jEdge(t, 70, 220);
+      const L = s0.L + (e.L - s0.L) * a;
+      const R = s0.R + (e.R - s0.R) * a;
+      this._jSwPut(el, g, L, R, null);
+      return { L, R, k: s0.k };
+    });
+  }
+
+  // ---- segmented (28.4): one pill travels. Its leading edge races (J-edge 90/240) and may pass the target by at most
+  // 0.28 × its height (soft cap), the trailing edge follows 30 ms later (130/340, cap 0.21 ×); the pill thins while
+  // stretched and bulges when squashed (H·√(w₀/w), 0.8 H … H + 2·padding − 2), never under 0.6 w₀ wide; done in
+  // 750 ms. The labels change colour over 160 ms, 70 ms after the tap. A choice on another row of a wrapped control
+  // moves at once.
+  _jSegBox(seg, b) {
+    const r = seg.getBoundingClientRect();
+    const x = b.getBoundingClientRect();
+    return { l: x.left - r.left, r: x.right - r.left, t: x.top - r.top, h: x.height };
+  }
+
+  _jSegGo(seg, b) {
+    const btns = [...seg.querySelectorAll(":scope > button")];
+    const was = seg.querySelector(":scope > button.on");
+    const from = btns.indexOf(was);
+    if (from < 0) return;
+    const e1 = this._jSegBox(seg, b);
+    const e0 = this._jSegBox(seg, was);
+    if (Math.abs(e1.t - e0.t) > 1 || e1.h < 1) return;
+    const s0 = this._jShape(seg, "pill") || { L: e0.l, R: e0.r };
+    const H = e1.h;
+    const pad = parseFloat(getComputedStyle(seg).paddingTop) || 3;
+    const W = seg.clientWidth;
+    const cy = e1.t + H / 2;
+    const l1 = e1.l;
+    const r1 = e1.r;
+    const w0 = r1 - l1;
+    const right = l1 > s0.L;
+    const cap = H * 0.28;
+    const reduce = jReduce();
+    const put = (el, L, R) => {
+      const pill = el.querySelector(":scope > .pill");
+      if (!pill) return;
+      const w = Math.max(1, R - L);
+      const hh = H * Math.min((H + 2 * pad - 2) / H, Math.max(0.8, Math.sqrt(w0 / w)));
+      pill.style.left = `${L}px`;
+      pill.style.width = `${w}px`;
+      pill.style.height = `${hh}px`;
+      pill.style.top = `${cy - hh / 2}px`;
+    };
+    this._jRun(seg, "pill", reduce ? 150 : 750, (el, t, done) => {
+      if (done) {
+        el.classList.remove("jm", "jpre");
+        el.querySelectorAll(":scope > button.jwas").forEach((x) => x.classList.remove("jwas"));
+        const pill = el.querySelector(":scope > .pill");
+        if (pill) pill.style.cssText = "";
+        return null;
+      }
+      el.classList.add("jm");
+      el.classList.toggle("jpre", t < 70);
+      el.querySelectorAll(":scope > button").forEach((x, i) => x.classList.toggle("jwas", i === from));
+      let L;
+      let R;
+      if (reduce) {
+        const u = jEo(t / 150);
+        L = s0.L + (l1 - s0.L) * u;
+        R = s0.R + (r1 - s0.R) * u;
+      } else {
+        const a = jEdge(t, ...J_LEAD);
+        const c = jEdge(t - J_LAG, ...J_TRAIL);
+        if (right) {
+          R = r1 + jSoft(s0.R + (r1 - s0.R) * a - r1, cap);
+          L = l1 + jSoft(s0.L + (l1 - s0.L) * c - l1, cap * 0.75);
+        } else {
+          L = l1 - jSoft(l1 - (s0.L + (l1 - s0.L) * a), cap);
+          R = r1 - jSoft(r1 - (s0.R + (r1 - s0.R) * c), cap * 0.75);
+        }
+        L = Math.max(pad, L);
+        R = Math.min(W - pad, R);
+        if (R - L < w0 * 0.6) { if (right) L = R - w0 * 0.6; else R = L + w0 * 0.6; }
+      }
+      put(el, L, R);
+      return { L, R };
+    });
+  }
+
+  // ---- weekday row (28.10): a press squashes the day (1.08 × 0.92); choosing it pops the text-colour disc from 0.4
+  // (J-edge 90/260) with a wobble (A 0.20), the day's ground wobbles (A 0.10) and its neighbours ripple (A 0.05, 40 ms
+  // later); un-choosing swells the disc to 1.08 (60 ms), then drops it into the centre (120 ms) while the ground
+  // wobbles (A 0.08, from 60 ms) and the neighbours ripple (A 0.04, from 100 ms). The letter turns when the disc
+  // passes 0.6.
+  _jDayPress(day) {
+    if (jReduce()) return;
+    const row = day.parentElement;
+    const k = [...row.children].indexOf(day);
+    this._jRun(row, `b${k}`, 90, (el, t) => {
+      const u = jEo(t / 90);
+      jScale(el.children[k]?.querySelector(".base"), 1 + 0.08 * u, 1 - 0.08 * u);
+      return { sx: 1 + 0.08 * u };
+    });
+    this._jHold(row, () => {
+      if (!row.isConnected) return;
+      this._jRun(row, `b${k}`, 150, (el, t, done) => {
+        const base = el.children[k]?.querySelector(".base");
+        if (done) { if (base) base.style.transform = ""; return null; }
+        const s = 1 + 0.08 * (1 - jEo(t / 150));
+        jScale(base, s, 2 - s);
+        return { sx: s };
+      });
+    });
+  }
+
+  _jDayToggle(day) {
+    if (this._jHeld?.el === day.parentElement) this._jHeld = null;
+    const row = day.parentElement;
+    const n = row.children.length;
+    const k = [...row.children].indexOf(day);
+    const on = day.getAttribute("aria-pressed") !== "true";
+    const base = (el, i) => el.children[i]?.querySelector(".base");
+    const blob = (el) => el.children[k]?.querySelector(".blob");
+    const letter = (el, lit, done) => {
+      const d = el.children[k];
+      if (!d) return;
+      if (done) { d.classList.remove("jl", "lit"); return; }
+      d.classList.add("jl");
+      d.classList.toggle("lit", lit);
+    };
+    const wobble = (i, A, lag, dur) => this._jRun(row, `b${i}`, dur, (el, t, done) => {
+      const b = base(el, i);
+      if (done) { if (b) b.style.transform = ""; return null; }
+      const w = jWob(t - lag, A);
+      jScale(b, w, 1 / w);
+      return { sx: w };
+    });
+    if (jReduce()) {
+      this._jRun(row, `o${k}`, 150, (el, t, done) => {
+        const bl = blob(el);
+        if (done) { if (bl) bl.style.transform = ""; letter(el, on, true); return null; }
+        const u = jEo(t / 150);
+        const s = on ? u : 1 - u;
+        jScale(bl, s, s);
+        letter(el, s > 0.6, false);
+        return { s };
+      });
+      return;
+    }
+    if (on) {
+      this._jRun(row, `o${k}`, 750, (el, t, done) => {
+        const bl = blob(el);
+        if (done) { if (bl) bl.style.transform = ""; letter(el, true, true); return null; }
+        const s = 0.4 + 0.6 * jEdge(t, 90, 260);
+        const w = jWob(t, 0.2);
+        jScale(bl, s * w, s / w);
+        letter(el, s > 0.6, false);
+        return { s };
+      });
+      wobble(k, 0.1, 0, 750);
+      if (k > 0) wobble(k - 1, 0.05, 40, 800);
+      if (k < n - 1) wobble(k + 1, 0.05, 40, 800);
+    } else {
+      this._jRun(row, `o${k}`, 180, (el, t, done) => {
+        const bl = blob(el);
+        if (done) { if (bl) bl.style.transform = ""; letter(el, false, true); return null; }
+        const s = Math.max(0, t < 60 ? 1 + 0.08 * jEo(t / 60) : 1.08 * (1 - ((t - 60) / 120) ** 2));
+        jScale(bl, s, s);
+        letter(el, s > 0.6, false);
+        return { s };
+      });
+      wobble(k, 0.08, 60, 800);
+      if (k > 0) wobble(k - 1, 0.04, 100, 800);
+      if (k < n - 1) wobble(k + 1, 0.04, 100, 800);
+    }
+  }
+
+  // ---- checkbox (28.8): a press squashes it (1.12 × 0.88); ticking fills it at once, pops it from 0.6 (J-edge
+  // 90/230) with an area-keeping wobble (A 0.22, 140 / 160 ms) while the tick draws (150 ms, from 60 ms); unticking
+  // dips it (1 − 0.12·sin(π·min(1, t/120))) with a wobble (A 0.12) while the tick retracts (100 ms).
+  _jBoxPress(box) {
+    if (jReduce()) return;
+    this._jRun(box, "j", 90, (el, t) => {
+      const u = jEo(t / 90);
+      jScale(el.querySelector(".bw"), 1 + 0.12 * u, 1 - 0.12 * u);
+      return { sx: 1 + 0.12 * u };
+    });
+    this._jHold(box, () => {
+      if (!box.isConnected) return;
+      this._jRun(box, "j", 150, (el, t, done) => {
+        const bw = el.querySelector(".bw");
+        if (done) { if (bw) bw.style.transform = ""; return null; }
+        const s = 1 + 0.12 * (1 - jEo(t / 150));
+        jScale(bw, s, 2 - s);
+        return { sx: s };
+      });
+    });
+  }
+
+  _jBoxTick(box, on) {
+    if (this._jHeld?.el === box) this._jHeld = null;
+    const reduce = jReduce();
+    const end = (el) => {
+      const bw = el.querySelector(".bw");
+      const path = el.querySelector("path");
+      if (bw) bw.style.transform = "";
+      if (path) path.style.strokeDashoffset = "";
+      return null;
+    };
+    this._jRun(box, "j", reduce ? 150 : on ? 700 : 600, (el, t, done) => {
+      if (done) return end(el);
+      // the fill follows the change at once (the page may not be drawn again yet)
+      el.classList.toggle("on", on);
+      const bw = el.querySelector(".bw");
+      const path = el.querySelector("path");
+      if (reduce) {
+        if (bw) bw.style.transform = "";
+        if (path) path.style.strokeDashoffset = String(on ? 1 - jEo(t / 150) : jEo(t / 150));
+        return {};
+      }
+      let k;
+      let w;
+      if (on) {
+        k = 0.6 + 0.4 * jEdge(t, 90, 230);
+        w = jWob(t, 0.22, 140, 160);
+        if (path) path.style.strokeDashoffset = String(1 - jEo((t - 60) / 150));
+      } else {
+        k = 1 - 0.12 * Math.sin(Math.PI * Math.min(1, t / 120));
+        w = jWob(t, 0.12, 140, 160);
+        if (path) path.style.strokeDashoffset = String(jEo(t / 100));
+      }
+      jScale(bw, k * w, k / w);
+      return {};
+    });
+  }
+
   // A weekday row (spec 28.10): seven round toggles with two-letter names
   _weekdays(days, onchange) {
-    return h("div", { class: "wdays", role: "group", "aria-label": "Days" }, DAY_NAMES.map((n, k) => h("button", {
-      class: `wd${days[k] ? " on" : ""}`, type: "button", "aria-pressed": days[k] ? "true" : "false", "aria-label": n, onclick: () => onchange(k) }, n.slice(0, 2))));
+    return h("div", { class: "wdays", role: "group", "aria-label": "Days", "data-jelly": "wd", "data-jl": "Days" }, DAY_NAMES.map((n, k) => h("button", {
+      class: `wd${days[k] ? " on" : ""}`, type: "button", "aria-pressed": days[k] ? "true" : "false", "aria-label": n, onclick: () => onchange(k) },
+      h("b", { class: "base" }), h("i", { class: "blob" }), h("span", null, n.slice(0, 2)))));
+  }
+
+  // The checkbox of spec 28.8 (a box and a drawn tick); in an option list it stands beside its own input.
+  _ckBox(on, label, { round = false } = {}) {
+    const bw = h("i", { class: "bw" }, h("i", { class: "bx" }));
+    bw.insertAdjacentHTML("beforeend", J_TICK);
+    return h("span", { class: `jck${on ? " on" : ""}${round ? " round" : ""}`, "data-jelly": "ck", "data-jl": label, "aria-hidden": "true" }, bw);
   }
 
   // The letters' weight: a slider over the four weights (the nearest one to a stored value).
@@ -3723,6 +4259,7 @@ class PanelOSPage extends HTMLElement {
         this._row("Comes through", null, { stack: true, sub: changed ? "Changed from the default" : "The default" }),
         h("div", { class: "group", style: { marginBottom: "12px" } }, DND_ITEMS.map((it) => h("label", { class: `opt${it.locked ? " disabled" : ""}` },
           h("input", { type: "checkbox", checked: it.locked ? true : dnd.allow[it.id], disabled: Boolean(it.locked), onchange: (e) => setDnd({ allow: { [it.id]: e.target.checked } }) }),
+          this._ckBox(it.locked ? true : dnd.allow[it.id], it.name),
           h("span", { class: "t" }, h("span", null, it.name), it.locked ? h("small", null, "Always") : null)))),
         changed ? h("div", { class: "below" }, this._btn("Back to the default", () => setDnd({ allow: { ...DND_DEFAULT_ALLOW } }), { cls: "small ghost", icon: "restore" })) : null),
       this._card("New notifications", { info: "The window shows in the middle, in the notifications page's look. Until answered keeps the newest in front until it is confirmed or dismissed on the panel." },
@@ -4773,7 +5310,7 @@ class PanelOSPage extends HTMLElement {
         this._renderLayer();
       })))),
       page ? null : h("div", { class: "sec" }, h("h3", null, "What"), h("div", { class: "group" }, items.map(([k, l]) => h("label", { class: "opt" },
-        h("input", { type: "checkbox", checked: Boolean(sh.what[k]), onchange: (e) => { sh.what[k] = e.target.checked; this._renderLayer(); } }), h("span", { class: "t" }, h("span", null, l)))))),
+        h("input", { type: "checkbox", checked: Boolean(sh.what[k]), onchange: (e) => { sh.what[k] = e.target.checked; this._renderLayer(); } }), this._ckBox(Boolean(sh.what[k]), l), h("span", { class: "t" }, h("span", null, l)))))),
       page ? null : sh.what.pages ? h("p", { class: "note", style: { margin: 0 } }, "Copying the pages replaces the pages of the panels it goes to.") : null,
       tos.map((to) => {
         const plan = this._copyPlan(from, to, sh.what, sh.page);
@@ -4844,8 +5381,8 @@ class PanelOSPage extends HTMLElement {
     } else {
       body = [steps,
         h("div", { class: "sec" }, h("h3", null, "Start with"), h("div", { class: "group" },
-          h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "defaults", onchange: () => { sh.start = "defaults"; this._renderLayer(); } }), h("span", { class: "t" }, h("span", null, "PanelOS defaults"), h("small", null, "The usual pages, ready to change"))),
-          this._panels.length ? h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "copy", onchange: () => { sh.start = "copy"; this._renderLayer(); } }), h("span", { class: "t" }, h("span", null, "A copy of another panel"), h("small", null, "Pages, display, voice, do not disturb, notifications, dashboard"))) : null)),
+          h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "defaults", onchange: () => { sh.start = "defaults"; this._renderLayer(); } }), this._ckBox(sh.start === "defaults", "PanelOS defaults", { round: true }), h("span", { class: "t" }, h("span", null, "PanelOS defaults"), h("small", null, "The usual pages, ready to change"))),
+          this._panels.length ? h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "copy", onchange: () => { sh.start = "copy"; this._renderLayer(); } }), this._ckBox(sh.start === "copy", "A copy of another panel", { round: true }), h("span", { class: "t" }, h("span", null, "A copy of another panel"), h("small", null, "Pages, display, voice, do not disturb, notifications, dashboard"))) : null)),
         sh.start === "copy" ? h("div", { class: "sec" }, h("h3", null, "Copy from"), this._choice(this._panels.map((x) => [x.entry_id, this._pname(x)]), sh.copyFrom, (v) => { sh.copyFrom = v; this._renderLayer(); }, { label: "Copy from" })) : null,
         sh.error ? h("p", { class: "note", role: "alert", style: { margin: 0, color: "var(--bad)" } }, sh.error) : null];
       foot = [this._btn("Back", () => { sh.step = 1; this._renderLayer(); }, { cls: "ghost" }), this._btn(sh.busy ? "Adding…" : `Add ${sh.panelId.trim()}`, () => this._finishAdd(sh), { cls: "primary", icon: "check", disabled: sh.busy })];
