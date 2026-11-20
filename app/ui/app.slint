@@ -35,7 +35,7 @@ import { InfoNote, InfoPage } from "info.slint";
 import { NotifWindow } from "notify_window.slint";
 import { StatusScreen, StatusPage, TopStrip } from "status.slint";
 import { VoicePage } from "voice.slint";
-import { QuickTile, QuickGroup, QuickPage } from "quick.slint";
+import { QuickTile, QuickGroup, QuickDetails, QuickPage } from "quick.slint";
 import { SetRow, SetBar, SetSeg, SetSection, SettingsLayer } from "settings.slint";
 import { WebLoading, PullToRefresh } from "loading.slint";
 import { AlarmNow } from "clocks.slint";
@@ -180,15 +180,17 @@ export component AppWindow inherits Window {
     in property <string> quick-title: "Quick controls";
     in property <string> quick-mood;
     in property <string> quick-placard;
-    in property <bool> quick-sheet;
+    in-out property <bool> quick-sheet;
+    in-out property <bool> quick-settings;
     in property <QuickTile> quick-sheet-tile;
     in property <int> quick-sheet-index;
+    in property <QuickDetails> quick-details; in property <image> quick-settings-tape;
     in property <image> quick-mixer-panel; in property <image> quick-fader; in property <image> quick-deck-panel;
     in property <[image]> quick-lever-frames;
     in property <image> quick-toggle-up; in property <image> quick-toggle-down; in property <image> quick-lamp-on;
     in property <image> quick-lamp-amber; in property <image> quick-lamp-off; in property <image> quick-screw;
     in property <image> quick-lamp-glow; in property <image> quick-lamp-spec; in property <int> quick-grid;
-    in property <float> quick-sheet-temp: -1; in property <string> quick-sheet-temp-text; in property <[color]> quick-sheet-colours;
+    in property <[color]> quick-sheet-colours;
     in property <[string]> quick-sheet-effects;
     in property <[QuickGroup]> quick-groups;
     // status screens (whole screen, above any panel) and the strip on top while one (or a critical alert) is active
@@ -1165,9 +1167,11 @@ export component AppWindow inherits Window {
                 }
                 if slot.kind == "quick": QuickPage {
                     look: slot.variant; tiles: root.quick-tiles; title: root.quick-title; mood: root.quick-mood; placard: root.quick-placard;
-                    sheet: root.quick-sheet; sheet-tile: root.quick-sheet-tile; sheet-index: root.quick-sheet-index; mixer-panel: root.quick-mixer-panel; fader: root.quick-fader;
+                    sheet <=> root.quick-sheet; settings <=> root.quick-settings; on-screen: root.page == i && !root.screensaver-on;
+                    sheet-tile: root.quick-sheet-tile; sheet-index: root.quick-sheet-index; details: root.quick-details; settings-tape: root.quick-settings-tape;
+                    mixer-panel: root.quick-mixer-panel; fader: root.quick-fader;
                     deck-panel: root.quick-deck-panel; toggle-up: root.quick-toggle-up; toggle-down: root.quick-toggle-down; lever-frames: root.quick-lever-frames; lamp-glow: root.quick-lamp-glow; lamp-spec: root.quick-lamp-spec;
-                    grid: root.quick-grid; sheet-temp: root.quick-sheet-temp; sheet-temp-text: root.quick-sheet-temp-text; sheet-colours: root.quick-sheet-colours;
+                    grid: root.quick-grid; sheet-colours: root.quick-sheet-colours;
                     sheet-effects: root.quick-sheet-effects; groups: root.quick-groups;
                     lamp-amber: root.quick-lamp-amber; lamp-off: root.quick-lamp-off; screw: root.quick-screw;
                 }
@@ -1276,7 +1280,7 @@ export component AppWindow inherits Window {
             - ((root.mic-muted ? 1 : 0) + (root.speaker-muted ? 1 : 0) + 1 + ((root.info-unread > 0 || root.dnd-on) && !root.screensaver-on ? 1 : 0)) * 16px;
     }
     // every page sheet, editor and keyboard view (the dots are never drawn over them)
-    property <bool> sheet-open: root.quick-sheet || root.thermo-sheet || root.thermo-picker || root.thermo-settings || root.music-picker
+    property <bool> sheet-open: root.quick-sheet || root.quick-settings || root.thermo-sheet || root.thermo-picker || root.thermo-settings || root.music-picker
         || root.music-settings || root.cal-detail || root.cal-settings || root.cal-day-sheet || root.cal-edit || root.timers-quick
         || root.timers-sheet >= 0 || root.timers-settings || root.timers-edit || root.timers-edit-keyboard || root.todo-picker
         || root.todo-adding || root.cam-settings || root.cam-replies || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker

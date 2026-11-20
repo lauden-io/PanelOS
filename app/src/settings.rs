@@ -214,7 +214,7 @@ fn path() -> String {
 }
 
 /// A file next to the settings (the same folder, so a second instance with its own settings keeps its own).
-fn beside(name: &str) -> std::path::PathBuf {
+pub fn beside(name: &str) -> std::path::PathBuf {
     std::path::Path::new(&path()).with_file_name(name)
 }
 

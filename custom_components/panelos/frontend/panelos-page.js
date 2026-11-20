@@ -3973,18 +3973,28 @@ class PanelOSPage extends HTMLElement {
     const tapes = Array.isArray(o.tapes) ? o.tapes : [];
     // the mixing desk's tapes and the flight deck's plates both show a short label
     const desk = [1, 2].includes(page.variant || 0);
+    // the flight deck's painted group frames: automatic (by kind), off (one frame with the room) or own groups
+    const deck = (page.variant || 0) === 2;
+    const groups = ["off", "custom"].includes(o.groups) ? o.groups : "auto";
+    const starts = Array.isArray(o.group_starts) ? o.group_starts : [];
+    const gnames = Array.isArray(o.group_names) ? o.group_names : [];
     const cols = (page.variant || 0) === 0 ? 2 : 4;
     const slots = [];
     const max = 16;
     for (let k = 0; k < Math.min(max, ents.length + 1); k++) {
       const id = ents[k];
+      const gname = deck && groups === "custom" && k < 8 && (k === 0 || starts[k]) ? (gnames[k] || "").trim() : "";
       slots.push(h("button", { class: `tslot${id ? " full" : ""}`, onclick: () => this._openSheet({ kind: "tile", panel: p.entry_id, page: i, slot: k }) },
-        id ? [icon(this._eicon(id)), h("span", { class: "t" }, h("b", null, this._ename(id)), desk && tapes[k] ? h("span", { class: "tape" }, tapes[k]) : null)] : [icon("plus"), "Add"]));
+        id ? [icon(this._eicon(id)), h("span", { class: "t" }, h("b", null, this._ename(id)), desk && tapes[k] ? h("span", { class: "tape" }, tapes[k]) : null,
+          gname ? h("small", null, `Group: ${gname}`) : null)] : [icon("plus"), "Add"]));
     }
     return [this._card("Tiles", {
       info: `Tap a tile to choose what it controls${desk ? " and the text on its label" : ""}. A long press on the panel opens the details (brightness, colour, position).`,
       acts: this._btn("Fill from the room", () => this._fillTiles(p, i), { cls: "small", icon: "home-outline", disabled: !this._pareaId(p) || ents.length >= max, title: this._pareaId(p) ? null : "The panel has no area in Home Assistant" }),
-    }, h("div", { class: "tilegrid", style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } }, slots))];
+    }, h("div", { class: "tilegrid", style: { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` } }, slots)),
+    deck ? this._card("Groups", {
+      info: "Painted frames over the switches. Automatic: neighbouring controls of one kind share a frame (lights, shutters, climate …). Off: one frame over the top row with the panel's room. Custom: tap a tile to start a group there and name it; a group without a name has no frame.",
+    }, this._row("Groups", this._seg([["auto", "Automatic"], ["off", "Off"], ["custom", "Custom"]], groups, (v) => this._setPageOption(p, i, "groups", v === "auto" ? undefined : v), { label: "Groups" }), { cls: "first" })) : null].filter(Boolean);
   }
 
   _fillTiles(p, i) {
@@ -5251,16 +5261,26 @@ class PanelOSPage extends HTMLElement {
     const page = this._pages(p)[sh.page];
     if (!page) return null;
     const ents = [...(page.entities || [])];
-    const tapes = Array.isArray(page.options?.tapes) ? [...page.options.tapes] : [];
-    while (tapes.length < ents.length) tapes.push("");
-    tapes.length = ents.length;
+    // per tile, in the tiles' order: the short label, and on the flight deck whether a group starts there and its name
+    const align = (list, empty) => {
+      const out = Array.isArray(list) ? [...list] : [];
+      while (out.length < ents.length) out.push(empty);
+      out.length = ents.length;
+      return out;
+    };
+    const tapes = align(page.options?.tapes, "");
+    const starts = align(page.options?.group_starts, false);
+    const gnames = align(page.options?.group_names, "");
     const cur = ents[sh.slot] || null;
     // the mixing desk's tapes and the flight deck's plates both show a short label
     const desk = [1, 2].includes(page.variant || 0);
-    const save = (nextEnts, nextTapes) => {
+    const custom = (page.variant || 0) === 2 && page.options?.groups === "custom" && sh.slot < 8;
+    const save = (nextEnts, nextTapes, nextStarts = starts, nextNames = gnames) => {
       const options = { ...(page.options || {}) };
-      if (nextTapes.some(Boolean)) options.tapes = nextTapes;
-      else delete options.tapes;
+      for (const [key, list] of [["tapes", nextTapes], ["group_starts", nextStarts], ["group_names", nextNames]]) {
+        if (list.some(Boolean)) options[key] = list;
+        else delete options[key];
+      }
       return this._setPage(p, sh.page, { entities: nextEnts, options });
     };
     const domains = this._data.tile_domains || ["light", "switch", "cover", "fan", "input_boolean", "scene", "script", "sensor", "climate"];
@@ -5270,27 +5290,36 @@ class PanelOSPage extends HTMLElement {
         if (!id) return;
         const ne = [...ents];
         const nt = [...tapes];
-        if (cur) { ne[sh.slot] = id; if (id !== cur) nt[sh.slot] = ""; } else { ne.push(id); nt.push(""); sh.slot = ne.length - 1; }
-        save(ne, nt).then(() => { if (this._ui.sheet === sh) this._renderLayer(); });
+        const ns = [...starts];
+        const nn = [...gnames];
+        if (cur) { ne[sh.slot] = id; if (id !== cur) nt[sh.slot] = ""; } else { ne.push(id); nt.push(""); ns.push(false); nn.push(""); sh.slot = ne.length - 1; }
+        save(ne, nt, ns, nn).then(() => { if (this._ui.sheet === sh) this._renderLayer(); });
       } });
     const move = (d) => {
       const k = sh.slot;
-      const ne = [...ents];
-      const nt = [...tapes];
-      ne.splice(k + d, 0, ne.splice(k, 1)[0]);
-      nt.splice(k + d, 0, nt.splice(k, 1)[0]);
+      const lists = [[...ents], [...tapes], [...starts], [...gnames]];
+      for (const list of lists) list.splice(k + d, 0, list.splice(k, 1)[0]);
       sh.slot = k + d;
-      save(ne, nt);
+      save(...lists);
     };
     return this._sheetFrame(cur ? this._ename(cur) : "New tile", [
       h("div", { class: "group" }, this._row(cur ? "Control" : "Choose what it controls", choose, { cls: "first" })),
       cur && desk ? h("div", { class: "group" }, this._row("Label", this._text(tapes[sh.slot], (v) => { const nt = [...tapes]; nt[sh.slot] = v.trim().toUpperCase().slice(0, 12); save(ents, nt); }, { max: 12, placeholder: "From the name", label: "Label", cls: "short" }),
-        { info: "The label-maker tape under the fader. Empty: the panel makes one from the name.", cls: "first" })) : null,
+        { info: `${page.variant === 2 ? "The plate under the switch." : "The label-maker tape under the fader."} Empty: the panel makes one from the name.`, cls: "first" })) : null,
+      cur && custom ? h("div", { class: "group" },
+        sh.slot > 0 ? this._row("Starts a group", this._toggle(Boolean(starts[sh.slot]), (v) => {
+          const ns = [...starts];
+          ns[sh.slot] = v;
+          save(ents, tapes, ns, gnames).then(() => { if (this._ui.sheet === sh) this._renderLayer(); });
+        }, { label: "Starts a group" }), { cls: "first" }) : null,
+        sh.slot === 0 || starts[sh.slot] ? this._row("Group name", this._text(gnames[sh.slot], (v) => { const nn = [...gnames]; nn[sh.slot] = v.trim().slice(0, 12); save(ents, tapes, starts, nn); },
+          { max: 12, placeholder: "No frame", label: "Group name", cls: "short" }),
+          { cls: sh.slot === 0 ? "first" : null, info: "The painted frame over this control and the ones after it, up to the next group. Empty: no frame." }) : null) : null,
       cur ? h("div", { style: { display: "flex", gap: "8px", flexWrap: "wrap" } },
         this._btn("Earlier", () => move(-1), { cls: "small", icon: "arrow-left", disabled: sh.slot === 0 }),
         this._btn("Later", () => move(1), { cls: "small", icon: "arrow-right", disabled: sh.slot >= ents.length - 1 })) : null,
     ], [
-      cur ? this._btn("Remove", () => { const ne = [...ents]; const nt = [...tapes]; ne.splice(sh.slot, 1); nt.splice(sh.slot, 1); this._ui.sheet = null; save(ne, nt); this._renderLayer(); }, { cls: "ghost danger", icon: "delete-outline" }) : null,
+      cur ? this._btn("Remove", () => { const lists = [[...ents], [...tapes], [...starts], [...gnames]]; for (const list of lists) list.splice(sh.slot, 1); this._ui.sheet = null; save(...lists); this._renderLayer(); }, { cls: "ghost danger", icon: "delete-outline" }) : null,
       h("span", { class: "grow" }), this._btn("Done", () => this._closeSheet(), { cls: "primary" })]);
   }
 
