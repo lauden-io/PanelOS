@@ -134,7 +134,8 @@ const OWN_CRIT_DOMAINS = ["binary_sensor", "sensor", "lock", "input_boolean", "s
 //   2 week number; weather now 1 condition, 2 high / low, 4 rain chance,
 //   8 feels like; next event 1 time, 2 calendar colour; curve 1 rain bars,
 //   2 icons; hourly / daily 1 rain chance; music 1 long titles scroll;
-//   sensor 1 name, 2 icon; timer 1 name; people 1 the ones away too;
+//   sensor 1 name, 2 icon; timer 1 name; people 1 the ones away too, 2 initials
+//   only (without it: the profile pictures);
 //   weather details 1 wind, 2 humidity, 4 chance of rain, 8 sunrise and sunset.
 // The weather, calendars and player of a weather page are its entities (the
 // first weather.*, every calendar.*, the first media_player.*).
@@ -5227,14 +5228,16 @@ class PanelOSPage extends HTMLElement {
   }
 
   // The People widget as the panel draws it (app/ui/home.slint, PeopleW) at its size: its people (none chosen:
-  // everyone) in entity id order, the ones at home in their colour, the ones away (or unknown) faint and only with its
-  // switch on, in as many rows as give the biggest heads. null when Home Assistant has no people.
+  // everyone) in entity id order, each as their profile picture (Profile pictures on and a picture in Home Assistant)
+  // or their initials in their colour; the ones away (or unknown) fainter inside a grey ring and only with its switch
+  // on; in as many rows as give the biggest heads. null when Home Assistant has no people.
   _peoplePreview(c, w) {
     const tints = ["#3b82f6", "#22a06b", "#a855f7", "#f59e0b", "#ef4444", "#06b6d4"];
     const all = Object.values(this._hass?.states || {}).filter((x) => x.entity_id.startsWith("person.")).sort((a, b) => (a.entity_id < b.entity_id ? -1 : 1));
     if (!all.length) return null;
     const pick = Array.isArray(w.people) ? w.people : [];
     const away = Boolean((w.opts || 0) & 1);
+    const pics = !((w.opts || 0) & 2);
     const shown = all.map((x, i) => ({ x, tint: tints[i % tints.length] }))
       .filter(({ x }) => (!pick.length || pick.includes(x.entity_id)) && (away || x.state === "home"));
     const cw = w.w || 2;
@@ -5261,8 +5264,19 @@ class PanelOSPage extends HTMLElement {
         const nm = x.attributes?.friendly_name || x.entity_id.slice(7);
         const ini = nm.split(/\s+/).filter(Boolean).map((part) => part[0]).slice(0, 2).join("").toUpperCase();
         const home = x.state === "home";
-        return `<circle cx="${cx}" cy="${cy}" r="${home ? d / 2 : d / 2 - 0.75}" fill="${home ? tint : c.track}" ${home ? "" : `stroke="${c.soft}" stroke-width="1.5" stroke-opacity=".5"`}/>`
-          + `<text x="${cx}" y="${cy}" font-size="${(d * 0.38).toFixed(1)}" font-weight="600" fill="${home ? "#ffffff" : c.soft}" text-anchor="middle" dominant-baseline="central" font-family="PanelOS Text, Noto Sans, sans-serif">${esc(ini)}</text>`;
+        // away: a grey ring at the head's edge, the head inside it with a gap, fainter
+        const rw = home ? 0 : Math.max(2, d * 0.06);
+        const r = d / 2 - (home ? 0 : rw + Math.max(1.5, d * 0.05));
+        const fade = home ? 1 : 0.45;
+        const ring = home ? "" : `<circle cx="${cx}" cy="${cy}" r="${d / 2 - rw / 2}" fill="none" stroke="#8e8e93" stroke-width="${rw}"/>`;
+        const pic = pics ? x.attributes?.entity_picture : "";
+        if (pic) {
+          const clip = `wpvc${++artId}`;
+          return ring + `<clipPath id="${clip}"><circle cx="${cx}" cy="${cy}" r="${r}"/></clipPath>`
+            + `<image href="${esc(pic)}" x="${cx - r}" y="${cy - r}" width="${2 * r}" height="${2 * r}" preserveAspectRatio="xMidYMid slice" clip-path="url(#${clip})" opacity="${fade}"/>`;
+        }
+        return ring + `<circle cx="${cx}" cy="${cy}" r="${r}" fill="${tint}" fill-opacity="${fade}"/>`
+          + `<text x="${cx}" y="${cy}" font-size="${(2 * r * 0.38).toFixed(1)}" font-weight="600" fill="#ffffff" fill-opacity="${home ? 1 : 0.75}" text-anchor="middle" dominant-baseline="central" font-family="PanelOS Text, Noto Sans, sans-serif">${esc(ini)}</text>`;
       }).join("");
     }
     return svgNode(`<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" aria-hidden="true"><rect width="${W}" height="${H}" fill="${c.bg}"/>${body}</svg>`, "art wpv");
@@ -5339,8 +5353,10 @@ class PanelOSPage extends HTMLElement {
         this._row("Long titles", this._seg([[0, "Cut off"], [1, "Scroll"]], scroll ? 1 : 0, (v) => set({ opts: v ? (w.opts || 0) | 1 : (w.opts || 0) & ~1 }), { label: "Long titles" }), { cls: "first" }),
         scroll ? this._row("Scroll speed", this._slider(w.style || 3, 1, 5, 1, (v) => set({ style: v }), (v) => ["", "Slowest", "Slow", "Medium", "Fast", "Fastest"][v], { label: "Scroll speed" })) : null));
     }
-    const shown = bits.filter(([b]) => this._bitWhy(w, b) !== false);
-    if (shown.length) body.push(h("div", { class: "group" }, shown.map(([b, label], k) => { const r = bit(b, label); if (k === 0) r.classList.add("first"); return r; })));
+    const rows = bits.filter(([b]) => this._bitWhy(w, b) !== false).map(([b, label]) => bit(b, label));
+    // the People widget: the profile pictures or the initials only (bit 2 keeps the initials, so pictures are the default)
+    if (w.kind === 10) rows.unshift(this._row("Profile pictures", this._toggle(!((w.opts || 0) & 2), (v) => set({ opts: v ? (w.opts || 0) & ~2 : (w.opts || 0) | 2 }), { label: "Profile pictures" })));
+    if (rows.length) { rows[0].classList.add("first"); body.push(h("div", { class: "group" }, rows)); }
     // the letters: their weight (every widget with text), and the page's neon on the synthwave background
     if (w.kind !== 5 && w.kind !== 6 && !meta.noweight) {
       const wt = w.weight || 600;
