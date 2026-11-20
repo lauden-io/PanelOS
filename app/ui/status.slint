@@ -71,21 +71,24 @@ export component TopStrip inherits Rectangle {
     in property <bool> closable: !root.critical;
     callback open();
     callback close();
-    height: 40px;
+    height: 44px;
     background: root.critical ? #8e0d14 : root.tint;
     if root.critical: Rectangle { background: #d8202a.with-alpha(0.35 + 0.45 * root.pulse); }
     TouchArea { clicked => { root.open(); } }
-    if root.has-picto: Image { x: 14px; y: 8px; width: 24px; height: 24px; source: root.picto; }
-    if !root.has-picto: Icon { x: 12px; y: 6px; width: 28px; height: 28px; text: root.icon; font-size: 22px; color: #ffffff; }
-    Text { x: 48px; y: 0; width: parent.width - 48px - sw.width - 56px; height: parent.height; text: root.title; font-size: 15px; font-weight: 700;
-        color: #ffffff; vertical-alignment: center; overflow: elide; }
-    sw := Text { x: parent.width - 48px - self.width; y: 0; width: self.preferred-width; height: parent.height; text: root.sub; font-size: 13px;
-        color: #ffffffcc; vertical-alignment: center; }
-    // × closes the strip (a 44 × 40 key); a critical alert's strip shows the chevron of "tap to open" there instead
+    if root.has-picto: Image { x: 14px; y: 10px; width: 24px; height: 24px; source: root.picto; }
+    if !root.has-picto: Icon { x: 12px; y: 8px; width: 28px; height: 28px; text: root.icon; font-size: 22px; color: #ffffff; }
+    // a long title wraps to a second line; the line after it (a time, a notification's text) takes at most 40 % of the strip
+    // (each text block is centred as a whole, so the first line always shows)
+    Text { x: 48px; width: parent.width - 48px - sw.width - 60px; height: Math.min(self.preferred-height, parent.height - 2px); y: (parent.height - self.height) / 2;
+        text: root.title; font-size: 15px; font-weight: 700; color: #ffffff; vertical-alignment: top; wrap: word-wrap; overflow: elide; }
+    sw := Text { x: parent.width - 48px - self.width; width: Math.min(self.preferred-width, parent.width * 0.4);
+        height: Math.min(self.preferred-height, parent.height - 2px); y: (parent.height - self.height) / 2;
+        text: root.sub; font-size: 13px; color: #ffffffcc; vertical-alignment: top; wrap: word-wrap; overflow: elide; }
+    // × closes the strip (a 44 × 44 key); a critical alert's strip shows the chevron of "tap to open" there instead
     if root.closable: Rectangle { x: parent.width - 44px; y: 0; width: 44px; height: parent.height;
         background: x-ta.pressed ? #00000033 : transparent;
-        Icon { x: 10px; y: 8px; width: 24px; height: 24px; text: "\u{F0156}"; font-size: 22px; color: #ffffff; }
+        Icon { x: 10px; y: 10px; width: 24px; height: 24px; text: "\u{F0156}"; font-size: 22px; color: #ffffff; }
         x-ta := TouchArea { clicked => { root.close(); } } }
-    if !root.closable: Icon { x: parent.width - 38px; y: 6px; width: 28px; height: 28px; text: "\u{F0140}"; font-size: 22px; color: #ffffff; }
+    if !root.closable: Icon { x: parent.width - 38px; y: 8px; width: 28px; height: 28px; text: "\u{F0140}"; font-size: 22px; color: #ffffff; }
     Rectangle { y: parent.height - 1px; height: 1px; background: #00000040; }
 }

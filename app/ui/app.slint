@@ -1195,7 +1195,7 @@ export component AppWindow inherits Window {
         timers: root.timers;
         away <=> root.island-away;
         // under the status strip while it runs
-        rest-y: 46px + 42px * root.strip-k;
+        rest-y: 46px + 46px * root.strip-k;
         light: !root.status-on && root.on-k < 0.5 && !Theme.dark;
         hidden: root.voice-on || root.shade-pos > 0.002 || root.set-view > 0 || root.screensaver-on
             || (root.pages.length > 0 && root.pages[root.shown-page].kind == "timers");
