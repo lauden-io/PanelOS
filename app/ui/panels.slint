@@ -195,7 +195,7 @@ export component TimerIsland inherits Rectangle {
     // the resting capsule
     property <length> rest-w: root.w0 + (root.timers.length > 1 ? 1px + root.w1 : 0px) + (root.more > 0 ? 1px + 34px : 0px);
     property <length> rest-x: (root.width - root.rest-w) / 2;
-    property <length> rest-y: 46px;
+    in property <length> rest-y: 46px;   // the capsule's top (lower while a status strip runs under the status bar)
     // the drag: up 1:1 with a little stretch, down at most 6 px; release up > 14 px or faster than 0.4 px/ms flies
     property <length> dy;
     property <bool> dragging;

@@ -1192,6 +1192,8 @@ export component AppWindow inherits Window {
         x: 0; y: 0; width: root.width; height: root.height;
         timers: root.timers;
         away <=> root.island-away;
+        // under the status strip while it runs
+        rest-y: 46px + 42px * root.strip-k;
         light: !root.status-on && root.on-k < 0.5 && !Theme.dark;
         hidden: root.voice-on || root.shade-pos > 0.002 || root.set-view > 0 || root.screensaver-on
             || (root.pages.length > 0 && root.pages[root.shown-page].kind == "timers");
@@ -1409,6 +1411,17 @@ export component AppWindow inherits Window {
 
     // ---- layers ----
 
+    // the status strip (#91): right under the status bar, which stays visible; under the new-notification window, the voice
+    // view and the shade; it steps aside while a page's menu or sheet is open (those come down from y 48)
+    property <float> strip-k: root.strip-on && !root.sheet-open ? 1 : 0;
+    animate strip-k { duration: 200ms; easing: ease-out; }
+    if root.strip-k > 0.001: TopStrip {
+        x: 0; y: 44px - 6px * (1 - root.strip-k); width: root.width; opacity: root.strip-k;
+        title: root.strip-title; sub: root.strip-sub; icon: root.strip-icon; picto: root.strip-picto; has-picto: root.strip-has-picto;
+        tint: root.strip-tint; critical: root.strip-critical; pulse: root.strip-pulse;
+        open => { root.act("strip.open", ""); }
+        close => { root.act("strip.close", ""); }
+    }
     // the new-notification window (30), in the notifications page's look
     NotifWindow { x: 0; y: 0; width: root.width; height: root.height;
         on: root.pop-on; notes: root.pop-notes; index: root.pop-index; count: root.pop-count; look: root.pop-look; until: root.pop-until;
@@ -1424,12 +1437,6 @@ export component AppWindow inherits Window {
         scan: root.voice-scan; dots: root.voice-dots; version: root.app-version;
         // the terminal's cursor and the comic's dots blink (530 ms)
         blink: Math.mod(animation-tick() / 1ms, 1060) < 530;
-    }
-    if root.strip-on: TopStrip {
-        x: 0; y: 0; width: root.width;
-        title: root.strip-title; sub: root.strip-sub; icon: root.strip-icon; picto: root.strip-picto; has-picto: root.strip-has-picto;
-        tint: root.strip-tint; critical: root.strip-critical; pulse: root.strip-pulse;
-        TouchArea { clicked => { root.act("strip.open", ""); } }
     }
     if root.voice-on: TouchArea {
         clicked => { root.act("voice.close", ""); }

@@ -3329,7 +3329,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             }
             ui.set_timers_sheet(value.parse::<i32>().unwrap_or(-1));
         }
-        "strip.close" => ui.set_strip_on(false),
+        "strip.close" => alerts::act(ui, what),
         "status.fold" | "strip.open" | "info.crit-silence" => alerts::act(ui, what),
         "set.touch" => start_touch_test(ui),
         "shade.open" => shade::open(ui),
