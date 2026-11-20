@@ -1624,7 +1624,10 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
         // the page's settings in the look's menu (the quick shade's page row), and what they set: shown at once, kept by
         // the integration
         "timers.settings" => ui.set_timers_settings(value == "open"),
-        "timers.look" => page_set(ui, "timers", Some(n.clamp(0, 4) as i32), Value::Null),
+        "timers.look" => {
+            ui.set_timers_theme(n.clamp(0, 4) as i32);
+            page_set(ui, "timers", Some(n.clamp(0, 4) as i32), Value::Null);
+        }
         "timers.colourful" => {
             ui.set_timers_colourful(value == "1");
             timers_option(ui, "colourful", json!(value == "1"));
@@ -1641,6 +1644,8 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
             ui.set_timers_watch_on(next[2]);
             let mode = ui.get_timers_mode().clamp(0, 2) as usize;
             if !next[mode] {
+                // the tab on screen goes: so does its settings menu
+                ui.set_timers_settings(false);
                 ui.set_timers_mode(if next[1] { 1 } else if next[0] { 0 } else { 2 });
             }
             let names: Vec<&str> = [(next[1], "timer"), (next[0], "alarm"), (next[2], "stopwatch")].iter().filter(|(on, _)| *on).map(|(_, k)| *k).collect();

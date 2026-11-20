@@ -781,7 +781,9 @@ export component Dropdown inherits Rectangle {
     TouchArea { clicked => { root.pop-open = true; menu.show(); } }
     menu := PopupWindow {
         x: 0;
-        y: root.opens-up ? -root.menu-h - 6px : root.height + 6px;
+        // kept on the screen under the status bar (y 48-468): a long list may cover its field
+        y: root.opens-up ? Math.max(48px - root.absolute-position.y, -root.menu-h - 6px)
+            : Math.min(root.height + 6px, 468px - root.absolute-position.y - root.menu-h);
         width: root.width;
         close-policy: close-on-click-outside;
         Rectangle {
