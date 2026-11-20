@@ -9,7 +9,7 @@
 // Images are drawn at their exact size (the renderer scales without filtering). Coloured shapes are a
 // white mask (colorize = the colour) with a grey + alpha shading layer on top.
 import { Theme, Act, Clock, Words } from "theme.slint";
-import { Icon, Glyph, PlayGlyph, GlowText, Dropdown, MenuHost, PageMenu } from "widgets.slint";
+import { Icon, Glyph, PlayGlyph, GlowText, RollDigit, Dropdown, MenuHost, PageMenu } from "widgets.slint";
 import { AlarmClock, AlarmEditor, AlarmSettings, AlarmRing } from "alarm_menus.slint";
 import { WatchSettings } from "watch_menus.slint";
 import { FlapCard } from "panels.slint";
@@ -53,6 +53,25 @@ export struct SwCar {
 // text and line colour that follows the theme (the synthwave scene, the ringing screen, the flip box and the kitchen
 // knob keep their own colours)
 global TFg { out property <color> c: Theme.dark ? #ffffff : #101114; }
+
+// A tab's entrance clock (25.T15, T16; the timers tab keeps its own, 25.T14): it starts every time `shown` turns on (the
+// pager settles on the page with the tab open, the tab is picked, the screensaver or a ring ends) and runs once for
+// `length`; while the tab is out of view it waits armed, and each look shows its zero.
+component TabEntrance {
+    in property <bool> shown;
+    in property <duration> length: 1000ms;
+    callback started();
+    out property <bool> armed: true;
+    property <bool> entering;
+    property <duration> e0;
+    function start() { root.armed = false; root.e0 = animation-tick(); root.entering = true; root.started(); }
+    Timer { interval: root.length; running: root.entering; triggered => { root.entering = false; } }
+    init => { if root.shown { root.start(); } }
+    changed shown => { if root.shown { root.start(); } else { root.entering = false; root.armed = true; } }
+    // ms into the entrance; large once it is over (the clock is read only while it runs)
+    out property <float> ent: root.armed ? 0 : root.entering ? (animation-tick() - root.e0) / 1ms : 100000;
+    out property <bool> calm: !root.armed && !root.entering;
+}
 
 component Ring inherits Rectangle {
     in property <float> fr;             // 0..1 of the circle, from the top, clockwise
@@ -794,6 +813,13 @@ export component TimersPage inherits Rectangle {
             triggered => { Act.act("timers.look", tm.swap-to); tm.swapping = false; } }
     }
 
+    // ---------------------------------------------------------------- the alarm tab's entrance (25.T15)
+    // As the timers tab's: every time the tab comes into view, once, ringing aside; each look runs from its zero to where
+    // it stands in its own way (in at most 700 ms); not on data updates.
+    al-ent := TabEntrance { width: 0px; height: 0px; shown: root.on-screen && root.mode == 0 && !root.ringing; length: 700ms; }
+    // the share of an alarm look's entrance done after `ms` (ease-out): 0 while the tab waits, 1 once it is over
+    pure function ak(ms: float) -> float { return al-ent.armed ? 0 : root.eo(al-ent.ent / ms); }
+
     // ---------------------------------------------------------------- timers, plain
     if !root.ringing && root.mode == 1 && root.theme == 0 && root.n == 1: one := Rectangle {
         property <TimerItem> t: root.timers[0];
@@ -1199,8 +1225,12 @@ export component TimersPage inherits Rectangle {
     property <length> lap-off: root.lap-sliding ? -34px * Math.pow(1 - clamp((animation-tick() - root.lap-t0) / 180ms, 0, 1), 3) : 0px;
     // ---------------------------------------------------------------- the next-alarm line (#31: a snoozed ring shows first)
     property <bool> snoozed: root.snooze-h >= 0;
+    // the plain look's entrance (25.T15): the line counts its minutes down from the full time (a day, or the next whole day
+    // above the time left) to the time left (M10, 420 ms, ease-out); the rows stay still
+    property <int> al-full: 1440 * Math.ceil((root.next-in + 1) / 1440);
+    property <int> al-in: al-ent.calm ? root.next-in : Math.round(root.al-full + (root.next-in - root.al-full) * root.ak(420));
     property <string> next-line: root.snoozed ? "Snoozed · rings at " + AlarmClock.of(root.snooze-h)
-        : root.next-in >= 0 ? AlarmClock.of(root.next-h) + " · " + AlarmClock.when(root.next-in) : "No alarm on";
+        : root.next-in >= 0 ? AlarmClock.of(root.next-h) + " · " + AlarmClock.when(root.al-in) : "No alarm on";
     // a tap on a chip switches the alarm (the look's T10-T13 motion when it goes on); a hold opens the editor
     function chip-toggle(i: int) {
         if i < root.alarms.length && !root.alarms[i].on {
@@ -1223,15 +1253,18 @@ export component TimersPage inherits Rectangle {
     property <float> arc-span: root.next-h >= 0 ? Math.mod(root.next-h - root.now-h + 24, 24) : 0;
     property <float> arc-shown: root.arc-span;
     animate arc-shown { duration: 400ms; easing: ease-in-out; }
-    if !root.ringing && root.mode == 0 && root.alarm-look == 4: Rectangle {
+    if !root.ringing && root.mode == 0 && root.alarm-look == 4: dial := Rectangle {
+        // the entrance (25.T15): the sleep arc draws from now to the next alarm (as 25.T13, 400 ms) while the time left
+        // counts up with it (M10)
+        property <float> k: root.ak(400);
         property <color> day: Theme.dark ? #1d1e22 : #e6e2d9;
         property <color> night: Theme.dark ? #0e1424 : #c9c4b8;
         property <color> faint: TFg.c.with-alpha(0.55);
         Rectangle { x: 240px - 112px - 9px; y: 216px - 112px - 9px; width: 242px; height: 242px; border-radius: 121px; border-width: 18px; border-color: parent.day; }
         Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke: parent.night; stroke-width: 18px;
             commands: root.darc(root.sunset-h, root.sunrise-h); }
-        if root.arc-shown > 0.02: Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke: #FF4A1C; stroke-width: 18px;
-            stroke-line-cap: round; opacity: 0.9; commands: root.darc(root.now-h, root.now-h + root.arc-shown); }
+        if root.arc-shown * dial.k > 0.02: Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke: #FF4A1C; stroke-width: 18px;
+            stroke-line-cap: round; opacity: 0.9; commands: root.darc(root.now-h, root.now-h + root.arc-shown * dial.k); }
         for k in 24: Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; stroke-line-cap: round;
             stroke: Math.mod(k, 6) == 0 ? TFg.c : parent.faint; stroke-width: Math.mod(k, 6) == 0 ? 2.4px : 1.2px;
             commands: "M " + root.dpx(k, 99) + " " + root.dpy(k, 99) + " L " + root.dpx(k, Math.mod(k, 6) == 0 ? 89 : 94) + " " + root.dpy(k, Math.mod(k, 6) == 0 ? 89 : 94); }
@@ -1253,7 +1286,7 @@ export component TimersPage inherits Rectangle {
         for a in root.alarms: Rectangle { x: (root.dpx(a.hour, 112) - 10.5) * 1px; y: (root.dpy(a.hour, 112) - 10.5) * 1px; width: 21px; height: 21px; border-radius: 10.5px;
             background: a.on && a.soon ? a.tint : Theme.background; border-width: 3px; border-color: a.on ? a.tint : parent.faint; }
         // between the 6 and the 18: the time left (or that no alarm is on) and the next alarm under it
-        Text { x: 172px; y: 166px; width: 136px; height: 34px; text: root.snoozed ? "Snoozed" : root.next-in < 0 ? "No alarm on" : root.left-text(root.next-in);
+        Text { x: 172px; y: 166px; width: 136px; height: 34px; text: root.snoozed ? "Snoozed" : root.next-in < 0 ? "No alarm on" : root.left-text(Math.round(root.next-in * dial.k));
             font-family: root.next-in < 0 || root.snoozed ? "Noto Sans" : "Space Grotesk"; font-size: root.next-in < 0 || root.snoozed ? 15px : root.next-in >= 600 ? 22px : 26px;
             font-weight: root.next-in < 0 || root.snoozed ? 600 : 500;
             color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
@@ -1274,26 +1307,36 @@ export component TimersPage inherits Rectangle {
     property <int> radio-hh: Math.floor(root.radio-h + 0.0001);
     property <int> radio-sh: Clock.h24 ? root.radio-hh : (Math.mod(root.radio-hh, 12) == 0 ? 12 : Math.mod(root.radio-hh, 12));
     property <int> radio-mm: Math.mod(Math.floor(root.radio-h * 60 + 0.001), 60);
+    // the entrance (25.T15): the LED powers up, every segment (and AL1-AL3, PM) at 45 % for 80 ms, then the time; the
+    // preset LEDs of the alarms that are on light one after the other, 60 ms apart (each fading in as T12's). While the tab
+    // waits the LED is dark. radio-led: 0 dark, 1 the test, 2 the time.
+    property <int> radio-led: al-ent.armed ? 0 : al-ent.calm || al-ent.ent >= 80 ? 2 : 1;
+    property <color> radio-dim: #ff2d1a.mix(#2a0c09, 0.45);
+    pure function radio-key-at(k: int) -> float {
+        return 80 + 60 * ((k >= 1 && root.alarms.length > 0 && root.alarms[0].on ? 1 : 0) + (k >= 2 && root.alarms.length > 1 && root.alarms[1].on ? 1 : 0));
+    }
     if !root.ringing && root.mode == 0 && root.alarm-look == 3: radio := Rectangle {
         property <length> ry: root.top - 10px + Math.max(0px, (404px - (root.top - 10px) - 236px) / 2);
         property <length> dy: radio.ry - 98px;
         property <color> body: Theme.dark ? #17171a : #e7dec9;
         property <color> print: Theme.dark ? #4a4a50 : #b3a585;
         Image { x: 30px; y: radio.ry; width: 420px; height: 236px; source: Theme.dark ? @image-url("timers/radio-dark.png") : @image-url("timers/radio-light.png"); }
-        Rectangle { x: 0; y: radio.dy; width: 480px; height: 480px;
-            Seg7 { d: root.radio-sh >= 10 ? Math.floor(root.radio-sh / 10) : -1; x0: 234; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-            Seg7 { d: Math.mod(root.radio-sh, 10); x0: 274; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-            Seg7 { d: Math.floor(root.radio-mm / 10); x0: 326; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-            Seg7 { d: Math.mod(root.radio-mm, 10); x0: 366; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-            Rectangle { x: 311px; y: 170px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
-            Rectangle { x: 309px; y: 202px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
+        disp := Rectangle { x: 0; y: radio.dy; width: 480px; height: 480px;
+            property <color> ink: root.radio-led == 1 ? root.radio-dim : #ff2d1a;
+            Seg7 { d: root.radio-led == 1 ? 8 : root.radio-led == 0 ? -1 : root.radio-sh >= 10 ? Math.floor(root.radio-sh / 10) : -1; x0: 234; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: disp.ink; off: #2a0c09; }
+            Seg7 { d: root.radio-led == 1 ? 8 : root.radio-led == 0 ? -1 : Math.mod(root.radio-sh, 10); x0: 274; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: disp.ink; off: #2a0c09; }
+            Seg7 { d: root.radio-led == 1 ? 8 : root.radio-led == 0 ? -1 : Math.floor(root.radio-mm / 10); x0: 326; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: disp.ink; off: #2a0c09; }
+            Seg7 { d: root.radio-led == 1 ? 8 : root.radio-led == 0 ? -1 : Math.mod(root.radio-mm, 10); x0: 366; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: disp.ink; off: #2a0c09; }
+            Rectangle { x: 311px; y: 170px; width: 8px; height: 8px; border-radius: 4px; background: root.radio-led == 0 ? #2a0c09 : disp.ink; }
+            Rectangle { x: 309px; y: 202px; width: 8px; height: 8px; border-radius: 4px; background: root.radio-led == 0 ? #2a0c09 : disp.ink; }
             // 12-hour mode: the PM dot beside the digits, as real clock radios have it
-            if !Clock.h24: Rectangle { x: 217px; y: 156px; width: 7px; height: 7px; border-radius: 3.5px; background: root.radio-hh >= 12 ? #ff2d1a : #3a1410;
-                drop-shadow-blur: root.radio-hh >= 12 ? 5px : 0px; drop-shadow-color: #ff2d1acc; }
-            if !Clock.h24: Text { x: 210px; y: 166px; width: 21px; text: "PM"; font-size: 8px; font-weight: 700; color: root.radio-hh >= 12 ? #ff2d1a : #3a1410; horizontal-alignment: center; }
+            property <bool> pm: root.radio-led == 1 || (root.radio-led == 2 && root.radio-hh >= 12);
+            if !Clock.h24: Rectangle { x: 217px; y: 156px; width: 7px; height: 7px; border-radius: 3.5px; background: disp.pm ? disp.ink : #3a1410;
+                drop-shadow-blur: disp.pm && root.radio-led == 2 ? 5px : 0px; drop-shadow-color: #ff2d1acc; }
+            if !Clock.h24: Text { x: 210px; y: 166px; width: 21px; text: "PM"; font-size: 8px; font-weight: 700; color: disp.pm ? disp.ink : #3a1410; horizontal-alignment: center; }
             // AL1-AL3: one per preset key, lit while that alarm is on
             for k in 3: Text { x: (228 + k * 30) * 1px; y: 236px; text: "AL" + (k + 1); font-size: 10px; font-weight: 700; letter-spacing: 1px;
-                color: k < root.alarms.length && root.alarms[k].on ? #ff2d1a : #3a1410; }
+                color: root.radio-led == 1 ? root.radio-dim : root.radio-led == 2 && k < root.alarms.length && root.alarms[k].on ? #ff2d1a : #3a1410; }
         }
         // the 12H / 24H slide switch on the body, where the print was (the print moves left of it)
         sw12 := Rectangle { x: 30px + 18px; y: radio.ry + 210px; width: 160px; height: 21px; background: radio.body;
@@ -1318,13 +1361,15 @@ export component TimersPage inherits Rectangle {
             Timer { interval: 500ms; running: key.down && key.has && !key.held; triggered => { key.held = true; } }
             // while held: the LED blinks twice
             property <bool> blink: key.down && key.has && !key.held && Math.mod(Math.floor((animation-tick() - key.t0) / 125ms), 2) == 1;
+            // on, and lit by the entrance (dark while the tab waits)
+            property <bool> lit: key.a.on && (al-ent.calm || (!al-ent.armed && al-ent.ent >= root.radio-key-at(k)));
             x: 212px + k * (68px + 8px); y: radio.ry + 164px + (key.down ? 2px : 0px); width: 68px; height: 54px; border-radius: 9px;
             background: Theme.dark ? #26262b : #f4eedf;
             Rectangle { x: 0; y: parent.height - 3px; width: parent.width; height: 3px; border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
                 background: Theme.dark ? #121214 : #cdbf9f; }
             if key.has: Rectangle { x: 8px; y: 7px; width: 6px; height: 6px; border-radius: 3px;
-                background: (key.a.on != key.blink) ? #ff2d1a : (Theme.dark ? #3a3a40 : #bfb196);
-                drop-shadow-blur: key.a.on != key.blink ? 6px : 0px; drop-shadow-color: #ff2d1a;
+                background: (key.lit != key.blink) ? #ff2d1a : (Theme.dark ? #3a3a40 : #bfb196);
+                drop-shadow-blur: key.lit != key.blink ? 6px : 0px; drop-shadow-color: #ff2d1a;
                 animate background { duration: 150ms; } }
             Text { x: parent.width - 18px; y: 4px; width: 10px; text: k + 1; font-size: 10px; font-weight: 700; color: Theme.dark ? #e8e4dc : #3a332a; opacity: 0.6;
                 horizontal-alignment: right; }
@@ -1366,7 +1411,13 @@ export component TimersPage inherits Rectangle {
     // 2 sunrise: the page is a sky with two hills; the next alarm big in the sky; half an hour before it the sky goes from
     // night to dawn (by 60 %) and on to sunrise, the stars fade and the sun rises after the half (spec 24.6)
     property <float> dawn: root.next-in >= 0 && root.next-in <= 30 ? clamp(1 - root.next-in / 30, 0, 1) : 0;
-    property <bool> sky-bright: !Theme.dark || root.dawn > 0.78;
+    // the entrance (25.T15): the sky starts at night and brightens to the sky of now (500 ms, ease-out); the big time rolls
+    // up from 0:00 to the alarm (its digits rolling, M8), the hours as the time format writes them
+    property <float> dawn-in: root.dawn * root.ak(500);
+    property <bool> sky-bright: !Theme.dark || root.dawn-in > 0.78;
+    property <int> sun-hh: Math.floor(root.next-h + 0.0001);
+    property <int> sun-dh: Clock.h24 ? Math.mod(root.sun-hh, 24) : (Math.mod(root.sun-hh, 12) == 0 ? 12 : Math.mod(root.sun-hh, 12));
+    property <int> sun-v: Math.round((root.sun-dh * 60 + Math.mod(Math.round((root.next-h - root.sun-hh) * 60), 60)) * root.ak(500));
     pure function sky3(i: int, k: float) -> color {
         k < 0.6 ? root.sky-c(1, i).mix(root.sky-c(0, i), k / 0.6) : root.sky-c(2, i).mix(root.sky-c(1, i), (k - 0.6) / 0.4)
     }
@@ -1378,24 +1429,31 @@ export component TimersPage inherits Rectangle {
     if !root.ringing && root.mode == 0 && root.alarm-look == 2: sky := Rectangle {
         property <color> fg: root.sky-bright ? #101114 : #F5F3EE;
         property <color> faint: root.sky-bright ? #10111499 : #F5F3EEa6;
-        background: @linear-gradient(180deg, root.sky3(0, root.dawn) 0%, root.sky3(1, root.dawn) 55%, root.sky3(2, root.dawn) 100%);
+        background: @linear-gradient(180deg, root.sky3(0, root.dawn-in) 0%, root.sky3(1, root.dawn-in) 55%, root.sky3(2, root.dawn-in) 100%);
         if Theme.dark: Rectangle {
             for st in [{ x: 175, y: 107, r: 1.5, tw: 4.09 }, { x: 47, y: 78, r: 1.2, tw: 3.66 }, { x: 269, y: 139, r: 0.8, tw: 0.54 }, { x: 224, y: 65, r: 1.0, tw: 0.57 }, { x: 227, y: 60, r: 0.8, tw: 5.95 }, { x: 332, y: 61, r: 1.5, tw: 0.31 }, { x: 123, y: 53, r: 1.0, tw: 1.82 }, { x: 83, y: 90, r: 1.2, tw: 3.52 }, { x: 359, y: 122, r: 0.8, tw: 3.65 }, { x: 337, y: 126, r: 1.2, tw: 0.61 }, { x: 374, y: 62, r: 0.8, tw: 3.89 }, { x: 264, y: 248, r: 1.2, tw: 2.92 }, { x: 242, y: 215, r: 1.2, tw: 1.56 }, { x: 102, y: 154, r: 0.8, tw: 3.61 }, { x: 278, y: 283, r: 1.2, tw: 4.58 }, { x: 157, y: 67, r: 0.8, tw: 3.21 }, { x: 94, y: 205, r: 1.0, tw: 5.86 }, { x: 225, y: 50, r: 0.8, tw: 4.80 }, { x: 303, y: 190, r: 1.2, tw: 4.37 }, { x: 314, y: 284, r: 1.5, tw: 0.43 }, { x: 57, y: 168, r: 1.5, tw: 4.38 }, { x: 43, y: 61, r: 1.2, tw: 4.06 }, { x: 358, y: 258, r: 1.2, tw: 4.50 }, { x: 464, y: 207, r: 0.8, tw: 5.91 }, { x: 191, y: 116, r: 0.8, tw: 3.10 }, { x: 121, y: 177, r: 1.0, tw: 4.64 }, { x: 213, y: 230, r: 1.5, tw: 0.51 }, { x: 239, y: 235, r: 1.2, tw: 5.55 }, { x: 429, y: 250, r: 1.2, tw: 4.44 }, { x: 193, y: 224, r: 1.0, tw: 0.95 }]: Rectangle { x: (st.x - st.r) * 1px; y: (st.y - st.r) * 1px; width: st.r * 2px; height: st.r * 2px; border-radius: st.r * 1px; background: #ffffff;
-                opacity: max(0, 1 - root.dawn * 1.7) * (0.55 + 0.45 * Math.sin(1rad * ((animation-tick() / 1ms) / 900 + st.tw))); }
+                opacity: max(0, 1 - root.dawn-in * 1.7) * (0.55 + 0.45 * Math.sin(1rad * ((animation-tick() / 1ms) / 900 + st.tw))); }
         }
-        property <float> sun-k: max(max(0, (root.dawn - 0.5) / 0.5), root.on-t < 600 ? 0.6 * Math.sin(180deg * root.on-t / 600) : 0);
+        property <float> sun-k: max(max(0, (root.dawn-in - 0.5) / 0.5), root.on-t < 600 ? 0.6 * Math.sin(180deg * root.on-t / 600) : 0);
         Rectangle { x: 318px - 110px; y: (392 - sky.sun-k * 96) * 1px - 110px; width: 220px; height: 220px; border-radius: 110px; opacity: sky.sun-k;
             background: @radial-gradient(circle, #ffd27abf 0%, #ffd27a00 100%); }
         Rectangle { x: 288px; y: (392 - sky.sun-k * 96) * 1px - 30px; width: 60px; height: 60px; border-radius: 30px; background: #ffd98a; }
         Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
-            fill: Theme.dark ? #5a3a4a.mix(#0d1526, root.dawn) : #d8b9a4.mix(#c3cad3, root.dawn);
+            fill: Theme.dark ? #5a3a4a.mix(#0d1526, root.dawn-in) : #d8b9a4.mix(#c3cad3, root.dawn-in);
             commands: "M 0 338 C 60 318 120 322 180 334 C 250 348 320 312 400 318 C 440 321 465 330 480 334 L 480 480 L 0 480 Z"; }
         Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
-            fill: Theme.dark ? #2e1d29.mix(#060a14, root.dawn) : #c49c86.mix(#b4bcc6, root.dawn);
+            fill: Theme.dark ? #2e1d29.mix(#060a14, root.dawn-in) : #c49c86.mix(#b4bcc6, root.dawn-in);
             commands: "M 0 362 C 90 352 160 366 240 364 C 330 362 400 350 480 356 L 480 480 L 0 480 Z"; }
         HorizontalLayout { x: 0; y: 128px; width: root.width; height: 100px; alignment: center; spacing: 6px;
-            Text { text: root.next-in < 0 ? "–:––" : AlarmClock.digits(root.next-h); font-family: "Space Grotesk"; font-size: 96px; font-weight: 500;
+            if root.next-in < 0: Text { text: "–:––"; font-family: "Space Grotesk"; font-size: 96px; font-weight: 500;
                 letter-spacing: -2px; color: sky.fg; vertical-alignment: center; }
+            if root.next-in >= 0: HorizontalLayout { spacing: -2px;
+                if root.sun-v >= 600: RollDigit { d: Math.floor(root.sun-v / 600); family: "Space Grotesk"; font-size: 96px; font-weight: 500; color: sky.fg; }
+                RollDigit { d: Math.mod(Math.floor(root.sun-v / 60), 10); family: "Space Grotesk"; font-size: 96px; font-weight: 500; color: sky.fg; }
+                Text { text: ":"; font-family: "Space Grotesk"; font-size: 96px; font-weight: 500; color: sky.fg; vertical-alignment: center; }
+                RollDigit { d: Math.floor(Math.mod(root.sun-v, 60) / 10); family: "Space Grotesk"; font-size: 96px; font-weight: 500; color: sky.fg; }
+                RollDigit { d: Math.mod(root.sun-v, 10); family: "Space Grotesk"; font-size: 96px; font-weight: 500; color: sky.fg; }
+            }
             if root.next-in >= 0 && !Clock.h24: VerticalLayout { padding-bottom: 22px; alignment: end;
                 Text { text: AlarmClock.ampm(root.next-h); font-family: "Space Grotesk"; font-size: 30px; font-weight: 500; color: sky.fg; } }
         }
@@ -1412,9 +1470,13 @@ export component TimersPage inherits Rectangle {
     // 1 twin-bell clock: the red clock (a picture) with its hour, minute and second hands and the alarm hand (Signal, an
     // arrow tip) at the next alarm; under it the next alarm and the time left, then the alarms as chips (a tap toggles)
     if !root.ringing && root.mode == 0 && root.alarm-look == 1: bell := Rectangle {
+        // the entrance (25.T15): the hands spin forward from 12:00 to the time (500 ms, ease-out, one turn at most); on
+        // arrival the hammer taps once (T10)
+        property <float> k: root.ak(500);
+        property <bool> tap: !al-ent.armed && !al-ent.calm && al-ent.ent >= 500 && al-ent.ent < 650;
         TwinBellClock { x: 150px; y: 98px; width: 180px; height: 206px; metal: Theme.dark ? #b9b6af : #8d8a84; highlight: false; shadow: false;
-            hours: Math.mod(root.now-h, 12); minutes: Math.mod(root.now-h * 60, 60); seconds: root.now-s;
-            ting: root.on-t < 150; ting-t: root.on-t; }
+            hours: Math.mod(root.now-h, 12) * bell.k; minutes: Math.mod(root.now-h * 60, 60) * bell.k; seconds: root.now-s * bell.k;
+            ting: root.on-t < 150 || bell.tap; ting-t: root.on-t < 150 ? root.on-t : al-ent.ent - 500; }
         HorizontalLayout { x: 0; y: 316px; width: root.width; height: 24px; alignment: center; spacing: 8px;
             Text { text: root.snoozed ? "Snoozed" : root.next-in < 0 ? "No alarm on" : "Next " + AlarmClock.of(root.next-h); font-size: 16px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
             if root.next-in >= 0 || root.snoozed: Text { text: root.snoozed ? "rings at " + AlarmClock.of(root.snooze-h) : AlarmClock.when(root.next-in); font-size: 15px;
