@@ -4675,7 +4675,7 @@ class PanelOSPage extends HTMLElement {
       this._has(p, "proximity") ? this._card("Waking", {},
         this._row("Wake when someone comes close", this._toggle(s.proximity_wake, (v) => this._command(p, "proximity_wake", v), { label: "Wake when someone comes close" })),
         this._row("Distance", this._seg(WAKE_DISTANCES, wake, (v) => this._options(p, { wake_distance: v }, { optimistic: (x) => { x.wake_distance = v; } }), { label: "Wake distance" }),
-          { info: "How close someone comes before the panel wakes: about 30 cm (near), 45 cm (medium) or 55 cm (far). Presence uses the same distance." }),
+          { info: "How close someone comes before the panel wakes: about 30 cm (near), 40 cm (medium) or 45 cm (far). Presence uses the same distance." }),
         this._row("Calibrate", this._btn("Start", () => this._proxCal(p), { cls: "small", icon: "tune-vertical", disabled: !p.connected }),
           { info: "The panel measures its sensor with nobody in front of it, then shows how far it wakes. Keep the space in front of the panel clear for about 20 seconds." })) : null,
       this._has(p, "touch") ? this._card("Touch", {},

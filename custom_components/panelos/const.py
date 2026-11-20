@@ -95,8 +95,8 @@ DEFAULT_THEME_AUTO = {"by": "light", "from": "20:00", "to": "07:00"}
 # Wi-Fi roaming: the panel moves by itself to a clearly stronger access point of its network (default on).
 CONF_WIFI_ROAMING = "wifi_roaming"
 
-# How close someone comes before the proximity sensor wakes the panel: near (about 30 cm), medium (45 cm) or far
-# (55 cm; noisy readings shorten it).
+# How close someone comes before the proximity sensor wakes the panel: near (about 30 cm), medium (40 cm) or far
+# (45 cm; noisy readings shorten it).
 CONF_WAKE_DISTANCE = "wake_distance"
 WAKE_DISTANCES = ("near", "medium", "far")
 DEFAULT_WAKE_DISTANCE = "medium"

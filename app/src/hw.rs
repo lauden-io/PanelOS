@@ -212,10 +212,11 @@ fn set_proximity_led(iio: &Path) {
 
 /// Wake distance in cm: "something is close" above the resting level plus
 /// the signal of a hand at this distance (PROXIMITY_CURVE)...
-pub const PROXIMITY_WAKE_CM: f64 = 45.0;
-/// The wake distances the integration offers (near, medium, far), cm. Far is
-/// near the end of the measured curve: noisy readings often shorten it.
-pub const PROXIMITY_WAKE_CHOICES: [(&str, f64); 3] = [("near", 30.0), ("medium", PROXIMITY_WAKE_CM), ("far", 55.0)];
+pub const PROXIMITY_WAKE_CM: f64 = 40.0;
+/// The wake distances the integration offers (near, medium, far), cm. Far
+/// stays at 45 cm: beyond it single measuring rounds differed by up to 30 %
+/// and the signal comes close to the noise.
+pub const PROXIMITY_WAKE_CHOICES: [(&str, f64); 3] = [("near", 30.0), ("medium", PROXIMITY_WAKE_CM), ("far", 45.0)];
 /// ...or plus this many times the jitter (mean change between consecutive
 /// resting readings), if that is more: noisy readings shorten the range
 /// instead of waking the panel. (A fixed margin woke the panel by itself
@@ -458,8 +459,8 @@ mod tests {
         // a calm room: the threshold is the signal of a hand at the wake distance
         assert!(p.calibrate(&readings(7000.0, 5.0)));
         assert!((p.jitter() - 5.0).abs() < 0.01);
-        assert!((p.margin() - 114.0).abs() < 1.0);
-        assert!((p.reach_cm().unwrap() - 45.0).abs() < 0.5);
+        assert!((p.margin() - 183.0).abs() < 1.0);
+        assert!((p.reach_cm().unwrap() - 40.0).abs() < 0.5);
         p.set_wake_cm(30.0);
         assert!((p.margin() - 433.0).abs() < 1.0);
         p.set_wake_cm(55.0);

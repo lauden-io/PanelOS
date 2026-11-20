@@ -25,7 +25,7 @@
 
 ## Hardware
 
-- Proximity: learn the resting level and its noise, wake the screen after two consecutive readings above the signal of a hand at the wake distance (45 cm); also report presence.
+- Proximity: learn the resting level and its noise, wake the screen after two consecutive readings above the signal of a hand at the wake distance (40 cm by default); also report presence.
 - Ambient light: report illuminance; automatic brightness (minimum in the dark, maximum at about 500 lx, logarithmic curve in between, smoothed).
 - Backlight: 1000 levels, from 0.8 % up, smooth fades, and full off for sleep.
 - Screensaver: a clock face (date, weather and the next event optional); wakes on touch, approach or a Home Assistant command.
