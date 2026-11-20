@@ -792,6 +792,13 @@ export component Dropdown inherits Rectangle {
     // it, else as far up as it must go (a long list may then cover its field)
     property <length> menu-h: Math.min(8, root.options.length) * 48px + 12px;
     property <bool> opens-up: root.up || root.absolute-position.y + root.height + 6px + root.menu-h > 480px;
+    // where the list goes: under the field when it fits above y 468, else above it when that stays under y 48, else
+    // as near the field as the screen allows (a long list may cover its field)
+    property <length> field-y: root.absolute-position.y;
+    property <length> below-y: root.field-y + root.height + 6px;
+    property <length> above-y: root.field-y - root.menu-h - 6px;
+    property <length> list-y: !root.up && root.below-y + root.menu-h <= 468px ? root.below-y
+        : root.above-y >= 48px ? root.above-y : Math.max(48px, Math.min(root.below-y, 468px - root.menu-h));
     property <string> shown-text: root.selected >= 0 && root.selected < root.options.length ? root.options[root.selected] : root.placeholder;
     Text { x: 16px; y: 0; width: parent.width - 52px; height: parent.height; text: root.tk-caps ? root.shown-text.to-uppercase() : root.shown-text;
         font-family: root.tk-font; font-size: root.tk-font-size; font-weight: root.tk-font-weight; color: root.selected >= 0 ? root.tk-text : root.tk-muted;
