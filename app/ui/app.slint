@@ -771,9 +771,15 @@ export component AppWindow inherits Window {
         // fully covered by the saver: not drawn at all
         visible: root.saver-k < 0.999;
         swipe := SwipeGestureHandler {
-            handle-swipe-left: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open;
-            handle-swipe-right: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open;
+            // a drag that starts on a page's rotary control (Act.lock-*) never becomes a swipe
+            handle-swipe-left: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open && !Act.locked(self.pressed-position.x, self.pressed-position.y);
+            handle-swipe-right: root.pages.length > 1 && !Act.hold-swipe && !root.sheet-open && !Act.locked(self.pressed-position.x, self.pressed-position.y);
             moved => {
+                // the recogniser reports moves before it takes the swipe (and when it never does): the pages follow
+                // only a swipe, else a press that moved a little would leave them a few pixels off, still dragging
+                if !self.swiping {
+                    return;
+                }
                 if !root.dragging {
                     // a new swipe takes the picture where it is: the running snap stops under the finger, and the
                     // recogniser's start distance is not jumped over
@@ -1087,6 +1093,10 @@ export component AppWindow inherits Window {
                     devices: root.thermo-devices; sel: root.thermo-sel; rooms: root.thermo-rooms; picker: root.thermo-picker; sheet: root.thermo-sheet;
                     settings: root.thermo-settings; look: slot.variant; pulse: root.thermo-pulse; clock-h: root.thermo-clock-h; clock-m: root.thermo-clock-m; key-down: root.thermo-key-down; fahrenheit: root.thermo-fahrenheit;
                     grid: root.home-fl-grid; fl-scene: root.home-fl-scene; fl-cars: root.home-fl-cars-on;
+                    shown: root.page == i && !root.screensaver-on;
+                    look-names: [Words.line("ui.looks.thermostat.0"), Words.line("ui.looks.thermostat.1"), Words.line("ui.looks.thermostat.2"), Words.line("ui.looks.thermostat.3")];
+                    scene-names: [Words.line("ui.looks.thermostat.4"), Words.line("ui.looks.thermostat.5"), Words.line("ui.looks.thermostat.6"), Words.line("ui.looks.thermostat.7")];
+                    cars-name: Words.line("ui.looks.thermostat.8");
                 }
                 if slot.kind == "quick": QuickPage {
                     look: slot.variant; tiles: root.quick-tiles; title: root.quick-title; mood: root.quick-mood; placard: root.quick-placard;

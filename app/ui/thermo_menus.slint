@@ -1,0 +1,772 @@
+// The thermostat page's menus (spec 33), each an object of the look, placed by MenuHost:
+// - the rooms hang from the device chip (x 16–464, from y 48);
+// - the options (fan / swing / preset; dial and neon only: the remote's keys and the wall's slide switches step them in
+//   place) grow up from the option pills, their bottom edge at y 398;
+// - the settings come down under the status bar (the quick shade's page row opens them).
+// Dial: the brand card. Remote: a zone LCD in the remote's plastic, the settings on its sliding lid. Wall thermostat:
+// the zone plate with pilot lamps, the settings behind its hinged front door. Neon: the arcade screen in the scene's
+// colour (whole 40 ms frames).
+// A tap on a room shows its first device, a tap on one of its device lines that device; the chip follows and the menu
+// closes. A room without a climate device only shows its temperature and stays open.
+import { Theme, Act } from "theme.slint";
+import { Icon, MenuHost, Jelly, Dropdown, Segmented, TextButton } from "widgets.slint";
+import { ArcadeScreen, ArcadeBlocks, ArcadeBlock, ArcadeText, Arcade, RoundedGlass } from "arcade.slint";
+import { ClimateDev, ClimateRoom, TK, Seg7 } from "thermo_common.slint";
+
+// what the settings show and change (the page passes them through)
+export struct ThermoSettingsData {
+    look: int,                  // 0 dial, 1 remote control, 2 wall thermostat, 3 neon
+    looks: [string],            // the looks' names
+    scene: int,                 // neon: the synthwave scene
+    scenes: [string],
+    cars: bool,                 // neon: cars on the road
+    cars-name: string,
+}
+
+// ==================================================================== shared pieces
+// a tap on a room (or one of its device lines) briefly marks it, then shows that device (its index among the page's
+// devices); a room without a device does nothing
+component RoomPick {
+    in property <duration> delay: 110ms;
+    out property <int> cell: -1;            // the room being marked
+    out property <int> line: -1;            // its device line being marked (-1: the room as a whole)
+    property <int> dev: -1;
+    public function pick(room: ClimateRoom, cell: int, line: int) {
+        if room.dev-index.length == 0 || root.dev >= 0 { return; }
+        root.cell = cell;
+        root.line = line;
+        root.dev = room.dev-index[Math.max(0, line)];
+    }
+    Timer { interval: root.delay; running: root.dev >= 0; triggered => {
+        Act.act("thermo.room", root.dev);
+        root.dev = -1;
+    } }
+    // the mark stays until the menu has gone
+    public function clear() { root.cell = -1; root.line = -1; }
+}
+
+// the pixel-font look's icons glow in their colour
+component GlowIcon inherits Rectangle {
+    in property <string> glyph;
+    in property <color> ink: #ffffff;
+    in property <color> glow: transparent;
+    in property <length> size: 15px;
+    width: root.size + 2px; height: root.size + 2px;
+    for o in [{ x: -1.5, y: 0 }, { x: 1.5, y: 0 }, { x: 0, y: -1.5 }, { x: 0, y: 1.5 }]: Icon {
+        visible: root.glow.alpha > 0;
+        x: o.x * 1px; y: o.y * 1px; width: root.width; height: root.height;
+        text: root.glyph; font-size: root.size; color: root.glow.with-alpha(0.4); horizontal-alignment: center;
+    }
+    Icon { width: root.width; height: root.height; text: root.glyph; font-size: root.size; color: root.ink; horizontal-alignment: center; }
+}
+
+// a device line: its mode-tinted icon and its state (wraps); the shown device in 600 and the text colour
+component DevLine inherits Rectangle {
+    in property <string> glyph;
+    in property <color> tint;
+    in property <string> text;
+    in property <bool> cur;
+    in property <color> ink;
+    in property <color> muted;
+    in property <bool> marked;
+    in property <color> mark;
+    callback tapped;
+    background: root.marked ? root.mark : transparent;
+    border-radius: 4px;
+    HorizontalLayout {
+        padding-top: 2px; padding-bottom: 2px; spacing: 4px;
+        Icon { width: 15px; height: 16px; text: root.glyph; font-size: 15px; color: root.tint; vertical-alignment: center; }
+        Text { text: root.text; font-size: 12px; font-weight: root.cur ? 600 : 400; color: root.cur ? root.ink : root.muted;
+            wrap: word-wrap; vertical-alignment: center; }
+    }
+    TouchArea { clicked => { root.tapped(); } }
+}
+
+// ==================================================================== 33.1 dial: the brand card
+// The rooms: the card is raised, the rooms are surface cells in two columns (radius 10, padding 7 12 8, gap 5), sized
+// to their content; the shown device's room has the Signal @ 16 % ground. Motion (the brand card, as the music page's):
+// 140 ms, scale 0.96 → 1 with a fade, from the edge it hangs from; it fades out in 100 ms.
+component BrandCell inherits Rectangle {
+    in property <ClimateRoom> room;
+    in property <bool> marked;
+    in property <int> marked-line: -1;
+    callback tapped(int);
+    property <bool> on: root.room.sel >= 0;
+    background: root.on ? #FF4A1C29 : root.marked && root.marked-line < 0 ? Theme.surface-pressed : Theme.surface;
+    border-radius: 10px;
+    TouchArea { clicked => { root.tapped(-1); } }
+    VerticalLayout {
+        padding-left: 12px; padding-right: 12px; padding-top: 7px; padding-bottom: 8px; spacing: 0; alignment: start;
+        HorizontalLayout {
+            padding-right: root.room.outside ? 22px : 0px;
+            Text { text: root.room.name; font-size: 13px; font-weight: 600; color: root.on ? Theme.text : Theme.muted; wrap: word-wrap; }
+        }
+        HorizontalLayout {
+            padding-top: 1px; padding-bottom: 2px; spacing: 10px; alignment: start;
+            Text { text: root.room.temp; font-size: 26px; font-weight: 400; color: Theme.text; vertical-alignment: center; }
+            if root.room.hum != "": HorizontalLayout {
+                spacing: 2px;
+                Icon { width: 16px; text: "\u{F058E}"; font-size: 14px; color: #8fc9ff; vertical-alignment: center; }
+                Text { text: root.room.hum; font-size: 13px; color: Theme.muted; vertical-alignment: center; }
+            }
+        }
+        for dl[j] in root.room.dev: DevLine {
+            glyph: root.room.dev-icon[j]; tint: TK.tints[root.room.dev-mode[j]]; text: dl; cur: root.room.sel == j;
+            ink: Theme.text; muted: Theme.muted; marked: root.marked && root.marked-line == j; mark: Theme.surface-pressed;
+            tapped => { root.tapped(j); }
+        }
+    }
+    if root.room.outside: Icon { x: parent.width - 30px; y: 8px; width: 20px; height: 20px; text: "\u{F0595}"; font-size: 17px; color: Theme.muted; }
+}
+
+// the card's frame and its 140 ms entrance from an anchor (0 left / top … 1 right / bottom), the 100 ms fade out
+component BrandFrame inherits Rectangle {
+    in property <length> fx;
+    in property <length> fy;
+    in property <length> fw;
+    in property <length> fh;
+    in property <float> ax;
+    in property <float> ay;
+    in property <float> t-in;
+    in property <float> t-out;
+    in property <bool> leaving;
+    in property <color> ground: Theme.surface-raised;
+    property <float> u: TK.eo(root.t-in / 140);
+    property <float> s: root.leaving ? 1 : 0.96 + 0.04 * root.u;
+    x: root.fx + root.fw * (1 - root.s) * root.ax; y: root.fy + root.fh * (1 - root.s) * root.ay;
+    width: root.fw * root.s; height: root.fh * root.s;
+    opacity: root.leaving ? 1 - clamp(root.t-out / 100, 0, 1) : root.u;
+    clip: root.s < 1;
+    background: root.ground; border-radius: 14px; border-width: 1px; border-color: Theme.outline;
+    TouchArea { }
+    // the content keeps its size and its place at the anchor
+    Rectangle {
+        x: -(root.fw * (1 - root.s) * root.ax); y: -(root.fh * (1 - root.s) * root.ay); width: root.fw; height: root.fh;
+        @children
+    }
+}
+
+export component BrandRooms inherits MenuHost {
+    in property <[ClimateRoom]> rooms;
+    kind: 0; menu-w: 448px; in-ms: 140ms; out-ms: 100ms;
+    need: 38px + grid.preferred-height + 7px;
+    property <length> col-w: (root.menu-w - 2px - 12px - 5px) / 2;
+    pick := RoomPick { }
+    changed shown => { if !root.shown { pick.clear(); } }
+    BrandFrame {
+        fx: root.menu-x; fy: root.menu-y; fw: root.menu-w; fh: root.menu-h; ax: 1; ay: 0;
+        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        Text { x: 16px; y: 6px; height: 32px; text: "Rooms"; font-size: 13px; font-weight: 600; color: Theme.muted; vertical-alignment: center; }
+        Flickable {
+            x: 7px; y: 38px; width: root.menu-w - 14px; height: root.menu-h - 38px - 7px;
+            viewport-height: grid.preferred-height;
+            interactive: root.scrolls;
+            grid := VerticalLayout {
+                width: parent.width; height: self.preferred-height;
+                spacing: 5px;
+                for r in Math.ceil(root.rooms.length / 2): HorizontalLayout {
+                    spacing: 5px;
+                    BrandCell { width: root.col-w; room: root.rooms[r * 2]; marked: pick.cell == r * 2; marked-line: pick.line;
+                        tapped(j) => { pick.pick(root.rooms[r * 2], r * 2, j); } }
+                    if r * 2 + 1 < root.rooms.length: BrandCell { width: root.col-w; room: root.rooms[r * 2 + 1]; marked: pick.cell == r * 2 + 1; marked-line: pick.line;
+                        tapped(j) => { pick.pick(root.rooms[r * 2 + 1], r * 2 + 1, j); } }
+                    if r * 2 + 1 >= root.rooms.length: Rectangle { width: root.col-w; }
+                }
+            }
+        }
+    }
+}
+
+// The options: a raised card, its head the device's name (13/600 muted), a row per option the device has: an icon in
+// front, 28.4 segmented up to 4 steps, 28.5 dropdown above 4. It grows up from the pills (bottom middle).
+component OptRow inherits HorizontalLayout {
+    in property <string> glyph;
+    in property <[string]> items;
+    in property <int> cur;
+    in property <string> act;
+    in property <color> field: Theme.surface;
+    padding-left: 10px; padding-right: 10px; padding-top: 6px; padding-bottom: 6px; spacing: 10px;
+    Icon { width: 28px; text: root.glyph; font-size: 21px; color: Theme.muted; vertical-alignment: center; horizontal-alignment: center; }
+    if root.items.length <= 4: Segmented { options: root.items; selected: root.cur; tk-raised: root.field;
+        picked(i) => { Act.act(root.act, i); } }
+    if root.items.length > 4: Dropdown { options: root.items; selected: root.cur; tk-raised: root.field;
+        picked(i) => { Act.act(root.act, i); } }
+}
+
+export component BrandOptions inherits MenuHost {
+    in property <ClimateDev> d;
+    kind: 1; in-ms: 140ms; out-ms: 100ms;
+    need: col.preferred-height + 14px;
+    property <length> h: Math.min(root.need, 350px);
+    BrandFrame {
+        fx: root.menu-x; fy: 398px - root.h; fw: root.menu-w; fh: root.h; ax: 0.5; ay: 1;
+        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        Flickable {
+            x: 7px; y: 7px; width: root.menu-w - 14px; height: root.h - 14px;
+            viewport-height: col.preferred-height;
+            interactive: root.need > 350px;
+            col := VerticalLayout {
+                width: parent.width; height: self.preferred-height;
+                HorizontalLayout { padding-left: 10px; padding-right: 10px; padding-top: 8px; padding-bottom: 4px;
+                    Text { text: root.d.name; font-size: 13px; font-weight: 600; color: Theme.muted; wrap: word-wrap; } }
+                if root.d.fans.length > 0: OptRow { glyph: "\u{F0210}"; items: root.d.fans; cur: root.d.fan-i; act: "thermo.fan"; }
+                if root.d.swings.length > 0: OptRow { glyph: "\u{F1C91}"; items: root.d.swings; cur: root.d.swing-i; act: "thermo.swing"; }
+                if root.d.presets.length > 0: OptRow { glyph: "\u{F032A}"; items: root.d.presets; act: "thermo.preset";
+                    cur: TK.index-of(root.d.presets, root.d.preset == "" ? "None" : root.d.preset); }
+            }
+        }
+    }
+}
+
+// The settings: the brand settings card (surface, so the raised fields show; "Thermostat" in Space Grotesk 20, the
+// look, Done = 28.7 primary). It comes down from the top middle.
+export component BrandSettings inherits MenuHost {
+    in property <ThermoSettingsData> data;
+    callback look-picked(int);
+    kind: 1; in-ms: 140ms; out-ms: 100ms;
+    need: 6px + 40px + 89px + 62px + 7px;
+    BrandFrame {
+        fx: root.menu-x; fy: root.menu-y; fw: root.menu-w; fh: root.menu-h; ax: 0.5; ay: 0;
+        t-in: root.t-in; t-out: root.t-out; leaving: !root.open; ground: Theme.surface;
+        Text { x: 16px; y: 16px; height: 26px; text: "Thermostat"; font-family: "Space Grotesk"; font-size: 20px; font-weight: 500; color: Theme.text;
+            vertical-alignment: center; }
+        Text { x: 16px; y: 54px; height: 19px; text: "Look"; font-size: 14px; font-weight: 500; color: Theme.muted; vertical-alignment: center; }
+        Dropdown { x: 16px; y: 79px; width: root.menu-w - 32px; options: root.data.looks; selected: root.data.look;
+            picked(i) => { root.look-picked(i); } }
+        TextButton { x: root.menu-w - 16px - 104px; y: 141px; width: 104px; text: "Done"; primary: true; clicked => { root.close(); } }
+    }
+}
+
+// ==================================================================== 33.2 remote control: the remote's own parts
+// the remote's plastic (dark #2e2f34 → #232428, light #f4f3ef → #e3e2dd, radius 22) and its stiff slide from behind the
+// status bar (J-edge 60/200, at most 3 px past); it goes back up in 160 ms, ease-in
+component RemotePlastic inherits Rectangle {
+    in property <length> fx;
+    in property <length> fy;
+    in property <length> fw;
+    in property <length> fh;
+    in property <float> t-in;
+    in property <float> t-out;
+    in property <bool> leaving;
+    property <length> travel: root.fy + root.fh;
+    property <float> e: Jelly.edge(root.t-in, 60, 200);
+    x: root.fx; width: root.fw; height: root.fh;
+    y: root.leaving ? root.fy - root.travel * TK.ei(root.t-out / 160)
+        : root.e <= 1 ? root.fy - root.travel * (1 - root.e) : root.fy + Jelly.cap((root.e - 1) * root.travel / 1px, 3) * 1px;
+    RoundedGlass { width: parent.width; height: parent.height; radius: 22px;
+        top: Theme.dark ? #2e2f34 : #f4f3ef; bottom: Theme.dark ? #232428 : #e3e2dd; }
+    Rectangle { x: 22px; y: 0; width: parent.width - 44px; height: 1px; background: Theme.dark ? #ffffff14 : #ffffff; }
+    TouchArea { }
+    @children
+}
+
+// the digits of the remote's own segment outlines in a fixed "88.8" field, every ghost segment at 8 %
+component SegField inherits Rectangle {
+    in property <float> v;
+    in property <color> ink;
+    in property <color> ghost;
+    in property <bool> blank;
+    property <int> t10: Math.round(Math.abs(root.v) * 10);
+    property <bool> neg: root.v < 0;
+    width: 60px; height: 30px;
+    Seg7 { x: 0; width: 18px; height: 30px; ink: root.ink; ghost: root.ghost; lag: false;
+        v: root.blank ? 11 : root.neg ? 10 : root.t10 >= 100 ? Math.mod(Math.floor(root.t10 / 100), 10) : 11; }
+    Seg7 { x: 18.6px; width: 18px; height: 30px; ink: root.ink; ghost: root.ghost; lag: false;
+        v: root.blank ? 11 : Math.mod(Math.floor(root.t10 / 10), 10); }
+    Rectangle { x: 37.6px; y: 26.5px; width: 3px; height: 3px; border-radius: 1.5px; background: root.blank ? root.ghost : root.ink; }
+    Seg7 { x: 41.6px; width: 18px; height: 30px; ink: root.ink; ghost: root.ghost; lag: false;
+        v: root.blank ? 11 : Math.mod(root.t10, 10); }
+}
+
+// The rooms: a zone LCD in the remote's plastic (bezel #131417 / #c4c3be, the backlit LCD, ink #1d1a14). Zones in two
+// columns: the name in caps, the temperature in segment digits, the humidity, per device its icon (dark when on, ghost
+// when off) and a short caps state; the shown device underlined with a segment bar. The shown zone's frame is dark and
+// its ▶ blinks (1.06 s). The LCD stays blank while the plastic moves; on landing every segment and frame lights for
+// 140 ms (a remote getting new batteries), then the values show.
+component LcdZone inherits Rectangle {
+    in property <ClimateRoom> room;
+    in property <bool> test;            // every segment and frame lit
+    in property <bool> blink-on;
+    in property <bool> marked;
+    in property <bool> fahrenheit;
+    callback tapped(int);
+    property <color> ink: #1d1a14;
+    property <color> ghost: #1d1a1414;
+    property <bool> on: root.room.sel >= 0;
+    property <color> gk: root.test ? root.ink : root.ghost;
+    min-height: 80px;
+    border-radius: 5px;
+    background: root.marked ? #1d1a1414 : transparent;
+    TouchArea { clicked => { root.tapped(-1); } }
+    Rectangle { border-radius: 5px; border-width: 2px; border-color: root.on || root.test ? root.ink : root.ghost; }
+    VerticalLayout {
+        padding-left: 8px; padding-right: 8px; padding-top: 6px; padding-bottom: 7px; spacing: 2px; alignment: start;
+        HorizontalLayout {
+            spacing: 4px;
+            Text { width: 9px; text: "▶"; font-size: 9px; color: root.test || (root.on && root.blink-on) ? root.ink : root.ghost; vertical-alignment: top; }
+            Text { text: root.room.name.to-uppercase(); font-size: 11px; font-weight: 700; letter-spacing: 1px; color: root.ink; wrap: word-wrap; }
+            if root.room.outside: Icon { width: 16px; text: "\u{F0595}"; font-size: 15px; color: root.ink; vertical-alignment: top; }
+        }
+        HorizontalLayout {
+            spacing: 3px; padding-top: 1px;
+            SegField { v: root.room.temp-v; ink: root.ink; ghost: root.gk; }
+            Text { text: root.fahrenheit ? "°F" : "°C"; font-size: 11px; font-weight: 700; color: root.ink; vertical-alignment: top; }
+            Rectangle { horizontal-stretch: 1; }
+            if root.room.hum-v >= 0: HorizontalLayout {
+                spacing: 1px; alignment: end;
+                Icon { width: 14px; text: "\u{F058C}"; font-size: 13px; color: root.ink; vertical-alignment: bottom; }
+                Text { text: Math.round(root.room.hum-v) + "%"; font-size: 12px; font-weight: 700; color: root.ink; vertical-alignment: bottom; }
+            }
+        }
+        HorizontalLayout {
+            spacing: 10px; alignment: start; padding-top: 2px;
+            for c[j] in root.room.dev-caps: Rectangle {
+                width: lcd-dev.preferred-width; height: 18px;
+                lcd-dev := HorizontalLayout {
+                    spacing: 3px;
+                    Icon { width: 16px; text: root.room.dev-icon[j]; font-size: 16px; vertical-alignment: center;
+                        color: root.test || root.room.dev-mode[j] != 0 ? root.ink : root.ink.with-alpha(0.1); }
+                    Text { text: c; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: root.ink; vertical-alignment: center; }
+                }
+                Rectangle { y: parent.height - 2px; height: 2px; background: root.room.sel == j ? root.ink : transparent; }
+                TouchArea { clicked => { root.tapped(j); } }
+            }
+            if root.room.dev-caps.length == 0: HorizontalLayout {
+                spacing: 3px; height: 18px;
+                Icon { width: 16px; text: "\u{F001B}"; font-size: 16px; color: root.gk; vertical-alignment: center; }
+                Text { text: "----"; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: root.gk; vertical-alignment: center; }
+            }
+        }
+    }
+}
+
+export component LcdRooms inherits MenuHost {
+    in property <[ClimateRoom]> rooms;
+    in property <bool> fahrenheit;
+    kind: 0; menu-w: 448px; in-ms: 420ms; out-ms: 160ms;
+    // plastic padding 10, bezel 4, LCD padding 8, the head row 21
+    need: 2 * (10px + 4px + 8px) + 21px + grid.preferred-height;
+    property <length> col-w: (root.menu-w - 2 * (10px + 4px + 8px) - 6px) / 2;
+    property <bool> moving: root.open && root.t-in < 144;
+    property <bool> test: root.open && root.t-in >= 144 && root.t-in < 284;
+    property <bool> blink-on: true;
+    Timer { interval: 530ms; running: root.open && !root.moving; triggered => { root.blink-on = !root.blink-on; } }
+    pick := RoomPick { }
+    changed shown => { if !root.shown { pick.clear(); root.blink-on = true; } }
+    RemotePlastic {
+        fx: root.menu-x; fy: root.menu-y; fw: root.menu-w; fh: root.menu-h; t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        Rectangle { x: 10px; y: 10px; width: parent.width - 20px; height: parent.height - 20px; border-radius: 12px; background: Theme.dark ? #131417 : #c4c3be;
+            RoundedGlass { x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px; radius: 8px;
+                top: Theme.dark ? #dccd8f : #d0d6ad; bottom: Theme.dark ? #c9bb7b : #c1c595;
+                // the inner shadow under the bezel's edge
+                Rectangle { x: 6px; y: 0; width: parent.width - 12px; height: 2px; background: #00000030; }
+                Rectangle { x: 3px; y: 2px; width: parent.width - 6px; height: 1px; background: #00000014; }
+                Rectangle {
+                    visible: !root.moving;
+                    x: 8px; y: 8px; width: parent.width - 16px; height: parent.height - 16px;
+                    HorizontalLayout {
+                        x: 4px; y: 0; width: parent.width - 8px; height: 15px; spacing: 14px;
+                        Text { text: "ZONE"; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #1d1a14; }
+                        Text { text: "AUTO"; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: root.test ? #1d1a14 : #1d1a1414; }
+                        Text { text: "TIMER"; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: root.test ? #1d1a14 : #1d1a1414; }
+                        Rectangle { horizontal-stretch: 1; }
+                        Text { text: "SELECT"; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: #1d1a14; }
+                    }
+                    Flickable {
+                        y: 21px; width: parent.width; height: parent.height - 21px;
+                        viewport-height: grid.preferred-height;
+                        interactive: root.scrolls;
+                        grid := VerticalLayout {
+                            width: parent.width; height: self.preferred-height;
+                            spacing: 4px;
+                            for r in Math.ceil(root.rooms.length / 2): HorizontalLayout {
+                                spacing: 6px;
+                                LcdZone { width: root.col-w; room: root.rooms[r * 2]; test: root.test; blink-on: root.blink-on; fahrenheit: root.fahrenheit;
+                                    marked: pick.cell == r * 2; tapped(j) => { pick.pick(root.rooms[r * 2], r * 2, j); } }
+                                if r * 2 + 1 < root.rooms.length: LcdZone { width: root.col-w; room: root.rooms[r * 2 + 1]; test: root.test; blink-on: root.blink-on;
+                                    fahrenheit: root.fahrenheit; marked: pick.cell == r * 2 + 1; tapped(j) => { pick.pick(root.rooms[r * 2 + 1], r * 2 + 1, j); } }
+                                if r * 2 + 1 >= root.rooms.length: Rectangle { width: root.col-w; }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The settings: the sliding lid (the same plastic; "SETTINGS" with the model print "PNL-T05" over a hairline, labels in
+// printed caps, grip ridges at the bottom edge; the controls in the plastic's colours).
+export component LidSettings inherits MenuHost {
+    in property <ThermoSettingsData> data;
+    callback look-picked(int);
+    kind: 1; in-ms: 420ms; out-ms: 160ms;
+    need: 14px + 28px + 6px + 15px + 6px + 48px + 8px + 62px + 30px;
+    property <color> line: Theme.dark ? #ffffff1a : #0000001a;
+    property <color> muted: Theme.dark ? #a9aab0 : #64656b;
+    RemotePlastic {
+        fx: root.menu-x; fy: root.menu-y; fw: root.menu-w; fh: root.menu-h; t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        Text { x: 18px; y: 14px; height: 20px; text: "SETTINGS"; font-size: 13px; font-weight: 700; letter-spacing: 2.5px;
+            color: Theme.dark ? #ecece8 : #1f2024; vertical-alignment: center; }
+        Text { x: parent.width - 18px - self.width; y: 16px; width: self.preferred-width; height: 18px; text: "PNL-T05"; font-size: 10px; font-weight: 600; letter-spacing: 1.5px;
+            color: root.muted; vertical-alignment: center; }
+        Rectangle { x: 16px; y: 41px; width: parent.width - 32px; height: 1px; background: root.line; }
+        Text { x: 18px; y: 54px; height: 15px; text: "LOOK"; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: root.muted; vertical-alignment: center; }
+        Dropdown {
+            x: 16px; y: 75px; width: parent.width - 32px; options: root.data.looks; selected: root.data.look;
+            tk-raised: Theme.dark ? #3a3c42 : #e2e1dc; tk-menu: Theme.dark ? #34363b : #f7f6f3; tk-text: Theme.dark ? #ecece8 : #1f2024;
+            tk-line: root.line; tk-muted: root.muted; tk-pressed: Theme.dark ? #46484f : #d6d5cf;
+            picked(i) => { root.look-picked(i); }
+        }
+        TextButton { x: parent.width - 16px - 104px; y: 137px; width: 104px; text: "Done"; primary: true;
+            tk-text: Theme.dark ? #ecece8 : #1f2024; tk-on-text: Theme.dark ? #1b1c1f : #f2f1ed;
+            clicked => { root.close(); } }
+        // grip ridges: 132 × 13 px, a 2 px ridge every 5 px
+        for i in 3: Rectangle {
+            x: (parent.width - 132px) / 2; y: parent.height - 9px - 13px + i * 5px; width: 132px; height: 2px; border-radius: 1px;
+            background: Theme.dark ? #00000073 : #00000029;
+            Rectangle { y: 2px; height: 1px; background: Theme.dark ? #ffffff14 : #ffffff; }
+        }
+    }
+}
+
+// ==================================================================== 33.3 wall thermostat: the unit's own parts
+// the unit's plastic (dark #362e29 → #2a2420, light #f5f0e4 → #e8e1d1, radius 18) with a screw in each corner
+component WallPlastic inherits Rectangle {
+    in property <bool> screws: true;
+    RoundedGlass { width: parent.width; height: parent.height; radius: 18px;
+        top: Theme.dark ? #362e29 : #f5f0e4; bottom: Theme.dark ? #2a2420 : #e8e1d1; }
+    Rectangle { x: 18px; y: 0; width: parent.width - 36px; height: 1px; background: Theme.dark ? #fff0dc14 : #ffffff; }
+    TouchArea { }
+    // screws: 9 px, their slots at different angles
+    for sc in [{ x: 0, y: 0, a: 35 }, { x: 1, y: 0, a: -20 }, { x: 0, y: 1, a: 80 }, { x: 1, y: 1, a: 10 }]: Rectangle {
+        visible: root.screws;
+        x: 7px + sc.x * (root.width - 23px); y: 7px + sc.y * (root.height - 23px); width: 9px; height: 9px;
+        Rectangle { y: 1px; border-radius: 4.5px; background: #00000080; }
+        Rectangle { border-radius: 4.5px; background: Theme.dark ? #554c42 : #b3a998; }
+        Rectangle { x: 1.5px; y: 1px; width: 5px; height: 5px; border-radius: 2.5px; background: Theme.dark ? #8a8073 : #f2eee6; }
+        Path {
+            x: 0; y: 0; width: 9px; height: 9px; viewbox-width: 9; viewbox-height: 9; stroke: #00000099; stroke-width: 1.2px;
+            commands: "M " + (4.5 - 3 * Math.cos(sc.a * 1deg)) + " " + (4.5 - 3 * Math.sin(sc.a * 1deg)) + " L " + (4.5 + 3 * Math.cos(sc.a * 1deg)) + " " + (4.5 + 3 * Math.sin(sc.a * 1deg));
+        }
+    }
+    @children
+}
+
+// The rooms: the zone plate (printed "ZONES" over a hairline, two columns of zones divided by hairlines). Per zone a
+// pilot lamp (dark glass when off, Signal with a glow for the shown zone), the name 15/600 and the device lines, on the
+// right the unit's black readout with the humidity under it. A heavier drop (J-edge 100/320, at most 5 px past); on
+// landing the shown zone's lamp warms up from a dark red to Signal (220 ms). It goes up in 200 ms.
+component PlateZone inherits Rectangle {
+    in property <ClimateRoom> room;
+    in property <float> warm: 1;          // the shown zone's lamp: 0 cold (dark red) … 1 lit
+    in property <bool> last-row;
+    in property <bool> marked;
+    in property <int> marked-line: -1;
+    callback tapped(int);
+    property <bool> on: root.room.sel >= 0;
+    property <color> text: Theme.dark ? #efe6d6 : #3a3128;
+    property <color> muted: Theme.dark ? #b3a794 : #7a6d5c;
+    property <color> line: Theme.dark ? #ffecd21f : #503c2829;
+    background: root.marked && root.marked-line < 0 ? (Theme.dark ? #1a1512 : #d8cfbc) : transparent;
+    TouchArea { clicked => { root.tapped(-1); } }
+    if !root.last-row: Rectangle { y: parent.height - 1px; height: 1px; background: root.line; }
+    HorizontalLayout {
+        padding-left: 2px; padding-right: 2px; padding-top: 9px; padding-bottom: 9px; spacing: 9px;
+        // the pilot lamp
+        Rectangle {
+            width: 10px;
+            Rectangle {
+                y: 5px; width: 10px; height: 10px; border-radius: 5px;
+                property <color> lit: #6a2a14.mix(#FF4A1C, 1 - root.warm);
+                if root.on && root.warm > 0.5: Rectangle { x: -4px; y: -4px; width: 18px; height: 18px; border-radius: 9px; background: #FF4A1C33; }
+                if root.on && root.warm > 0.5: Rectangle { x: -2px; y: -2px; width: 14px; height: 14px; border-radius: 7px; background: #FF4A1C4d; }
+                Rectangle { x: -1.5px; y: -1.5px; width: 13px; height: 13px; border-radius: 6.5px; background: Theme.dark ? #00000059 : #503c2840; }
+                Rectangle { border-radius: 5px; background: root.on ? parent.lit : Theme.dark ? #4a2c22 : #cdbfae; }
+                Rectangle { x: 2px; y: 1px; width: 4px; height: 3px; border-radius: 2px; background: #ffffff22; }
+            }
+        }
+        VerticalLayout {
+            spacing: 0;
+            HorizontalLayout {
+                spacing: 4px;
+                Text { text: root.room.name; font-size: 15px; font-weight: 600; color: root.text; wrap: word-wrap; }
+                if root.room.outside: Icon { width: 16px; text: "\u{F0595}"; font-size: 15px; color: root.muted; vertical-alignment: center; }
+            }
+            for dl[j] in root.room.dev: DevLine {
+                glyph: root.room.dev-icon[j]; tint: TK.tints[root.room.dev-mode[j]]; text: dl; cur: root.room.sel == j;
+                ink: root.text; muted: root.muted; marked: root.marked && root.marked-line == j; mark: Theme.dark ? #1a1512 : #d8cfbc;
+                tapped => { root.tapped(j); }
+            }
+            Rectangle { vertical-stretch: 1; }
+        }
+        VerticalLayout {
+            spacing: 3px; alignment: start;
+            Rectangle {
+                width: rd.preferred-width + 14px; height: 25px; border-radius: 6px; background: #0f0c0b;
+                border-width: 1px; border-color: Theme.dark ? #fff0dc33 : #b7ad9b;
+                Rectangle { x: 2px; y: 1px; width: parent.width - 4px; height: 2px; background: #00000099; }
+                rd := Text { text: root.room.temp; font-size: 15px; font-weight: 500; color: #f4f1ea; horizontal-alignment: center; vertical-alignment: center; }
+            }
+            if root.room.hum != "": Text { text: root.room.hum; font-size: 11px; color: root.muted; horizontal-alignment: right; }
+        }
+    }
+}
+
+export component PlateRooms inherits MenuHost {
+    in property <[ClimateRoom]> rooms;
+    kind: 0; menu-w: 448px; in-ms: 700ms; out-ms: 200ms;
+    // padding 14 18 12, the head 19 + 2
+    need: 14px + 21px + grid.preferred-height + 12px;
+    property <length> col-w: (root.menu-w - 36px - 16px) / 2;
+    property <length> travel: root.menu-y + root.menu-h;
+    property <float> e: Jelly.edge(root.t-in, 100, 320);
+    property <float> warm: root.open ? clamp((root.t-in - 240) / 220, 0, 1) : 1;
+    property <int> nrows: Math.ceil(root.rooms.length / 2);
+    pick := RoomPick { }
+    changed shown => { if !root.shown { pick.clear(); } }
+    WallPlastic {
+        x: root.menu-x; width: root.menu-w; height: root.menu-h;
+        y: !root.open ? root.menu-y - root.travel * TK.ei(root.t-out / 200)
+            : root.e <= 1 ? root.menu-y - root.travel * (1 - root.e) : root.menu-y + Jelly.cap((root.e - 1) * root.travel / 1px, 5) * 1px;
+        Text { x: 22px; y: 14px; width: parent.width - 44px; height: 12px; text: "ZONES"; font-size: 11px; font-weight: 700; letter-spacing: 2.5px;
+            color: Theme.dark ? #c9bda9 : #6b5f50; horizontal-alignment: center; vertical-alignment: center; }
+        Rectangle { x: 22px; y: 33px; width: parent.width - 44px; height: 1px; background: Theme.dark ? #ffecd21f : #503c2829; }
+        Flickable {
+            x: 18px; y: 35px; width: parent.width - 36px; height: parent.height - 35px - 12px;
+            viewport-height: grid.preferred-height;
+            interactive: root.scrolls;
+            grid := VerticalLayout {
+                width: parent.width; height: self.preferred-height;
+                for r in root.nrows: HorizontalLayout {
+                    spacing: 16px;
+                    PlateZone { width: root.col-w; room: root.rooms[r * 2]; warm: root.warm; last-row: r == root.nrows - 1;
+                        marked: pick.cell == r * 2; marked-line: pick.line; tapped(j) => { pick.pick(root.rooms[r * 2], r * 2, j); } }
+                    if r * 2 + 1 < root.rooms.length: PlateZone { width: root.col-w; room: root.rooms[r * 2 + 1]; warm: root.warm; last-row: r == root.nrows - 1;
+                        marked: pick.cell == r * 2 + 1; marked-line: pick.line; tapped(j) => { pick.pick(root.rooms[r * 2 + 1], r * 2 + 1, j); } }
+                    if r * 2 + 1 >= root.rooms.length: Rectangle { width: root.col-w; }
+                }
+            }
+        }
+    }
+}
+
+// The settings: the hinged front door (the same plastic, a hinge line at the top with two knuckles, printed head and
+// labels). It falls open from its hinge, 90°·(t/230 ms)², hits its stop and bounces back 14°, then 5° (170 + 120 ms);
+// the visible height is H·sin(angle) (the content keeps its size, the frame grows); a shade over it at 0.7·cos(angle)
+// fades as it faces the viewer. It closes in 180 ms.
+export component DoorSettings inherits MenuHost {
+    in property <ThermoSettingsData> data;
+    callback look-picked(int);
+    kind: 1; in-ms: 520ms; out-ms: 180ms;
+    need: 24px + 21px + 6px + 15px + 6px + 48px + 8px + 62px + 12px;
+    property <float> ang: !root.open ? 90 * Math.cos(90deg * TK.ei(root.t-out / 180))
+        : root.t-in < 230 ? 90 * Math.pow(root.t-in / 230, 2)
+        : root.t-in < 400 ? 90 - 14 * Math.sin(180deg * (root.t-in - 230) / 170)
+        : root.t-in < 520 ? 90 - 5 * Math.sin(180deg * (root.t-in - 400) / 120) : 90;
+    property <color> print: Theme.dark ? #c9bda9 : #6b5f50;
+    property <color> line: Theme.dark ? #ffecd21f : #503c2829;
+    Rectangle {
+        x: root.menu-x; y: root.menu-y; width: root.menu-w; height: Math.max(1px, root.menu-h * Math.sin(root.ang * 1deg));
+        clip: root.ang < 89.9;
+        WallPlastic {
+            x: 0; y: 0; width: root.menu-w; height: root.menu-h;
+            // the hinge: a line with two knuckles
+            Rectangle { x: 16px; y: 8px; width: parent.width - 32px; height: 1px; background: Theme.dark ? #00000080 : #503c2859; }
+            Rectangle { x: 16px; y: 9px; width: parent.width - 32px; height: 1px; background: Theme.dark ? #fff0dc14 : #ffffff; }
+            for k in [0, 1]: RoundedGlass { x: k == 0 ? 56px : parent.width - 56px - 36px; y: 6px; width: 36px; height: 7px; radius: 3px;
+                top: Theme.dark ? #5d5248 : #d9d0c0; bottom: Theme.dark ? #3a322c : #b9ae9c; }
+            Text { x: 22px; y: 24px; width: parent.width - 44px; height: 12px; text: "SETTINGS"; font-size: 11px; font-weight: 700; letter-spacing: 2.5px;
+                color: root.print; horizontal-alignment: center; vertical-alignment: center; }
+            Rectangle { x: 22px; y: 43px; width: parent.width - 44px; height: 1px; background: root.line; }
+            Text { x: 20px; y: 53px; height: 15px; text: "LOOK"; font-size: 11px; font-weight: 700; letter-spacing: 1.5px; color: root.print; vertical-alignment: center; }
+            Dropdown {
+                x: 18px; y: 74px; width: parent.width - 36px; options: root.data.looks; selected: root.data.look;
+                tk-raised: Theme.dark ? #221c18 : #e3dbc9; tk-menu: Theme.dark ? #2a2420 : #f7f3ea; tk-text: Theme.dark ? #efe6d6 : #3a3128;
+                tk-line: root.line; tk-muted: Theme.dark ? #b3a794 : #7a6d5c; tk-pressed: Theme.dark ? #1a1512 : #d8cfbc;
+                picked(i) => { root.look-picked(i); }
+            }
+            TextButton { x: parent.width - 18px - 104px; y: 136px; width: 104px; text: "Done"; primary: true;
+                tk-text: Theme.dark ? #efe6d6 : #3a3128; tk-on-text: Theme.dark ? #221c18 : #f2ede1;
+                clicked => { root.close(); } }
+            // the shade while it swings
+            Rectangle { border-radius: 18px; background: #000000; opacity: 0.7 * Math.cos(root.ang * 1deg); }
+        }
+    }
+}
+
+// ==================================================================== 33.4 neon: the arcade screen, in the scene's colour
+// The rooms: one column, each row in its own arcade colour with a glow: a ▶ cursor for the shown room (blinks 1 s), the
+// name in caps (wraps), the device icons in their mode colour (bright and glowing while working, 55 % otherwise), the
+// temperature as the score; only the shown room spells its device lines out under it. A room pick blinks the row twice
+// in the tube colour (4 frames, 160 ms), then the screen switches off.
+component CrtRow inherits Rectangle {
+    in property <ClimateRoom> room;
+    in property <color> tone;
+    in property <color> tube;
+    in property <bool> cursor-on;
+    in property <bool> flash;
+    callback tapped(int);
+    property <bool> on: root.room.sel >= 0;
+    border-radius: 6px;
+    background: root.flash ? root.tube.with-alpha(0.55) : transparent;
+    TouchArea { clicked => { root.tapped(-1); } }
+    VerticalLayout {
+        padding: 6px; spacing: 0;
+        HorizontalLayout {
+            spacing: 10px;
+            ArcadeText { width: 12px; text: root.on && root.cursor-on ? "▶" : ""; font-size: 10px; color: root.tone; glow: root.tone; vertical-alignment: center; }
+            ArcadeText { text: root.room.name.to-uppercase(); font-size: 11px; color: root.tone; glow: root.tone; glow-k: 0.3; horizontal-stretch: 1; }
+            HorizontalLayout {
+                spacing: 4px; alignment: center;
+                for g[j] in root.room.dev-icon: GlowIcon { glyph: g; size: 15px;
+                    ink: TK.neons[root.room.dev-mode[j]].with-alpha(root.room.dev-busy[j] ? 1 : 0.55);
+                    glow: root.room.dev-busy[j] ? TK.neons[root.room.dev-mode[j]] : transparent; }
+                if root.room.outside: GlowIcon { glyph: "\u{F0595}"; size: 15px; ink: #ffffff; }
+            }
+            ArcadeText { text: root.room.temp; font-size: 13px; color: root.tone; glow: root.tone; glow-k: 0.3; horizontal-alignment: right; }
+        }
+        if root.on && root.room.dev.length > 0: VerticalLayout {
+            padding-left: 22px; padding-top: 3px;
+            for dl[j] in root.room.dev: DevLine {
+                glyph: root.room.dev-icon[j]; tint: TK.neons[root.room.dev-mode[j]]; text: dl; cur: root.room.sel == j;
+                ink: #ffffff; muted: #ffffffb8; mark: transparent;
+                tapped => { root.tapped(j); }
+            }
+        }
+    }
+}
+
+export component CrtRooms inherits MenuHost {
+    in property <[ClimateRoom]> rooms;
+    in property <color> tube;
+    kind: 0; menu-w: 448px; in-ms: 330ms; out-ms: 200ms;
+    need: scr.head-h + list.preferred-height + scr.foot-h;
+    property <bool> cursor-on: true;
+    Timer { interval: 500ms; running: root.open && root.t-in >= 330; triggered => { root.cursor-on = !root.cursor-on; } }
+    // the pick: the row blinks twice in whole 40 ms frames, then the device is shown and the screen switches off
+    property <int> cell: -1;
+    property <int> dev: -1;
+    property <int> frame;
+    Timer { interval: 40ms; running: root.dev >= 0; triggered => {
+        root.frame += 1;
+        if root.frame >= 4 { Act.act("thermo.room", root.dev); root.dev = -1; }
+    } }
+    changed shown => { if !root.shown { root.cell = -1; root.cursor-on = true; } }
+    scr := ArcadeScreen {
+        x: root.menu-x; y: root.menu-y; width: root.menu-w; height: root.menu-h;
+        title: "SELECT ROOM"; foot: true; tube: root.tube;
+        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-h; }
+        Flickable {
+            x: 0; y: 0; width: scr.body-w; height: scr.body-h;
+            viewport-height: list.preferred-height;
+            interactive: root.scrolls;
+            list := VerticalLayout {
+                width: parent.width; height: self.preferred-height;
+                spacing: 1px;
+                for rm[i] in root.rooms: CrtRow {
+                    room: rm; tone: Arcade.rows[Math.mod(i, 8)]; tube: root.tube; cursor-on: root.cursor-on;
+                    flash: i == root.cell && root.dev >= 0 && Math.mod(root.frame, 2) == 0;
+                    tapped(j) => {
+                        if rm.dev-index.length > 0 && root.dev < 0 {
+                            root.cell = i; root.frame = 0; root.dev = rm.dev-index[Math.max(0, j)];
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+// The options on the arcade screen: a row per option, the icon in front (26 px + 8 px gap), the steps as arcade blocks
+// (sent at once). It grows up from the pills, its bottom edge at y 398.
+component CrtOptRow inherits HorizontalLayout {
+    in property <string> glyph;
+    in property <[string]> items;
+    in property <int> cur;
+    in property <string> act;
+    in property <color> tube;
+    padding-left: 2px; padding-right: 2px; padding-top: 6px; padding-bottom: 6px; spacing: 8px;
+    VerticalLayout { alignment: start; padding-top: 12px;
+        GlowIcon { width: 26px; glyph: root.glyph; size: 21px; ink: #ffffff; glow: root.tube; } }
+    ArcadeBlocks { options: root.items; selected: root.cur; tube: root.tube; picked(i) => { Act.act(root.act, i); } }
+}
+
+export component CrtOptions inherits MenuHost {
+    in property <ClimateDev> d;
+    in property <color> tube;
+    kind: 1; in-ms: 330ms; out-ms: 200ms;
+    need: scr.head-h + col.preferred-height + scr.foot-h;
+    property <length> h: Math.min(root.need, 350px);
+    scr := ArcadeScreen {
+        x: root.menu-x; y: 398px - root.h; width: root.menu-w; height: root.h;
+        title: "OPTIONS"; tube: root.tube;
+        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-h; }
+        Flickable {
+            x: 0; y: 0; width: scr.body-w; height: scr.body-h;
+            viewport-height: col.preferred-height;
+            interactive: root.need > 350px;
+            col := VerticalLayout {
+                width: parent.width; height: self.preferred-height;
+                if root.d.fans.length > 0: CrtOptRow { glyph: "\u{F0210}"; items: root.d.fan-caps; cur: root.d.fan-i; act: "thermo.fan"; tube: root.tube; }
+                if root.d.swings.length > 0: CrtOptRow { glyph: "\u{F1C91}"; items: root.d.swing-caps; cur: root.d.swing-i; act: "thermo.swing"; tube: root.tube; }
+                if root.d.presets.length > 0: CrtOptRow { glyph: "\u{F032A}"; items: root.d.preset-caps; act: "thermo.preset"; tube: root.tube;
+                    cur: TK.index-of(root.d.presets, root.d.preset == "" ? "None" : root.d.preset); }
+            }
+        }
+    }
+}
+
+// The settings on the arcade screen: LOOK and SCENE as block rows with their label above, CARS ON THE ROAD as ON / OFF
+// blocks beside its label, Done a block. A new look or scene is applied after the blink.
+export component CrtSettings inherits MenuHost {
+    in property <ThermoSettingsData> data;
+    in property <color> tube;
+    callback look-picked(int);
+    kind: 1; in-ms: 330ms; out-ms: 200ms;
+    need: scr.head-h + col.preferred-height + scr.foot-h;
+    scr := ArcadeScreen {
+        x: root.menu-x; y: root.menu-y; width: root.menu-w; height: root.menu-h;
+        title: "SETTINGS"; tube: root.tube;
+        t-in: root.t-in; t-out: root.t-out; leaving: !root.open;
+        TouchArea { x: 0; y: 0; width: scr.body-w; height: scr.body-h; }
+        Flickable {
+            x: 0; y: 0; width: scr.body-w; height: scr.body-h;
+            viewport-height: col.preferred-height;
+            interactive: root.scrolls;
+            col := VerticalLayout {
+                width: parent.width; height: self.preferred-height;
+                VerticalLayout {
+                    padding-top: 8px; padding-bottom: 8px; padding-left: 2px; padding-right: 2px; spacing: 6px;
+                    ArcadeText { text: "LOOK"; color: #ffffffd1; }
+                    ArcadeBlocks {
+                        options: [root.data.looks[0].to-uppercase(), root.data.looks[1].to-uppercase(), root.data.looks[2].to-uppercase(), root.data.looks[3].to-uppercase()];
+                        selected: root.data.look; tube: root.tube;
+                        settled(i) => { root.look-picked(i); }
+                    }
+                }
+                VerticalLayout {
+                    padding-top: 8px; padding-bottom: 8px; padding-left: 2px; padding-right: 2px; spacing: 6px;
+                    ArcadeText { text: "SCENE"; color: #ffffffd1; }
+                    ArcadeBlocks {
+                        options: [root.data.scenes[0].to-uppercase(), root.data.scenes[1].to-uppercase(), root.data.scenes[2].to-uppercase(), root.data.scenes[3].to-uppercase()];
+                        selected: root.data.scene; tube: root.tube;
+                        settled(i) => { Act.act("thermo.scene", i); }
+                    }
+                }
+                HorizontalLayout {
+                    padding-top: 8px; padding-bottom: 8px; padding-left: 2px; padding-right: 2px; spacing: 10px;
+                    ArcadeText { text: root.data.cars-name.to-uppercase(); color: #ffffffd1; horizontal-stretch: 1; }
+                    ArcadeBlocks { width: 2 * 44px + 2px; options: ["ON", "OFF"]; selected: root.data.cars ? 0 : 1; tube: root.tube; align-right: true;
+                        settled(i) => { if (i == 0) != root.data.cars { Act.act("thermo.cars", ""); } } }
+                }
+                HorizontalLayout {
+                    padding-top: 8px; padding-left: 2px; padding-right: 2px; alignment: end;
+                    ArcadeBlock { text: "DONE"; tube: root.tube; clicked => { root.close(); } }
+                }
+            }
+        }
+    }
+}
