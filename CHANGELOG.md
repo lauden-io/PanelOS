@@ -2,7 +2,7 @@
 
 ## 0.0.7 (in development)
 
-**Upgrading from 0.0.6**: put the new UI bundle on the panel (new fonts and pictures) and update the integration, then restart Home Assistant.
+**Upgrading from 0.0.6**: put the new UI bundle (new fonts and pictures) and the new web bundle on the panel and update the integration, then restart Home Assistant ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-006)).
 
 ### Pages
 - Every page kind can be on the list any number of times, each page with its own settings and data: music pages each on its own player, quick controls pages with their own tiles, a cameras page per door with its own doorbell, calendar and to-do pages with their own calendars and lists, clock, timers and notifications pages each in their own look.
