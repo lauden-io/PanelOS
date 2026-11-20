@@ -89,15 +89,49 @@ fn tint(i: usize) -> Color {
     Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, c as u8)
 }
 
+/// An alarm's time of day in the panel's time format: "6:45" (24-hour, as the alarm looks write it) or "6:45 AM".
+pub fn hm(h: i32, m: i32) -> String {
+    hm_in(h, m, crate::clock::h24())
+}
+
+fn hm_in(h: i32, m: i32, h24: bool) -> String {
+    let (h, m) = (h.rem_euclid(24), m.rem_euclid(60));
+    if h24 {
+        format!("{h}:{m:02}")
+    } else {
+        format!("{}:{m:02} {}", if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
+    }
+}
+
+/// The days an alarm rings on, short: "Weekdays", "Mon–Thu, Sat", "Once"; three days or more in a row as a range.
 fn days_text(d: &[bool; 7]) -> String {
     let names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
     match d {
-        [true, true, true, true, true, true, true] => "Every day".into(),
-        [true, true, true, true, true, false, false] => "Weekdays".into(),
-        [false, false, false, false, false, true, true] => "Weekends".into(),
-        _ if d.iter().all(|x| !x) => "Once".into(),
-        _ => names.iter().zip(d).filter(|(_, on)| **on).map(|(n, _)| *n).collect::<Vec<_>>().join(", "),
+        [true, true, true, true, true, true, true] => return "Every day".into(),
+        [true, true, true, true, true, false, false] => return "Weekdays".into(),
+        [false, false, false, false, false, true, true] => return "Weekends".into(),
+        _ if d.iter().all(|x| !x) => return "Once".into(),
+        _ => {}
     }
+    let mut parts = Vec::new();
+    let mut i = 0;
+    while i < 7 {
+        if !d[i] {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i + 1 < 7 && d[i + 1] {
+            i += 1;
+        }
+        match i - start {
+            0 => parts.push(names[start].to_string()),
+            1 => parts.push(format!("{}, {}", names[start], names[i])),
+            _ => parts.push(format!("{}–{}", names[start], names[i])),
+        }
+        i += 1;
+    }
+    parts.join(", ")
 }
 
 /// Minutes from now to the alarm's next ring (None when it never rings).
@@ -126,7 +160,7 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
         .iter()
         .enumerate()
         .map(|(i, a)| AlarmItem {
-            time: format!("{}:{:02}", a.h, a.m).into(),
+            time: hm(a.h, a.m).into(),
             days: days_text(&a.days).into(),
             label: if a.label.is_empty() { "Alarm".into() } else { a.label.clone().into() },
             on: a.on,
@@ -144,17 +178,17 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
         Some((m, _, a)) => {
             ui.set_timers_next_h(a.h as f32 + a.m as f32 / 60.0);
             ui.set_timers_next_in(m as i32);
-            ui.set_timers_next_time(format!("{}:{:02}", a.h, a.m).into());
+            ui.set_timers_next_time(hm(a.h, a.m).into());
             ui.set_timers_next_label(if a.label.is_empty() { "Alarm".into() } else { a.label.clone().into() });
             let from = (a.h as i32 * 60 + a.m as i32 - 30).rem_euclid(1440);
-            ui.set_timers_dawn_from(format!("{}:{:02}", from / 60, from % 60).into());
+            ui.set_timers_dawn_from(hm(from / 60, from % 60).into());
         }
         None => {
             ui.set_timers_next_h(-1.0);
             ui.set_timers_next_in(-1);
         }
     }
-    let hours = |t: &str| t.split_once(':').and_then(|(h, m)| Some(h.parse::<f32>().ok()? + m.parse::<f32>().ok()? / 60.0));
+    let hours = |t: &str| crate::clock::parse_hm(t).map(|(h, m)| h as f32 + m as f32 / 60.0);
     let w = ui.get_weather();
     if let (Some(r), Some(st)) = (hours(w.sunrise.as_str()), hours(w.sunset.as_str())) {
         ui.set_timers_sunrise_h(r);
@@ -165,17 +199,37 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
             ui.set_timers_next_tint(tint(i));
             let (h, mm) = (m / 60, m % 60);
             let when = if h >= 24 { format!("in {} d {} h", h / 24, h % 24) } else if h > 0 { format!("in {h} h {mm} min") } else { format!("in {mm} min") };
-            format!("{}:{:02} · {when}", a.h, a.m)
+            format!("{} · {when}", hm(a.h, a.m))
         }
         None => String::new(),
     };
     if ui.get_timers_next_alarm().as_str() != text {
         ui.set_timers_next_alarm(text.into());
     }
+    // a snoozed alarm: the time of day it rings again (the looks' next-alarm lines show it), -1 none
+    let snooze_h = match &s.snooze {
+        Some((at, ..)) => {
+            let ring = t + at.saturating_duration_since(std::time::Instant::now()).as_secs() as i64;
+            let (h, m) = (local_format(ring, "%H").parse::<f32>().unwrap_or(0.0), local_format(ring, "%M").parse::<f32>().unwrap_or(0.0));
+            h + m / 60.0
+        }
+        None => -1.0,
+    };
+    if ui.get_timers_snooze_h() != snooze_h {
+        ui.set_timers_snooze_h(snooze_h);
+    }
 }
 
-/// Alarms that ring this minute (called when the minute turns): time, label, sound.
-pub fn due(s: &mut crate::UiState) -> Option<(String, String, String)> {
+/// The time of day now in the panel's time format and as hours of the day (a snoozed alarm rings with it: its own
+/// time has passed).
+pub fn now_hm() -> (String, f32) {
+    let t = now();
+    let (h, m) = (local_format(t, "%H").parse().unwrap_or(0), local_format(t, "%M").parse().unwrap_or(0));
+    (hm(h, m), h as f32 + m as f32 / 60.0)
+}
+
+/// Alarms that ring this minute (called when the minute turns): time, label, sound, the time as hours of the day.
+pub fn due(s: &mut crate::UiState) -> Option<(String, String, String, f32)> {
     let t = now();
     let wd = (local_format(t, "%u").parse::<usize>().unwrap_or(1) - 1).min(6);
     let (h, m) = (local_format(t, "%H").parse::<i32>().unwrap_or(-1), local_format(t, "%M").parse::<i32>().unwrap_or(-1));
@@ -184,7 +238,7 @@ pub fn due(s: &mut crate::UiState) -> Option<(String, String, String)> {
     for a in s.settings.alarms.iter_mut() {
         let once = a.days.iter().all(|x| !x);
         if a.on && a.h == h && a.m == m && (once || a.days[wd]) {
-            rang = Some((format!("{}:{:02}", a.h, a.m), if a.label.is_empty() { "Alarm".to_string() } else { a.label.clone() }, a.ring_tone()));
+            rang = Some((hm(a.h, a.m), if a.label.is_empty() { "Alarm".to_string() } else { a.label.clone() }, a.ring_tone(), a.h as f32 + a.m as f32 / 60.0));
             if once {
                 a.on = false;
                 changed = true;
@@ -255,7 +309,20 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 slint::Model::set_row_data(&days, n, !v);
             }
         }
-        "alarm.sound" => ui.set_timers_edit_sound(n as i32),
+        "alarm.sound" => {
+            ui.set_timers_edit_sound(n as i32);
+            // a designed sound plays once on the panel's speaker as it is picked (not over a ringing alarm or alert)
+            if n < 6 {
+                if let Some(samples) = crate::sounds::resolve(&format!("lib:{}", crate::sounds::alarm_lib(n as i32)), "birds") {
+                    let data: Vec<u8> = samples.iter().flat_map(|v| v.to_le_bytes()).collect();
+                    with_state(|s| {
+                        if s.ringing.is_none() && s.looping.is_none() {
+                            s.player.play(crate::voice::Sound::Pcm { rate: 48000, channels: 1, data });
+                        }
+                    });
+                }
+            }
+        }
         "alarm.info" => ui.set_timers_edit_info(!ui.get_timers_edit_info()),
         "alarm.label" => {
             // an empty label starts with a capital
@@ -350,7 +417,63 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             ui.set_timers_edit_keyboard(false);
             ui.set_timers_edit(false);
         }
+        // the page's settings in the alarm and stopwatch looks' menus: the functions (at least one stays on), the
+        // colours, the alarm look (the page options the integration keeps)
+        "alarms.functions" => {
+            let keys = ["alarm", "timer", "stopwatch"];
+            let mut on = [ui.get_timers_alarm_on(), ui.get_timers_timer_on(), ui.get_timers_watch_on()];
+            let Some(k) = keys.iter().position(|k| *k == value) else { return };
+            on[k] = !on[k];
+            if !on.iter().any(|x| *x) {
+                return;
+            }
+            ui.set_timers_alarm_on(on[0]);
+            ui.set_timers_timer_on(on[1]);
+            ui.set_timers_watch_on(on[2]);
+            let mode = ui.get_timers_mode().clamp(0, 2) as usize;
+            if !on[mode] {
+                ui.set_timers_mode(if on[1] { 1 } else if on[0] { 0 } else { 2 });
+            }
+            let list: Vec<&str> = keys.iter().zip(on).filter(|(_, o)| *o).map(|(k, _)| *k).collect();
+            crate::page_set(ui, "timers", None, serde_json::json!({ "functions": list }));
+        }
+        "alarms.colourful" => {
+            ui.set_timers_colourful(value == "1");
+            crate::page_set(ui, "timers", None, serde_json::json!({ "colourful": value == "1" }));
+        }
+        "alarms.look" => {
+            let look = value.parse::<i32>().unwrap_or(0).clamp(0, 4);
+            ui.set_timers_alarm_look(look);
+            crate::page_set(ui, "timers", None, serde_json::json!({ "alarm_look": look }));
+        }
         _ => {}
     }
     with_state(|s| refresh(ui, s));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn alarm_times() {
+        assert_eq!(hm_in(6, 45, true), "6:45");
+        assert_eq!(hm_in(18, 5, true), "18:05");
+        assert_eq!(hm_in(6, 45, false), "6:45 AM");
+        assert_eq!(hm_in(0, 0, false), "12:00 AM");
+        assert_eq!(hm_in(12, 30, false), "12:30 PM");
+        assert_eq!(hm_in(23, 59, false), "11:59 PM");
+    }
+
+    #[test]
+    fn alarm_days() {
+        assert_eq!(days_text(&[true; 7]), "Every day");
+        assert_eq!(days_text(&[false; 7]), "Once");
+        assert_eq!(days_text(&[true, true, true, true, true, false, false]), "Weekdays");
+        assert_eq!(days_text(&[false, false, false, false, false, true, true]), "Weekends");
+        assert_eq!(days_text(&[true, true, true, true, false, true, false]), "Mon–Thu, Sat");
+        assert_eq!(days_text(&[true, false, true, false, true, false, true]), "Mon, Wed, Fri, Sun");
+        assert_eq!(days_text(&[true, true, false, false, false, false, true]), "Mon, Tue, Sun");
+        assert_eq!(days_text(&[false, false, true, false, false, false, false]), "Wed");
+    }
 }

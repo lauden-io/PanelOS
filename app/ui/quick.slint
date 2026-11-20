@@ -1,10 +1,10 @@
-// Quick controls: the entities picked in the integration. Tap = toggle; long press = details in the tiles look
-// (the desk and the deck have none: the fader / the lever is the control). Looks: 0 tiles (grid 0 = 2 × 4 cards,
+// Quick controls: the entities picked in the integration. Tap = toggle; a long press shows a control's details in every
+// look (a tile, the desk's tape under a fader, the deck's plate under a lever). Looks: 0 tiles (grid 0 = 2 × 4 cards,
 // grid 1 = 4 × 4 with icon-only and wide cards mixed, set in the integration), 1 mixing desk, 2 flight deck.
 // Texts the app fills in: title, mood (a line: all off / some on / all on), placard (flight deck, may name the panel's
-// room), state words.
+// room), state words, the deck's group frames.
 import { Theme, Act } from "theme.slint";
-import { Icon, Dropdown } from "widgets.slint";
+import { Icon, Dropdown, MenuHost, PageMenu, Jelly, Toggle, TouchSlider, TextButton } from "widgets.slint";
 
 export struct QuickTile {
     name: string,
@@ -18,12 +18,29 @@ export struct QuickTile {
     short: string,      // the level as shown on sliders and readouts ("90 %", "0 %", "20 °C")
     gone: bool,         // unavailable
     tint: color,
-    led: color,         // flight deck lamp: the light's own colour for colour lights, else green
+    led: color,         // flight deck lamp: the light's own colour (its last one while off), else green
+    led-known: bool,    // false: a colour light whose colour the panel has not seen yet (its lamp waits for the light)
     col: int,           // 4 × 4 grid: cell and width (1 = icon only, 2 = card)
     row: int,
     w: int,
     tape: image,        // mixing desk: the embossed label (drawn by the app: tilt, worn edges)
     has-tape: bool,
+}
+
+// What a control's details can set (spec 41), filled in by the app when they open.
+export struct QuickDetails {
+    level: bool,        // a level slider (brightness, position, set temperature)
+    unit: int,          // its unit: 0 %, 1 °C
+    lo: float,          // a thermostat's range and step (°C)
+    hi: float,
+    step: float,
+    has-temp: bool,     // a colour temperature slider
+    temp: float,        // 0 warm … 1 cool
+    k-lo: float,        // its range in K
+    k-hi: float,
+    colour: int,        // the palette colour the light shows (-1: none of them)
+    effect: int,        // the effect it runs (-1: none)
+    moving: int,        // a cover: 0 opening, 2 closing, -1 still
 }
 
 // The throw of a real toggle switch (spec 23.2), θ from −1 (off) to +1 (on), t in ms since the tap: stiff at first
@@ -44,7 +61,7 @@ export global Throw {
     }
 }
 
-export struct QuickGroup { row: int, start: int, count: int, name: string }   // flight deck: a painted bracket over cells
+export struct QuickGroup { row: int, start: int, count: int, name: string }   // flight deck: a painted frame over cells
 
 component LevelBar inherits Rectangle {
     in property <float> value;
@@ -55,6 +72,617 @@ component LevelBar inherits Rectangle {
     Rectangle { x: 0; y: 0; width: max(4px, parent.width * root.value); height: parent.height; border-radius: 2px; background: root.tint; }
 }
 
+// The desk's and the deck's slider in their menus (41.2, 41.3): a slot with the look's cap, touched like the shared
+// slider (28.2): the finger's value while held, the app's otherwise. Style 1, the desk: an 8 px fader slot in the
+// control's colour with the desk's fader cap (18 × 36, a centre line); style 2, the deck: a 6 px slot with a green fill
+// and a ribbed T-handle (26 × 32). `warm-cool`: the colour temperature track (warm to cool), no fill.
+component RackSlider inherits Rectangle {
+    in property <int> style: 1;
+    in property <float> value;
+    in property <color> fill;
+    in property <bool> warm-cool;
+    callback changed(float, bool);
+    height: 44px;
+    property <length> th: root.style == 1 ? 8px : 6px;
+    property <length> kw: root.style == 1 ? 18px : 26px;
+    property <length> kh: root.style == 1 ? 36px : 32px;
+    property <float> drag-v;
+    property <bool> moving;
+    property <float> shown-raw: ta.pressed ? root.drag-v : root.value;
+    property <float> shown: root.shown-raw;
+    animate shown { duration: root.moving ? 0ms : 150ms; easing: ease-out; }
+    property <length> kx: (root.width - root.kw) * root.shown;
+    Rectangle {
+        x: 0; y: (root.height - root.th) / 2; width: root.width; height: root.th;
+        border-radius: root.style == 1 ? 2px : 1px;
+        background: root.warm-cool ? @linear-gradient(90deg, #ff9f43 0%, #dbe9ff 100%) : root.style == 1 ? #0c0d0e : #111214;
+        border-width: root.style == 2 && !root.warm-cool ? 1px : 0px;
+        border-color: #3a3d42;
+        if !root.warm-cool: Rectangle { x: 0; y: 0; width: root.kx + root.kw / 2; height: parent.height; border-radius: parent.border-radius; background: root.fill; }
+        // the desk's slot is sunk: a dark line along its top
+        if root.style == 1: Rectangle { x: 0; y: 0; width: parent.width; height: 1px; background: #000000a0; }
+    }
+    Rectangle {
+        x: root.kx; y: (root.height - root.kh) / 2; width: root.kw; height: root.kh; border-radius: 3px;
+        background: root.style == 1 ? @linear-gradient(180deg, #f1f3f5 0%, #9aa0a6 100%) : @linear-gradient(180deg, #e2e4e7 0%, #8a9097 100%);
+        drop-shadow-blur: 4px; drop-shadow-offset-y: 2px; drop-shadow-color: #00000099;
+        if root.style == 1: Rectangle { x: 2px; y: (parent.height - 2px) / 2; width: parent.width - 4px; height: 2px; background: #222222; }
+        if root.style == 2: Rectangle {
+            x: 4px; y: 6px; width: parent.width - 8px; height: 14px;
+            for k in 3: Rectangle { x: 0; y: k * 6px; width: parent.width; height: 2px; background: #00000073; }
+        }
+    }
+    ta := TouchArea {
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down {
+                root.moving = false;
+                root.drag-v = Math.max(0, Math.min(1, (self.mouse-x - root.kw / 2) / (self.width - root.kw)));
+                root.changed(root.drag-v, false);
+            } else if ev.kind == PointerEventKind.up {
+                root.changed(root.drag-v, true);
+            }
+        }
+        moved => {
+            root.moving = true;
+            root.drag-v = Math.max(0, Math.min(1, (self.mouse-x - root.kw / 2) / (self.width - root.kw)));
+            root.changed(root.drag-v, false);
+        }
+    }
+}
+
+// The quick controls' menus (spec 41) in the page's look: a control's details (kind 0: a long press on its tile, its
+// tape or its plate) and the page's settings (kind 1: the quick shade's page row). The host places them under the
+// status bar (x 16–464 from y 48), dims the page, closes them on a tap beside them and scrolls a body taller than y 468.
+// - Tiles: the brand card; the details grow out of the tile's box (220 ms ease-out) and shrink back into it (140 ms).
+// - Mixing desk: the channel's rack unit slides down into the rack (J-edge 60/220, 2 px past) and its keys light up
+//   left to right, 40 ms apart; it slides back up in 160 ms.
+// - Flight deck: an overhead sub-panel swings down from its top hinge (200 ms, falling like a flap), stops with a 1 px
+//   rattle and swings back up in 170 ms.
+component QuickMenus inherits Rectangle {
+    in property <int> look;
+    in property <bool> open;
+    in property <int> kind;
+    in property <int> grid;
+    in property <QuickTile> tile;
+    in property <int> index;
+    in property <QuickDetails> info;
+    in property <[color]> colours;
+    in property <[string]> effects;
+    in property <image> settings-tape;
+    in property <image> screw;
+    callback close();
+    callback pick-look(int);
+    out property <duration> out-ms: root.look == 0 ? (root.kind == 0 ? 140ms : 100ms) : root.look == 1 ? 160ms : 170ms;
+    property <duration> in-ms: root.look == 0 ? (root.kind == 0 ? 220ms : 140ms) : root.look == 1 ? 700ms : 360ms;
+    x: 0; y: 0; width: 480px; height: 480px;
+
+    // ---- what the details hold
+    property <bool> cover: root.tile.kind == 2;
+    property <bool> has-cols: root.colours.length > 0;
+    property <bool> has-fx: root.effects.length > 0;
+    property <bool> only: !root.info.level && !root.info.has-temp && !root.has-cols && !root.has-fx && !root.cover;
+    pure function lbl(a: string, b: string, c: string) -> string { root.look == 0 ? a : root.look == 1 ? b : c }
+
+    // ---- the look's frame: padding, the rows' x and width, the labels
+    property <length> pad-t: root.look == 0 ? 7px : root.look == 1 ? 10px : 16px;
+    property <length> pad-b: root.look == 0 ? 7px : root.look == 1 ? 12px : 14px;
+    property <length> ix: root.look == 0 ? 16px : root.look == 1 ? 36px : 24px;
+    property <length> iw: 448px - 2 * root.ix;
+    property <length> lab: root.look == 0 ? 19px : 14px;
+    property <length> lab-fs: root.look == 0 ? 14px : 10px;
+    property <int> lab-w: root.look == 0 ? 500 : 700;
+    property <length> lab-ls: root.look == 1 ? 1.4px : root.look == 2 ? 1.6px : 0px;
+    property <color> lab-c: root.look == 0 ? Theme.muted : root.look == 1 ? #8a9097 : #eef0f2;
+    property <string> mono: "DejaVu Sans Mono";
+    property <color> green: root.look == 1 ? #7cfc9a : #4cd964;
+
+    // ---- heights: the head, the rows, the whole menu (the host clamps it to y 468; the rows scroll beyond)
+    // tiles: the name wraps
+    nm-measure := Text { visible: false; width: 292px; text: root.tile.name; font-size: 18px; font-weight: 700; wrap: word-wrap; }
+    property <length> nm-h: nm-measure.preferred-height;
+    property <length> th-in: Math.max(44px, root.nm-h + 19px);
+    // deck: the plate's short name in one line; a long one in smaller letters, wrapped
+    property <string> plate-text: (root.tile.label != "" ? root.tile.label : root.tile.name).to-uppercase();
+    plate-measure := Text { visible: false; text: root.plate-text; font-size: 13px; font-weight: 800; letter-spacing: 2px; }
+    property <bool> plate-big: plate-measure.preferred-width > 176px;
+    plate-wrap := Text { visible: false; width: 176px; text: root.plate-text; font-size: 11px; font-weight: 800; letter-spacing: 1.5px; wrap: word-wrap; }
+    property <length> plate-w: root.plate-big ? 200px : plate-measure.preferred-width + 24px;
+    property <length> plate-h: root.plate-big ? Math.max(28px, plate-wrap.preferred-height + 10px) : 28px;
+    property <length> dh-in: Math.max(46px, root.plate-h);
+    // desk: the tape's text when the app has not drawn it (yet)
+    tape-measure := Text { visible: false; text: root.plate-text; font-size: 12px; font-weight: 800; letter-spacing: 1.4px; }
+    property <length> head-h: root.kind == 0
+        ? (root.look == 0 ? 16px + root.th-in : root.look == 1 ? 49px : root.dh-in + 10px)
+        : (root.look == 0 ? 41px : root.look == 1 ? 49px : 38px);
+    property <length> row-slider: 8px + root.lab + 6px + 44px + 8px;
+    property <length> row-cols: 8px + root.lab + 6px + 40px + 8px;
+    property <length> row-fx: 8px + root.lab + 6px + 48px + 8px;
+    property <length> row-keys: 8px + 48px + 8px;
+    property <length> row-only: root.look == 0 ? 41px : 38px;
+    property <length> y-temp: root.info.level ? root.row-slider : 0px;
+    property <length> y-cols: root.y-temp + (root.info.has-temp ? root.row-slider : 0px);
+    property <length> y-fx: root.y-cols + (root.has-cols ? root.row-cols : 0px);
+    property <length> y-keys: root.y-fx + (root.has-fx ? root.row-fx : 0px);
+    property <length> body-d: root.y-keys + (root.cover ? root.row-keys : 0px) + (root.only ? root.row-only : 0px);
+    property <length> done-h: root.look == 0 ? 62px : 58px;
+    property <length> body-h: root.kind == 0 ? root.body-d : root.row-fx + root.done-h;
+    property <length> need: root.pad-t + root.head-h + root.body-h + root.pad-b;
+    property <length> view-h: Math.max(40px, host.menu-h - root.pad-t - root.head-h - root.pad-b);
+
+    // ---- the state kept until Home Assistant follows (at most 3 s): the switch, the sliders, the colour, the effect,
+    // the cover's lit key
+    property <bool> on-pend;
+    property <bool> on-want;
+    property <bool> on-shown: root.on-pend ? root.on-want : root.tile.on;
+    property <bool> ha-on: root.tile.on;
+    changed ha-on => { root.on-pend = false; }
+    property <bool> lv-hold;
+    property <float> lv-v;
+    property <bool> lv-drag;
+    property <float> lv-d;
+    property <float> ha-lv: root.tile.value;
+    changed ha-lv => { root.lv-hold = false; }
+    property <float> lv-shown: root.lv-hold ? root.lv-v : root.tile.value;
+    property <float> lv-live: root.lv-drag ? root.lv-d : root.lv-shown;
+    property <bool> tp-hold;
+    property <float> tp-v;
+    property <bool> tp-drag;
+    property <float> tp-d;
+    property <float> ha-tp: root.info.temp;
+    changed ha-tp => { root.tp-hold = false; }
+    property <float> tp-shown: root.tp-hold ? root.tp-v : root.info.temp;
+    property <float> tp-live: root.tp-drag ? root.tp-d : root.tp-shown;
+    property <bool> col-pend;
+    property <int> col-want;
+    property <int> ha-col: root.info.colour;
+    changed ha-col => { root.col-pend = false; }
+    property <int> col-shown: root.col-pend ? root.col-want : root.info.colour;
+    property <bool> fx-pend;
+    property <int> fx-want;
+    property <int> ha-fx: root.info.effect;
+    changed ha-fx => { root.fx-pend = false; }
+    property <int> fx-shown: root.fx-pend ? root.fx-want : root.info.effect;
+    property <bool> cov-pend;
+    property <int> cov-want;
+    property <int> ha-cov: root.info.moving;
+    changed ha-cov => { root.cov-pend = false; }
+    property <int> cov-shown: root.cov-pend ? root.cov-want : root.info.moving;
+    property <bool> pending: root.on-pend || root.lv-hold || root.tp-hold || root.col-pend || root.fx-pend || root.cov-pend;
+    Timer {
+        interval: 3s;
+        running: root.pending;
+        triggered => {
+            root.on-pend = false; root.lv-hold = false; root.tp-hold = false; root.col-pend = false; root.fx-pend = false; root.cov-pend = false;
+        }
+    }
+    function forget() {
+        root.on-pend = false; root.lv-hold = false; root.tp-hold = false; root.col-pend = false; root.fx-pend = false; root.cov-pend = false;
+        root.lv-drag = false; root.tp-drag = false;
+    }
+    changed index => { root.forget(); }
+    changed open => { if root.open { root.forget(); } }
+    function toggle() {
+        root.on-want = !root.on-shown;
+        root.on-pend = true;
+        Act.act("quick.toggle", root.index);
+    }
+    function level-moved(v: float, final: bool) {
+        root.lv-d = v;
+        root.lv-drag = !final;
+        if final {
+            root.lv-v = v;
+            root.lv-hold = true;
+            Act.act("quick.level", root.index + ":" + v);
+        }
+    }
+    function temp-moved(v: float, final: bool) {
+        root.tp-d = v;
+        root.tp-drag = !final;
+        if final {
+            root.tp-v = v;
+            root.tp-hold = true;
+            Act.act("quick.temp", root.index + ":" + v);
+        }
+    }
+    function pick-colour(k: int) {
+        root.col-want = k;
+        root.col-pend = true;
+        Act.act("quick.colour", root.index + ":" + k);
+    }
+    function pick-effect(k: int) {
+        root.fx-want = k;
+        root.fx-pend = true;
+        Act.act("quick.effect", root.index + ":" + k);
+    }
+    function press-cover(n: int) {
+        root.cov-want = n == 1 ? -1 : n;
+        root.cov-pend = true;
+        Act.act("quick.cover", root.index + ":" + n);
+    }
+    // the values as the readouts show them: "45 %", "21.5 °C" (to the thermostat's step), "4800 K"
+    pure function tenths(n: int) -> string {
+        Math.mod(n, 10) == 0 ? Math.floor(n / 10) + " °C" : Math.floor(n / 10) + "." + Math.mod(n, 10) + " °C"
+    }
+    pure function celsius(t: float) -> string {
+        root.tenths(Math.round(Math.round(t / Math.max(0.1, root.info.step)) * Math.max(0.1, root.info.step) * 10))
+    }
+    property <string> lv-text: root.info.unit == 1 ? root.celsius(root.info.lo + root.lv-live * (root.info.hi - root.info.lo)) : Math.round(root.lv-live * 100) + " %";
+    property <string> tp-text: Math.round((root.info.k-lo + root.tp-live * (root.info.k-hi - root.info.k-lo)) / 100) * 100 + " K";
+
+    // ---- motion, from the host's clocks (they run only while a motion lasts)
+    pure function eo(u: float) -> float { 1 - Math.pow(1 - Math.max(0, Math.min(1, u)), 3) }
+    pure function ei(u: float) -> float { Math.pow(Math.max(0, Math.min(1, u)), 3) }
+    property <float> ti: host.t-in;
+    property <float> to: host.t-out;
+    // tiles: the details grow out of the tile's box; the settings card opens from 0.96 with a fade
+    property <float> grow: host.open ? root.eo(root.ti / 220) : 1 - root.ei(root.to / 140);
+    property <float> fade: host.open ? root.eo(root.ti / 140) : 1 - Math.min(1, root.to / 100);
+    property <float> pop: host.open ? 0.96 + 0.04 * root.eo(root.ti / 140) : 1;
+    property <length> bx: root.grid == 0 ? 20px + mod(root.index, 2) * 226px : 20px + root.tile.col * 113px;
+    property <length> by: root.grid == 0 ? 86px + floor(root.index / 2) * 88px : 86px + root.tile.row * 88px;
+    property <length> bw: root.grid == 0 || root.tile.w >= 2 ? 214px : 101px;
+    property <length> bh: 80px;
+    // desk: down into the rack from above the screen, 2 px past at most; back up
+    property <length> desk-h: host.menu-h + 48px;
+    property <length> desk-in: root.desk-h * (1 - Jelly.edge(root.ti, 60, 220));
+    property <length> desk-off: host.open
+        ? (root.desk-in > 0px ? root.desk-in : -Jelly.cap(-root.desk-in / 1px, 2) * 1px)
+        : root.desk-h * root.ei(root.to / 160);
+    // desk: key i is dark until it lights up (150 ms + 40 ms × i into the entrance)
+    pure function dark(i: int) -> bool { root.look == 1 && host.open && root.ti < 150 + 40 * i }
+    // deck: the flap's angle from the closed position (−90°) and the rattle when it stops
+    property <float> deck-u: Math.min(1, root.ti / 200);
+    property <float> deck-a: host.open ? -90 * (1 - root.deck-u * root.deck-u) : -90 * root.ei(root.to / 170);
+    property <float> deck-k: Math.max(0.02, Math.cos(root.deck-a * 1deg));
+    property <length> rattle: host.open && root.ti > 200 ? Math.sin(180deg * (root.ti - 200) / 26) * Math.pow(2.71828, -(root.ti - 200) / 50) * 1px : 0px;
+
+    host := MenuHost {
+        open: root.open;
+        kind: 1;
+        need: root.need;
+        in-ms: root.in-ms;
+        out-ms: root.out-ms;
+        close => { root.close(); }
+
+        if host.shown: frame := Rectangle {
+            property <bool> grows: root.look == 0 && root.kind == 0;
+            x: frame.grows ? root.bx + (16px - root.bx) * root.grow : 16px;
+            y: frame.grows ? root.by + (48px - root.by) * root.grow : root.look == 1 ? 48px - root.desk-off : root.look == 2 ? 48px + root.rattle : 48px;
+            width: frame.grows ? root.bw + (448px - root.bw) * root.grow : 448px;
+            height: frame.grows ? root.bh + (host.menu-h - root.bh) * root.grow : root.look == 2 ? host.menu-h * root.deck-k : host.menu-h;
+            opacity: frame.grows ? (host.open ? Math.min(1, 0.4 + root.grow) : root.grow) : root.look == 0 ? root.fade : 1;
+            transform-scale-x: root.look == 0 && root.kind == 1 ? root.pop : 1;
+            transform-scale-y: root.look == 0 && root.kind == 1 ? root.pop : 1;
+            transform-origin: { x: self.width / 2, y: 0px };
+            border-radius: root.look == 0 ? 14px : root.look == 1 ? 3px : 6px;
+            background: root.look == 0 ? Theme.surface
+                : root.look == 1 ? @linear-gradient(180deg, #26282b 0%, #1a1b1d 100%)
+                : @linear-gradient(180deg, #31353a 0%, #26292d 100%);
+            border-width: root.look == 0 ? 1px : root.look == 2 ? 2px : 0px;
+            border-color: root.look == 0 ? Theme.outline : #1d1f22;
+            drop-shadow-blur: root.look == 0 ? 32px : 30px;
+            drop-shadow-offset-y: root.look == 0 ? 12px : 16px;
+            drop-shadow-color: root.look == 0 ? #00000073 : #000000a6;
+            // a tap on the menu is not a tap beside it
+            TouchArea { }
+            // deck: the double edge (a dark rim, a light line inside it)
+            if root.look == 2: Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; border-radius: 4px; border-width: 1px; border-color: #3b3f44; }
+            // desk: a light line along the top edge
+            if root.look == 1: Rectangle { x: 0; y: 0; width: parent.width; height: 1px; background: #ffffff14; }
+
+            // everything inside at its full size; scaled with the growing card (tiles) or the swinging flap (deck), and
+            // cut to the frame while it grows or swings
+            Rectangle {
+                clip: true;
+                content := Rectangle {
+                    x: 0; y: 0; width: 448px; height: host.menu-h;
+                    transform-scale-x: frame.grows ? frame.width / 448px : 1;
+                    transform-scale-y: frame.grows ? frame.height / host.menu-h : root.look == 2 ? root.deck-k : 1;
+                    transform-origin: { x: 0px, y: 0px };
+
+                    // desk: the rack ears, two screws each
+                    if root.look == 1: Rectangle {
+                        Rectangle {
+                            x: 0; y: 0; width: 22px; height: host.menu-h;
+                            background: @linear-gradient(90deg, #3a3c40 0%, #2a2c2f 100%);
+                            Rectangle { x: parent.width - 1px; y: 0; width: 1px; height: parent.height; background: #111111; }
+                            Image { x: 6px; y: 10px; width: 10px; height: 10px; source: root.screw; }
+                            Image { x: 6px; y: parent.height - 20px; width: 10px; height: 10px; source: root.screw; transform-rotation: 70deg; }
+                        }
+                        Rectangle {
+                            x: 426px; y: 0; width: 22px; height: host.menu-h;
+                            background: @linear-gradient(90deg, #3a3c40 0%, #2a2c2f 100%);
+                            Rectangle { x: 0; y: 0; width: 1px; height: parent.height; background: #111111; }
+                            Image { x: 6px; y: 10px; width: 10px; height: 10px; source: root.screw; transform-rotation: 25deg; }
+                            Image { x: 6px; y: parent.height - 20px; width: 10px; height: 10px; source: root.screw; transform-rotation: -40deg; }
+                        }
+                    }
+                    // deck: four screws, each at its own angle
+                    if root.look == 2: Rectangle {
+                        Image { x: 7px; y: 7px; width: 12px; height: 12px; source: root.screw; transform-rotation: 35deg; }
+                        Image { x: 448px - 19px; y: 7px; width: 12px; height: 12px; source: root.screw; transform-rotation: -15deg; }
+                        Image { x: 7px; y: host.menu-h - 19px; width: 12px; height: 12px; source: root.screw; transform-rotation: 80deg; }
+                        Image { x: 448px - 19px; y: host.menu-h - 19px; width: 12px; height: 12px; source: root.screw; transform-rotation: 10deg; }
+                    }
+
+                    // ================================================================ details: the head
+                    // tiles: the disc in the control's colour, the name (wraps), the state, the switch
+                    if root.kind == 0 && root.look == 0: Rectangle {
+                        Rectangle {
+                            x: 16px; y: root.pad-t + 10px + (root.th-in - 44px) / 2; width: 44px; height: 44px; border-radius: 22px;
+                            background: root.tile.gone ? Theme.text.with-alpha(0.08) : root.on-shown ? root.tile.tint : Theme.text.with-alpha(0.10);
+                            animate background { duration: 120ms; easing: ease-out; }
+                            Icon { text: root.tile.icon; font-size: 24px; color: root.on-shown && !root.tile.gone ? #ffffff : Theme.text; }
+                        }
+                        Text {
+                            x: 72px; y: root.pad-t + 10px + (root.th-in - root.nm-h - 19px) / 2; width: 292px; height: root.nm-h;
+                            text: root.tile.name; font-size: 18px; font-weight: 700; color: Theme.text; wrap: word-wrap;
+                        }
+                        Text {
+                            x: 72px; y: root.pad-t + 10px + (root.th-in - root.nm-h - 19px) / 2 + root.nm-h; width: 292px; height: 19px;
+                            text: root.tile.state; font-size: 14px; color: Theme.muted; vertical-alignment: center;
+                        }
+                        if !root.cover: Toggle { x: 376px; y: root.pad-t + 10px + (root.th-in - 32px) / 2; on: root.on-shown; toggled => { root.toggle(); } }
+                    }
+                    // desk: "CH 3", the channel's own tape, the green readout, the lit ON key
+                    if root.kind == 0 && root.look == 1: dh := Rectangle {
+                        ch := Text {
+                            x: 34px; y: root.pad-t; height: 34px; text: "CH " + (root.index + 1);
+                            font-family: root.mono; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #adb5bd; vertical-alignment: center;
+                        }
+                        property <length> tape-x: 34px + ch.preferred-width + 10px;
+                        property <length> tape-w: root.tile.has-tape ? Math.max(0px, root.tile.tape.width * 1px - 12px) : tape-measure.preferred-width + 20px;
+                        if root.tile.has-tape: Image {
+                            x: dh.tape-x - 6px; y: root.pad-t + (34px - self.height) / 2;
+                            width: root.tile.tape.width * 1px; height: root.tile.tape.height * 1px; source: root.tile.tape;
+                        }
+                        if !root.tile.has-tape: Rectangle {
+                            x: dh.tape-x; y: root.pad-t + 7px; width: dh.tape-w; height: 20px; background: #2456a6;
+                            Text { text: root.plate-text; font-size: 12px; font-weight: 800; letter-spacing: 1.4px; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+                        }
+                        Text {
+                            x: dh.tape-x + dh.tape-w + 10px; y: root.pad-t; width: Math.max(20px, (root.cover ? 412px : 348px) - self.x); height: 34px;
+                            text: root.tile.state; font-family: root.mono; font-size: 13px; font-weight: 600; color: #7cfc9a;
+                            vertical-alignment: center; wrap: word-wrap;
+                        }
+                        if !root.cover: Rectangle {
+                            x: 358px; y: root.pad-t; width: 56px; height: 34px; border-radius: 4px;
+                            background: root.on-shown ? root.tile.tint : #2e3034;
+                            drop-shadow-blur: root.on-shown ? 12px : 0px; drop-shadow-color: root.tile.tint.with-alpha(0.6);
+                            Rectangle { x: 0; y: parent.height - 2px; width: parent.width; height: 2px; background: #00000066; }
+                            Text { text: "ON"; font-size: 12px; font-weight: 800; letter-spacing: 1px; color: root.on-shown ? #111111 : #6b6f75; }
+                            on-ta := TouchArea { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; clicked => { root.toggle(); } }
+                            if on-ta.pressed: Rectangle { border-radius: 4px; background: #00000033; }
+                            if root.dark(0): Rectangle { border-radius: 4px; background: #000000a6; }
+                        }
+                        Rectangle { x: 34px; y: root.pad-t + 44px; width: 380px; height: 1px; background: #34363a; }
+                    }
+                    // deck: the black plate with the short name, the state in green, the PWR push-button
+                    if root.kind == 0 && root.look == 2: Rectangle {
+                        Rectangle {
+                            x: 24px; y: root.pad-t + (root.dh-in - root.plate-h) / 2; width: root.plate-w; height: root.plate-h;
+                            border-radius: 2px; background: #111214; border-width: 1px; border-color: #3a3d42;
+                            Text {
+                                x: 12px; width: parent.width - 24px; text: root.plate-text; font-size: root.plate-big ? 11px : 13px; font-weight: 800;
+                                letter-spacing: root.plate-big ? 1.5px : 2px; color: #ffffff; horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+                            }
+                        }
+                        Text {
+                            x: 24px + root.plate-w + 12px; y: root.pad-t; width: Math.max(20px, (root.cover ? 424px : 346px) - self.x); height: root.dh-in;
+                            text: root.tile.state.to-uppercase(); font-family: root.mono; font-size: 12px; font-weight: 700; letter-spacing: 1px;
+                            color: #4cd964; vertical-alignment: center; wrap: word-wrap;
+                        }
+                        if !root.cover: Rectangle {
+                            x: 358px; y: root.pad-t + (root.dh-in - 46px) / 2; width: 66px; height: 46px; border-radius: 3px;
+                            background: pwr.pressed ? #24272b : #1a1c1f; border-width: 2px; border-color: #3a3d42;
+                            Text { y: 9px; width: parent.width; height: 14px; text: "PWR"; font-size: 10px; font-weight: 800; letter-spacing: 1px; color: #8a9097;
+                                horizontal-alignment: center; vertical-alignment: center; }
+                            Text { y: 24px; width: parent.width; height: 12px; text: "ON"; font-size: 9px; font-weight: 800; letter-spacing: 1px;
+                                color: root.on-shown ? #4cd964 : #3a3d42; horizontal-alignment: center; vertical-alignment: center; }
+                            pwr := TouchArea { clicked => { root.toggle(); } }
+                        }
+                    }
+
+                    // ================================================================ details: the rows
+                    if root.kind == 0: Flickable {
+                        x: 0; y: root.pad-t + root.head-h; width: 448px; height: root.view-h;
+                        viewport-width: 448px; viewport-height: root.body-h;
+                        interactive: root.body-h > root.view-h + 0.5px;
+
+                        // the level with its unit (brightness, position, set temperature)
+                        if root.info.level: Rectangle {
+                            x: 0; y: 0; width: 448px; height: root.row-slider;
+                            Text {
+                                x: root.ix; y: 8px; width: root.iw; height: root.lab;
+                                text: root.lbl(root.cover ? "Position" : root.info.unit == 1 ? "Set temperature" : "Brightness",
+                                    root.cover ? "POSITION" : root.info.unit == 1 ? "TEMP" : "LEVEL",
+                                    root.cover ? "POSITION" : root.info.unit == 1 ? "SET TEMP" : "DIM");
+                                font-size: root.lab-fs; font-weight: root.lab-w; letter-spacing: root.lab-ls; color: root.lab-c; vertical-alignment: center;
+                            }
+                            if root.look == 0: TouchSlider {
+                                x: root.ix; y: 8px + root.lab + 6px; width: root.iw - 76px; value: root.lv-shown; bubble-text: root.lv-text;
+                                changed(v, f) => { root.level-moved(v, f); }
+                            }
+                            if root.look > 0: RackSlider {
+                                x: root.ix; y: 8px + root.lab + 6px; width: root.iw - 76px; style: root.look; value: root.lv-shown;
+                                fill: root.look == 1 ? root.tile.tint.mix(#000000, 0.75) : #4cd964;
+                                changed(v, f) => { root.level-moved(v, f); }
+                            }
+                            Text {
+                                x: root.ix + root.iw - 64px; y: 8px + root.lab + 6px; width: 64px; height: 44px; text: root.lv-text;
+                                font-family: root.look == 0 ? "Noto Sans" : root.mono; font-size: root.look == 0 ? 15px : 13px; font-weight: root.look == 2 ? 700 : 600;
+                                color: root.look == 0 ? Theme.text : root.green; horizontal-alignment: right; vertical-alignment: center;
+                            }
+                        }
+                        // colour temperature: the track runs warm to cool
+                        if root.info.has-temp: Rectangle {
+                            x: 0; y: root.y-temp; width: 448px; height: root.row-slider;
+                            Text {
+                                x: root.ix; y: 8px; width: root.iw; height: root.lab; text: root.lbl("Colour temperature", "WARM–COOL", "COLOUR TEMP");
+                                font-size: root.lab-fs; font-weight: root.lab-w; letter-spacing: root.lab-ls; color: root.lab-c; vertical-alignment: center;
+                            }
+                            if root.look == 0: TouchSlider {
+                                x: root.ix; y: 8px + root.lab + 6px; width: root.iw - 76px; value: root.tp-shown; bubble-text: root.tp-text;
+                                has-gradient: true; gradient: @linear-gradient(90deg, #ff9f43 0%, #dbe9ff 100%);
+                                changed(v, f) => { root.temp-moved(v, f); }
+                            }
+                            if root.look > 0: RackSlider {
+                                x: root.ix; y: 8px + root.lab + 6px; width: root.iw - 76px; style: root.look; value: root.tp-shown; warm-cool: true;
+                                changed(v, f) => { root.temp-moved(v, f); }
+                            }
+                            Text {
+                                x: root.ix + root.iw - 64px; y: 8px + root.lab + 6px; width: 64px; height: 44px; text: root.tp-text;
+                                font-family: root.look == 0 ? "Noto Sans" : root.mono; font-size: root.look == 0 ? 15px : 13px; font-weight: root.look == 2 ? 700 : 600;
+                                color: root.look == 0 ? Theme.text : root.green; horizontal-alignment: right; vertical-alignment: center;
+                            }
+                        }
+                        // colours: discs (tiles), lit rubber keys (desk), square buttons with a lit edge (deck); the shown one marked
+                        if root.has-cols: Rectangle {
+                            x: 0; y: root.y-cols; width: 448px; height: root.row-cols;
+                            Text {
+                                x: root.ix; y: 8px; width: root.iw; height: root.lab; text: root.lbl("Colour", "COLOUR", "COLOUR");
+                                font-size: root.lab-fs; font-weight: root.lab-w; letter-spacing: root.lab-ls; color: root.lab-c; vertical-alignment: center;
+                            }
+                            for c[k] in root.colours: Rectangle {
+                                x: root.ix + k * 50px; y: 8px + root.lab + 6px; width: 40px; height: 40px;
+                                border-radius: root.look == 0 ? 20px : root.look == 1 ? 4px : 3px;
+                                background: c;
+                                border-width: root.look == 2 ? 2px : root.look == 0 ? 1px : 0px;
+                                border-color: root.look == 2 ? (k == root.col-shown ? #eef0f2 : #3a3d42) : #ffffff2e;
+                                drop-shadow-blur: root.look == 0 ? 0px : k == root.col-shown ? 12px : 8px;
+                                drop-shadow-color: c.with-alpha(root.look == 1 ? (k == root.col-shown ? 0.6 : 0.45) : 0.4);
+                                if root.look == 1: Rectangle { x: 0; y: parent.height - 2px; width: parent.width; height: 2px; background: #00000059; }
+                                if k == root.col-shown && root.look == 0: Rectangle {
+                                    x: -4px; y: -4px; width: 48px; height: 48px; border-radius: 24px; border-width: 3px; border-color: Theme.text;
+                                }
+                                if k == root.col-shown && root.look == 1: Rectangle {
+                                    x: -2px; y: -2px; width: 44px; height: 44px; border-radius: 6px; border-width: 2px; border-color: #e9ecef;
+                                }
+                                col-ta := TouchArea { x: -5px; y: -2px; width: parent.width + 10px; height: parent.height + 4px; clicked => { root.pick-colour(k); } }
+                                if col-ta.pressed: Rectangle { border-radius: parent.border-radius; background: #0000002e; }
+                                if root.dark(k + 1): Rectangle { border-radius: parent.border-radius; background: #000000a6; }
+                            }
+                        }
+                        // the effects the light offers (Home Assistant's names), in a dropdown in the look's colours
+                        if root.has-fx: Rectangle {
+                            x: 0; y: root.y-fx; width: 448px; height: root.row-fx;
+                            Text {
+                                x: root.ix; y: 8px; width: root.iw; height: root.lab; text: root.lbl("Effect", "EFFECT", "EFFECT");
+                                font-size: root.lab-fs; font-weight: root.lab-w; letter-spacing: root.lab-ls; color: root.lab-c; vertical-alignment: center;
+                            }
+                            Dropdown {
+                                x: root.ix; y: 8px + root.lab + 6px; width: root.iw;
+                                options: root.effects; selected: root.fx-shown; placeholder: root.look == 2 ? "NONE" : "None";
+                                tk-raised: root.look == 0 ? Theme.surface-raised : root.look == 1 ? #0c0d0e : #111214;
+                                tk-line: root.look == 0 ? Theme.outline : root.look == 1 ? #34363a : #45484e;
+                                tk-text: root.look == 0 ? Theme.text : root.look == 1 ? #7cfc9a : #eef0f2;
+                                tk-muted: root.look == 0 ? Theme.muted : root.look == 1 ? #adb5bd : #b7bcc2;
+                                tk-menu: root.look == 0 ? Theme.surface-raised : root.look == 1 ? #1b1c1f : #24272b;
+                                tk-pressed: root.look == 0 ? Theme.surface-pressed : root.look == 1 ? #2e3034 : #3a3d42;
+                                tk-accent: root.look == 0 ? Theme.accent : root.green;
+                                picked(k) => { root.pick-effect(k); }
+                            }
+                        }
+                        // a cover's keys: open, stop, close (the key of the way it moves is lit)
+                        if root.cover: Rectangle {
+                            x: 0; y: root.y-keys; width: 448px; height: root.row-keys;
+                            for n in 3: key := Rectangle {
+                                property <bool> lit: root.cov-shown == n && n != 1;
+                                x: root.ix + n * (root.iw + 10px) / 3; y: 8px; width: (root.iw - 20px) / 3; height: 48px;
+                                border-radius: root.look == 0 ? 24px : root.look == 1 ? 4px : 3px;
+                                background: root.look == 0 ? (key.lit ? root.tile.tint : cov-ta.pressed ? Theme.surface-pressed : Theme.surface-raised)
+                                    : root.look == 1 ? (key.lit ? root.tile.tint : #2e3034) : #1a1c1f;
+                                border-width: root.look == 2 ? 2px : 0px;
+                                border-color: #3a3d42;
+                                if root.look == 1: Rectangle { x: 0; y: parent.height - 2px; width: parent.width; height: 2px; background: #00000066; }
+                                if root.look == 0: HorizontalLayout {
+                                    alignment: center; spacing: 8px;
+                                    Icon { text: n == 0 ? "\u{F005D}" : n == 1 ? "\u{F04DB}" : "\u{F0045}"; font-size: 24px; vertical-alignment: center;
+                                        color: key.lit ? #ffffff : Theme.text; }
+                                    Text { text: n == 0 ? "Open" : n == 1 ? "Stop" : "Close"; font-size: 15px; font-weight: 600; vertical-alignment: center;
+                                        color: key.lit ? #ffffff : Theme.text; }
+                                }
+                                if root.look == 1: Icon { text: n == 0 ? "\u{F005D}" : n == 1 ? "\u{F04DB}" : "\u{F0045}"; font-size: 20px;
+                                    color: key.lit ? #111111 : #e9ecef; }
+                                if root.look == 2: Text { text: n == 0 ? "OPEN" : n == 1 ? "STOP" : "CLOSE"; font-size: 12px; font-weight: 800; letter-spacing: 1.2px;
+                                    color: key.lit ? #ffb21e : #8a9097; horizontal-alignment: center; vertical-alignment: center; }
+                                cov-ta := TouchArea { clicked => { root.press-cover(n); } }
+                                if root.look > 0 && cov-ta.pressed: Rectangle { border-radius: parent.border-radius; background: #00000040; }
+                                if root.dark(n + 1): Rectangle { border-radius: parent.border-radius; background: #000000a6; }
+                            }
+                        }
+                        // nothing but on and off
+                        if root.only: Text {
+                            x: root.ix; y: 8px; width: root.iw; height: root.row-only - 8px;
+                            text: root.lbl("This one only switches on and off.", "ON / OFF ONLY", "ON / OFF ONLY");
+                            font-family: root.look == 0 ? "Noto Sans" : root.mono; font-size: root.look == 0 ? 14px : 12px;
+                            font-weight: root.look == 0 ? 400 : root.look == 1 ? 600 : 700; letter-spacing: root.look == 2 ? 1px : 0px;
+                            color: root.look == 0 ? Theme.muted : root.green; wrap: word-wrap;
+                        }
+                    }
+
+                    // ================================================================ settings: the look (41: the grid, the
+                    // controls, their names and places stay in the integration)
+                    if root.kind == 1 && root.look == 0: Text {
+                        x: 16px; y: root.pad-t + 10px; height: 27px; text: "Quick controls";
+                        font-family: Theme.heading-family; font-size: 20px; font-weight: 500; color: Theme.text; vertical-alignment: center;
+                    }
+                    if root.kind == 1 && root.look == 1: Rectangle {
+                        if root.settings-tape.width > 0: Image {
+                            x: 28px; y: root.pad-t + (34px - self.height) / 2;
+                            width: root.settings-tape.width * 1px; height: root.settings-tape.height * 1px; source: root.settings-tape;
+                        }
+                        if root.settings-tape.width == 0: Rectangle {
+                            x: 34px; y: root.pad-t + 7px; width: st.preferred-width + 20px; height: 20px; background: #2456a6;
+                            st := Text { text: "SETTINGS"; font-size: 12px; font-weight: 800; letter-spacing: 1.4px; color: #ffffff; }
+                        }
+                        Rectangle { x: 34px; y: root.pad-t + 44px; width: 380px; height: 1px; background: #34363a; }
+                    }
+                    if root.kind == 1 && root.look == 2: Rectangle {
+                        x: (448px - self.width) / 2; y: root.pad-t; width: sp.preferred-width + 24px; height: 28px;
+                        border-radius: 2px; background: #111214; border-width: 1px; border-color: #3a3d42;
+                        sp := Text { text: "SETTINGS"; font-size: 13px; font-weight: 800; letter-spacing: 2px; color: #ffffff; }
+                    }
+                    if root.kind == 1: Rectangle {
+                        x: 0; y: root.pad-t + root.head-h; width: 448px; height: root.row-fx;
+                        Text {
+                            x: root.ix; y: 8px; width: root.iw; height: root.lab; text: root.lbl("Look", "LOOK", "LOOK");
+                            font-size: root.lab-fs; font-weight: root.lab-w; letter-spacing: root.lab-ls; color: root.lab-c; vertical-alignment: center;
+                        }
+                        Dropdown {
+                            x: root.ix; y: 8px + root.lab + 6px; width: root.iw;
+                            options: root.look == 2 ? ["TILES", "MIXING DESK", "FLIGHT DECK"] : ["Tiles", "Mixing desk", "Flight deck"];
+                            selected: root.look;
+                            tk-raised: root.look == 0 ? Theme.surface-raised : root.look == 1 ? #0c0d0e : #111214;
+                            tk-line: root.look == 0 ? Theme.outline : root.look == 1 ? #34363a : #45484e;
+                            tk-text: root.look == 0 ? Theme.text : root.look == 1 ? #7cfc9a : #eef0f2;
+                            tk-muted: root.look == 0 ? Theme.muted : root.look == 1 ? #adb5bd : #b7bcc2;
+                            tk-menu: root.look == 0 ? Theme.surface-raised : root.look == 1 ? #1b1c1f : #24272b;
+                            tk-pressed: root.look == 0 ? Theme.surface-pressed : root.look == 1 ? #2e3034 : #3a3d42;
+                            tk-accent: root.look == 0 ? Theme.accent : root.green;
+                            picked(k) => { root.pick-look(k); }
+                        }
+                    }
+                    if root.kind == 1 && root.look == 0: TextButton {
+                        x: 448px - 16px - 96px; y: root.pad-t + root.head-h + root.row-fx + 6px; width: 96px;
+                        text: "Done"; primary: true; clicked => { root.close(); }
+                    }
+                    if root.kind == 1 && root.look > 0: Rectangle {
+                        x: root.look == 1 ? 448px - 36px - 86px : 448px - 24px - 96px; y: root.pad-t + root.head-h + root.row-fx + 8px;
+                        width: root.look == 1 ? 86px : 96px; height: 46px; border-radius: root.look == 1 ? 4px : 3px;
+                        background: done-ta.pressed ? (root.look == 1 ? #c9ced3 : #cfd2d6) : (root.look == 1 ? #e9ecef : #eef0f2);
+                        Text { text: root.look == 1 ? "Done" : "DONE"; font-size: 16px; font-weight: root.look == 1 ? 600 : 700;
+                            letter-spacing: root.look == 2 ? 1px : 0px; color: #111111; }
+                        done-ta := TouchArea { clicked => { root.close(); } }
+                    }
+                }
+            }
+            // deck: the flap darkens while it hangs at an angle
+            if root.look == 2 && root.deck-k < 0.999: Rectangle { background: #000000; opacity: 0.55 * (1 - root.deck-k); }
+        }
+    }
+}
+
 export component QuickPage inherits Rectangle {
     in property <int> look;
     in property <int> grid;
@@ -63,13 +691,17 @@ export component QuickPage inherits Rectangle {
     in property <string> mood;
     in property <string> placard;
     in property <[QuickGroup]> groups;
-    in property <bool> sheet;
+    // the menus: a control's details (`sheet`, the app fills in what they show) and the page's settings
+    in-out property <bool> sheet;
+    in-out property <bool> settings;
     in property <QuickTile> sheet-tile;
-    in property <int> sheet-index;              // which tile the sheet shows (for its taps)
-    in property <float> sheet-temp: -1;          // colour temperature 0 (warm) … 1 (cool); below 0: none
-    in property <string> sheet-temp-text;
+    in property <int> sheet-index;              // which control the details show (for their taps)
+    in property <QuickDetails> details;
     in property <[color]> sheet-colours;
     in property <[string]> sheet-effects;
+    in property <image> settings-tape;          // mixing desk: "SETTINGS" on the desk's tape
+    // the page is the one on screen (its settings open from the quick shade's page row; its menus close when it goes)
+    in property <bool> on-screen;
     in property <image> mixer-panel;
     in property <image> fader;
     in property <[image]> lever-frames;      // the flight deck lever, down … up in 9 frames (frame 4 is the dead point)
@@ -168,86 +800,6 @@ export component QuickPage inherits Rectangle {
         }
         if root.mood != "": Text { x: 20px; y: 438px; width: parent.width - 40px; height: 18px; text: root.mood; font-size: 13px; color: Theme.muted;
             horizontal-alignment: center; overflow: elide; }
-        // details on a long press: a sheet sized to what the entity can do
-        // the sheet slides up (240 ms) and back down (200 ms) over a fading backdrop instead of popping
-        property <float> sheet-k: root.sheet ? 1 : 0;
-        animate sheet-k { duration: root.sheet ? 240ms : 200ms; easing: ease-out; }
-        if tlook.sheet-k > 0.001: sheet := Rectangle {
-            property <float> k: parent.sheet-k;
-            Rectangle { background: #00000066; opacity: sheet.k; }
-            TouchArea { clicked => { Act.act("quick.close", ""); } }
-            property <bool> cover: root.sheet-tile.kind == 2;
-            property <length> h: 84px + 88px + (root.sheet-temp >= 0 ? 56px : 0px) + (root.sheet-colours.length > 0 ? 54px : 0px)
-                + (root.sheet-effects.length > 0 ? 50px : 0px) + (self.cover ? 56px : 0px) + 8px;
-            Rectangle { x: 0; y: parent.height - parent.h * sheet.k; width: parent.width; height: parent.h + 24px; border-radius: 24px; background: Theme.sheet;
-                TouchArea { }
-                Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: Theme.text.with-alpha(0.2); }
-                Rectangle { x: 20px; y: 26px; width: 44px; height: 44px; border-radius: 22px; background: root.sheet-tile.on ? root.sheet-tile.tint : Theme.text.with-alpha(0.1);
-                    Icon { text: root.sheet-tile.icon; font-size: 24px; color: root.sheet-tile.on ? #ffffff : Theme.text; } }
-                Text { x: 76px; y: 26px; width: parent.width - 170px; text: root.sheet-tile.name; font-size: 18px; font-weight: 700; color: Theme.text; overflow: elide; }
-                Text { x: 76px; y: 50px; width: parent.width - 170px; text: root.sheet-tile.state; font-size: 14px; color: Theme.muted; overflow: elide; }
-                if root.sheet-tile.kind != 2: Rectangle { x: parent.width - 80px; y: 34px; width: 56px; height: 30px; border-radius: 15px;
-                    background: root.sheet-tile.on ? root.sheet-tile.tint : Theme.text.with-alpha(0.2);
-                    TouchArea { x: -10px; y: -10px; width: parent.width + 20px; height: parent.height + 20px; clicked => { Act.act("quick.toggle", root.sheet-index); } }
-                    Rectangle { x: root.sheet-tile.on ? 28px : 2px; y: 2px; width: 26px; height: 26px; border-radius: 13px; background: #ffffff; } }
-                // the level slider: brightness / position / set temperature, always with its unit
-                lv := Rectangle { x: 20px; y: 88px; width: parent.width - 40px; height: 72px; border-radius: 22px; background: Theme.text.with-alpha(0.08);
-                    property <float> drag-v;
-                    // let go: the level stays where it was dropped until the device follows (or 3 s), then glides
-                    property <bool> hold;
-                    property <float> ha-v: root.sheet-tile.value;
-                    changed ha-v => { lv.hold = false; }
-                    Timer { interval: 3s; running: lv.hold; triggered => { lv.hold = false; } }
-                    property <float> shown: lvl.pressed || self.hold ? self.drag-v : root.sheet-tile.value;
-                    animate shown { duration: lvl.pressed ? 0ms : 200ms; easing: ease-out; }
-                    Rectangle { x: 0; y: 0; width: max(44px, parent.width * parent.shown); height: parent.height; border-radius: 22px; background: root.sheet-tile.tint; }
-                    lvl := TouchArea {
-                        pointer-event(ev) => {
-                            if ev.kind == PointerEventKind.down { parent.drag-v = max(0, min(1, self.mouse-x / self.width)); }
-                            else if ev.kind == PointerEventKind.up { lv.hold = true; Act.act("quick.level", root.sheet-index + ":" + parent.drag-v); }
-                        }
-                        moved => { parent.drag-v = max(0, min(1, self.mouse-x / self.width)); }
-                    }
-                    Text { x: parent.width - 116px; y: 0; width: 100px; height: parent.height; text: root.sheet-tile.short; font-size: 26px; font-weight: 700;
-                        color: Theme.text; horizontal-alignment: right; vertical-alignment: center; } }
-                // colour temperature: a warm-to-cool pill (cut into thin steps: gradients ignore rounded ends here)
-                if root.sheet-temp >= 0: temp-pill := Rectangle { x: 20px; y: 180px; width: parent.width - 120px; height: 28px;
-                    property <float> drag-t;
-                    property <float> shown-t: tp.pressed ? self.drag-t : root.sheet-temp;
-                    Rectangle { x: 0; y: 0; width: 28px; height: 28px; border-radius: 14px; background: #ff9f43; }
-                    Rectangle { x: parent.width - 28px; y: 0; width: 28px; height: 28px; border-radius: 14px; background: #dbe9ff; }
-                    for k in 40: Rectangle { x: 14px + k * (parent.width - 28px) / 40; y: 0; width: (parent.width - 28px) / 40 + 1px; height: 28px;
-                        background: #ff9f43.mix(#dbe9ff, 1 - k / 39); }
-                    tp := TouchArea { y: -10px; height: parent.height + 20px;
-                        pointer-event(ev) => {
-                            if ev.kind == PointerEventKind.down { temp-pill.drag-t = max(0, min(1, (self.mouse-x - 14px) / (self.width - 28px))); }
-                            else if ev.kind == PointerEventKind.up { Act.act("quick.temp", root.sheet-index + ":" + temp-pill.drag-t); }
-                        }
-                        moved => { temp-pill.drag-t = max(0, min(1, (self.mouse-x - 14px) / (self.width - 28px))); }
-                    }
-                    Rectangle { x: 14px + (parent.width - 28px) * temp-pill.shown-t - 17px; y: -3px; width: 34px; height: 34px; border-radius: 17px;
-                        background: #ff9f43.mix(#dbe9ff, 1 - temp-pill.shown-t); border-width: 3px; border-color: #ffffff; drop-shadow-blur: 4px; drop-shadow-color: #00000055; }
-                }
-                if root.sheet-temp >= 0: Text { x: parent.width - 92px; y: 180px; width: 72px; height: 28px; text: root.sheet-temp-text; font-size: 15px; font-weight: 600;
-                    color: Theme.text; horizontal-alignment: right; vertical-alignment: center; }
-                // colours
-                if root.sheet-colours.length > 0: Rectangle { x: 20px; y: root.sheet-temp >= 0 ? 232px : 180px; width: parent.width - 40px; height: 38px;
-                    for c[k] in root.sheet-colours: Rectangle { x: k * 50px; y: 0; width: 38px; height: 38px; border-radius: 19px; background: c;
-                        border-width: k == 0 ? 3px : 0px; border-color: Theme.text;
-                        TouchArea { clicked => { Act.act("quick.colour", root.sheet-index + ":" + k); } } } }
-                // effects the light offers (names from HA)
-                if root.sheet-effects.length > 0: HorizontalLayout { x: 20px; y: (root.sheet-temp >= 0 ? 56px : 0px) + (root.sheet-colours.length > 0 ? 54px : 0px) + 178px;
-                    width: parent.width - 40px; height: 36px; spacing: 8px; alignment: start;
-                    // a dropdown, not chips (28.5): the effect is picked from the light's list
-                    Dropdown { width: parent.width; height: 44px; options: root.sheet-effects; selected: -1; placeholder: "Effect";
-                        picked(k) => { Act.act("quick.effect", root.sheet-index + ":" + k); } } }
-                if root.sheet-tile.kind == 2: HorizontalLayout { x: 20px; y: 178px; width: parent.width - 40px; height: 44px; spacing: 10px;
-                    for ic[n] in ["\u{F005D}", "\u{F04DB}", "\u{F0045}"]: Rectangle { border-radius: 22px;
-                        background: cv.pressed ? Theme.text.with-alpha(0.16) : Theme.text.with-alpha(0.08);
-                        Icon { text: ic; font-size: 24px; color: Theme.text; }
-                        cv := TouchArea { clicked => { Act.act("quick.cover", root.sheet-index + ":" + n); } } } }
-            }
-        }
     }
 
     // ------------------------------------------------------------------ 1 mixing desk
@@ -338,8 +890,14 @@ export component QuickPage inherits Rectangle {
             if !t.gone && (t.dim || ch.two): Image { x: 4px; y: 140px + (1 - ch.level) * 170px - 13px + ch.snap; width: 44px; height: 30px; source: root.fader; }
             Text { x: -(desk.pitch - 52px) / 2 + 2px; y: 318px; width: desk.pitch - 4px; text: t.short; font-family: "DejaVu Sans Mono"; font-size: 12px; color: t.on ? #e9ecef : #868e96;
                 horizontal-alignment: center; overflow: elide; }
+            // the channel's tape (one line, smaller letters or two lines, drawn by the app to the strip's width); a long
+            // press on it opens the channel's rack unit (41.2)
             if t.has-tape: Image { x: (parent.width - self.width) / 2; y: 334px + (34px - self.height) / 2;
-                width: t.tape.width * 1px; height: t.tape.height * 1px; source: t.tape; }
+                width: t.tape.width * 1px; height: t.tape.height * 1px; source: t.tape; opacity: tape-ta.pressed ? 0.7 : 1; }
+            property <bool> held;
+            tape-ta := TouchArea { x: -(desk.pitch - 52px) / 2; y: 330px; width: desk.pitch; height: 42px;
+                pointer-event(ev) => { if ev.kind == PointerEventKind.down { ch.held = false; } } }
+            Timer { interval: 500ms; running: tape-ta.pressed && !ch.held; triggered => { ch.held = true; Act.act("quick.details", i); } }
         }
     }
 
@@ -362,12 +920,21 @@ export component QuickPage inherits Rectangle {
         pure function row-n(row: int) -> int { row == 0 ? deck.r0 : deck.nt - deck.r0 }
         pure function cell-x(row: int, col: int) -> length { (480px - (deck.row-n(row) * 112px - 8px)) / 2 + col * 112px }
         pure function cell-y(row: int) -> length { deck.nt <= 4 ? 188px : 104px + row * 168px }
-        // painted group brackets
-        for g in root.groups: Rectangle {
-            x: deck.cell-x(g.row, g.start) + 6px; y: deck.cell-y(g.row) - 9px; width: g.count * 112px - 20px; height: 10px;
-            gt := Text { x: (parent.width - self.preferred-width) / 2; y: -6px; text: g.name; font-size: 10px; font-weight: 800; color: #eceff1d9; letter-spacing: 1px; }
-            Rectangle { x: 0; y: 0; width: gt.x - 6px; height: 1.5px; background: #eceff1c0; }
-            Rectangle { x: gt.x + gt.preferred-width + 6px; y: 0; width: parent.width - self.x; height: 1.5px; background: #eceff1c0; }
+        // painted group frames (the app groups the levers: automatic by kind, one frame with the room, or own groups);
+        // a frame spans its cells; a long name gets smaller letters, and only a name too long even then widens it
+        for g in root.groups: gb := Rectangle {
+            property <length> cells-x: deck.cell-x(g.row, g.start) + 6px;
+            property <length> cells-w: g.count * 112px - 20px;
+            gm10 := Text { visible: false; text: g.name; font-size: 10px; font-weight: 800; letter-spacing: 1px; }
+            gm85 := Text { visible: false; text: g.name; font-size: 8.5px; font-weight: 800; letter-spacing: 1px; }
+            property <length> fs: gm10.preferred-width + 24px <= gb.cells-w ? 10px : gm85.preferred-width + 24px <= gb.cells-w ? 8.5px : 7.5px;
+            property <length> w: Math.min(432px, Math.max(gb.cells-w, gt.preferred-width + 24px));
+            x: Math.max(24px, Math.min(456px - gb.w, gb.cells-x + (gb.cells-w - gb.w) / 2));
+            y: deck.cell-y(g.row) - 9px; width: gb.w; height: 10px;
+            gt := Text { x: (parent.width - self.preferred-width) / 2; y: -6px; height: 14px; text: g.name; font-size: gb.fs; font-weight: 800; color: #eceff1d9;
+                letter-spacing: 1px; vertical-alignment: center; }
+            Rectangle { x: 0; y: 0; width: g.name == "" ? parent.width : gt.x - 6px; height: 1.5px; background: #eceff1c0; }
+            if g.name != "": Rectangle { x: gt.x + gt.preferred-width + 6px; y: 0; width: parent.width - self.x; height: 1.5px; background: #eceff1c0; }
             Rectangle { x: 0; y: 0; width: 1.5px; height: 7px; background: #eceff1c0; }
             Rectangle { x: parent.width - 1.5px; y: 0; width: 1.5px; height: 7px; background: #eceff1c0; }
         }
@@ -375,7 +942,8 @@ export component QuickPage inherits Rectangle {
             property <int> drow: i < deck.r0 ? 0 : 1;
             x: deck.cell-x(self.drow, i < deck.r0 ? i : i - deck.r0); y: deck.cell-y(self.drow); width: 104px; height: 156px;
             visible: i < 8;
-            property <float> lit: deck.lamp-test || ((dk.pending ? dk.to-up : t.on) && !t.gone) ? 1 : 0;
+            // a colour light whose colour is not known yet: its lamp waits for the light instead of glowing green first
+            property <float> lit: deck.lamp-test || ((dk.pending ? dk.to-up && t.led-known : t.on) && !t.gone) ? 1 : 0;
             // put out from outside (all off): left to right, 30 ms apart; a lamp of one's own throw goes out at once
             animate lit { duration: 100ms; delay: !dk.throwing && !dk.pending && !t.on ? i * 30ms : 0ms; easing: ease-out; }
             property <float> up: t.on ? 1 : 0;
@@ -398,7 +966,8 @@ export component QuickPage inherits Rectangle {
 
             // the lamp: lens + a glow in the light's own colour (green for everything else), amber when unavailable
             Image { x: (parent.width - 36px) / 2; y: 0; width: 36px; height: 36px; source: t.gone ? root.lamp-amber : root.lamp-off; }
-            if dk.lit > 0.001: Image { x: (parent.width - 36px) / 2; y: 0; width: 36px; height: 36px; source: root.lamp-glow; colorize: t.led; opacity: dk.lit; }
+            if dk.lit > 0.001: Image { x: (parent.width - 36px) / 2; y: 0; width: 36px; height: 36px; source: root.lamp-glow;
+                colorize: t.led-known ? t.led : #69db7c; opacity: dk.lit; }
             if dk.lit > 0.001: Image { x: (parent.width - 36px) / 2; y: 0; width: 36px; height: 36px; source: root.lamp-spec; opacity: dk.lit; }
             // painted legends at both ends of the lever's travel
             Text { x: 0; y: 36px; width: parent.width; text: "ON"; font-size: 9px; font-weight: 800; color: #eceff1d0; horizontal-alignment: center; letter-spacing: 1px; }
@@ -411,13 +980,116 @@ export component QuickPage inherits Rectangle {
                 // a drag in the throw direction past the middle throws it too
                 moved => { if (!t.on && self.pressed-y - self.mouse-y > 30px) || (t.on && self.mouse-y - self.pressed-y > 30px) { if !dk.throwing { dk.to-up = !t.on; dk.t0 = animation-tick(); dk.sent = false; dk.throwing = true; } } } }
             Text { x: 0; y: 121px; width: parent.width; text: "OFF"; font-size: 9px; font-weight: 800; color: #eceff1d0; horizontal-alignment: center; letter-spacing: 1px; }
-            Rectangle { x: 8px; y: 134px; width: parent.width - 16px; height: 20px; background: #16181a; border-radius: 2px; border-width: 1px; border-color: #00000080;
-                Text { x: 4px; width: parent.width - 8px; text: (t.label != "" ? t.label : t.name).to-uppercase(); font-size: 10px; font-weight: 800; color: #f8f9fa;
-                    horizontal-alignment: center; vertical-alignment: center; overflow: elide; } }
+            // the plate: the short name in one line; a long one in smaller letters, then in two lines
+            property <string> ptext: (t.label != "" ? t.label : t.name).to-uppercase();
+            pm10 := Text { visible: false; text: dk.ptext; font-size: 10px; font-weight: 800; }
+            pm8 := Text { visible: false; text: dk.ptext; font-size: 8px; font-weight: 800; }
+            property <bool> p-small: pm10.preferred-width > 80px;
+            property <bool> p-two: pm8.preferred-width > 80px;
+            Rectangle { x: 8px; y: dk.p-two ? 132px : 134px; width: parent.width - 16px; height: dk.p-two ? 23px : 20px;
+                background: plate-ta.pressed ? #23262a : #16181a; border-radius: 2px; border-width: 1px; border-color: #00000080;
+                Text { x: 4px; width: parent.width - 8px; text: dk.ptext; font-size: dk.p-small ? 8px : 10px; font-weight: 800; color: #f8f9fa;
+                    wrap: dk.p-two ? TextWrap.word-wrap : TextWrap.no-wrap; horizontal-alignment: center; vertical-alignment: center; overflow: elide; } }
             if t.dim && !t.gone && (t.on || t.kind != 0): Text { x: 0; y: 84px; width: 33px; text: t.short; font-family: "DejaVu Sans Mono"; font-size: 10px;
                 color: #8ce99a; horizontal-alignment: right; }
+            // a long press on the plate swings down the switch's overhead sub-panel (41.3)
+            property <bool> held;
+            plate-ta := TouchArea { x: 8px; y: 136px; width: parent.width - 16px; height: 22px;
+                pointer-event(ev) => { if ev.kind == PointerEventKind.down { dk.held = false; } } }
+            Timer { interval: 500ms; running: plate-ta.pressed && !dk.held; triggered => { dk.held = true; Act.act("quick.details", i); } }
         }
         Text { x: 40px; y: 438px; width: 400px; height: 16px; text: root.placard; font-size: 11px; font-weight: 800; color: #ffd43b; horizontal-alignment: center;
             vertical-alignment: center; overflow: elide; letter-spacing: 1px; }
+    }
+
+    // ------------------------------------------------------------------ the menus (spec 41)
+    // which menu shows: kept while it closes, so its look's exit motion runs with its own content
+    property <int> menu-kind;
+    changed sheet => { if root.sheet { root.menu-kind = 0; root.settings = false; } }
+    changed settings => { if root.settings { root.menu-kind = 1; root.sheet = false; } }
+    // a look change in the settings: the menu closes as the old look's, the look changes, it opens as the new look's
+    property <int> next-look: -1;
+    property <bool> reopen;
+    function pick-look(k: int) {
+        if k == root.look {
+            return;
+        }
+        root.next-look = k;
+        root.settings = false;
+    }
+    Timer {
+        interval: menus.out-ms + 20ms;
+        running: root.next-look >= 0 && !root.settings;
+        triggered => {
+            root.reopen = true;
+            Act.act("quick.look", root.next-look);
+            root.next-look = -1;
+        }
+    }
+    Timer { interval: 1s; running: root.reopen; triggered => { root.reopen = false; } }
+    // the quick shade's page row: "Quick controls settings · <look>" with the look's lead icon, while the page is on screen
+    pure function look-name(l: int) -> string { l == 1 ? "Mixing desk" : l == 2 ? "Flight deck" : "Tiles" }
+    function publish() {
+        PageMenu.title = "Quick controls settings";
+        PageMenu.look = root.look-name(root.look);
+        PageMenu.icon = root.look == 1 ? "\u{F066A}" : root.look == 2 ? "\u{F001D}" : "\u{F0570}";
+        PageMenu.has-settings = true;
+    }
+    init => {
+        // (a page made anew while its settings are open keeps them as they were)
+        if root.settings {
+            root.menu-kind = 1;
+        }
+        if root.on-screen {
+            root.publish();
+        }
+    }
+    changed on-screen => {
+        if root.on-screen {
+            root.publish();
+        } else {
+            // #9: a menu never waits on a page nobody sees (a page change, a temporary page, the screensaver, a ring)
+            root.sheet = false;
+            root.settings = false;
+            root.next-look = -1;
+            root.reopen = false;
+            if PageMenu.title == "Quick controls settings" {
+                PageMenu.has-settings = false;
+            }
+        }
+    }
+    changed look => {
+        if root.on-screen {
+            root.publish();
+        }
+        if root.reopen {
+            root.reopen = false;
+            root.settings = true;
+        }
+    }
+    property <int> open-request: PageMenu.open-request;
+    changed open-request => {
+        if root.on-screen {
+            root.sheet = false;
+            root.settings = true;
+        }
+    }
+    menus := QuickMenus {
+        look: root.look;
+        open: root.sheet || root.settings;
+        kind: root.menu-kind;
+        grid: root.grid;
+        tile: root.sheet-tile;
+        index: root.sheet-index;
+        info: root.details;
+        colours: root.sheet-colours;
+        effects: root.sheet-effects;
+        settings-tape: root.settings-tape;
+        screw: root.screw;
+        close => {
+            root.sheet = false;
+            root.settings = false;
+        }
+        pick-look(k) => { root.pick-look(k); }
     }
 }

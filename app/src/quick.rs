@@ -1,14 +1,27 @@
 //! Quick controls page: the entities picked for it in the integration, as
-//! tiles (tap toggles, a long press opens the details sheet), a mixing desk
-//! (faders) or a flight deck (levers).
+//! tiles, a mixing desk (faders) or a flight deck (levers). A tap toggles; a
+//! long press on a tile, a desk tape or a deck plate opens the control's
+//! details in the look's own menu, and the quick shade's page row opens the
+//! page's settings (spec 41).
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
-use slint::{Color, ModelRc, SharedString, VecModel};
+use slint::{Color, Model, ModelRc, SharedString, VecModel};
 
 use crate::ha::EntityState;
-use crate::{icons, texts, with_state, AppWindow, QuickTile};
+use crate::{icons, texts, with_state, AppWindow, QuickDetails, QuickGroup, QuickTile};
+
+/// The deck lamp of everything that is not a colour light.
+fn green() -> Color {
+    Color::from_rgb_u8(0x69, 0xdb, 0x7c)
+}
+
+/// Whether a light can show colours or colour temperatures (more than on / off and brightness).
+fn colour_capable(modes: Option<&Value>) -> bool {
+    modes.and_then(Value::as_array).is_some_and(|m| m.iter().filter_map(Value::as_str).any(|m| !matches!(m, "onoff" | "brightness")))
+}
 
 /// The tiles for the page's entities, in their order (the grid of the 4 x 4
 /// look: wide cards for lights and covers, icon cells for the rest).
@@ -78,12 +91,8 @@ pub fn tiles(states: &HashMap<String, EntityState>, entities: &[String], accent:
                 (v.len() == 3).then(|| Color::from_rgb_u8(v[0], v[1], v[2]))
             });
             let tint = rgb.unwrap_or(accent);
-            // the deck's lamp: a colour light's own colour, remembered while it is off (a throw lights it in that colour
-            // at once, not green first); everything else green
-            if let Some(c) = rgb {
-                LAST_RGB.with(|m| m.borrow_mut().insert(id.clone(), c));
-            }
-            let led = rgb.or_else(|| LAST_RGB.with(|m| m.borrow().get(id).copied())).unwrap_or(Color::from_rgb_u8(0x69, 0xdb, 0x7c));
+            let colour_light = domain == "light" && colour_capable(attr("supported_color_modes"));
+            let (led, led_known) = lamp(id, on, rgb, colour_light);
             let icon = attr("icon")
                 .and_then(Value::as_str)
                 .and_then(icons::glyph)
@@ -108,6 +117,7 @@ pub fn tiles(states: &HashMap<String, EntityState>, entities: &[String], accent:
                 gone,
                 tint,
                 led,
+                led_known,
                 col,
                 row,
                 w,
@@ -120,6 +130,71 @@ pub fn tiles(states: &HashMap<String, EntityState>, entities: &[String], accent:
         .collect()
 }
 
+/// The colour lights' last colours: seen while on, and kept on the panel (`quick-colours.json` beside the settings,
+/// written when such a light is seen off with a colour that is not kept yet), so a lever throw lights the lamp in the
+/// light's own colour at once, also after an app restart.
+#[derive(Default)]
+struct Lamps {
+    loaded: bool,
+    seen: HashMap<String, Color>,
+    kept: HashMap<String, [u8; 3]>,
+}
+
+impl Lamps {
+    fn path() -> std::path::PathBuf {
+        crate::settings::beside("quick-colours.json")
+    }
+
+    fn load(&mut self) {
+        if self.loaded {
+            return;
+        }
+        self.loaded = true;
+        let Some(map) = std::fs::read_to_string(Self::path()).ok().and_then(|t| serde_json::from_str::<HashMap<String, [u8; 3]>>(&t).ok()) else {
+            return;
+        };
+        for (id, c) in &map {
+            self.seen.entry(id.clone()).or_insert(Color::from_rgb_u8(c[0], c[1], c[2]));
+        }
+        self.kept = map;
+    }
+
+    fn keep(&mut self, id: &str, c: Color) {
+        let rgb = [c.red(), c.green(), c.blue()];
+        if self.kept.get(id) == Some(&rgb) {
+            return;
+        }
+        self.kept.insert(id.to_string(), rgb);
+        let p = Self::path();
+        let tmp = p.with_extension("json.tmp");
+        if let Ok(text) = serde_json::to_string(&self.kept) {
+            if std::fs::write(&tmp, text).is_ok() {
+                let _ = std::fs::rename(&tmp, &p);
+            }
+        }
+    }
+}
+
+/// The deck lamp's colour and whether it is known: a colour light's own colour (its last one while it is off), green
+/// for everything else; a colour light the panel has never seen on has none yet (its lamp waits for the light).
+fn lamp(id: &str, on: bool, rgb: Option<Color>, colour_light: bool) -> (Color, bool) {
+    LAMPS.with(|l| {
+        let mut l = l.borrow_mut();
+        l.load();
+        if let Some(c) = rgb {
+            l.seen.insert(id.to_string(), c);
+        }
+        let last = l.seen.get(id).copied();
+        if let (false, true, Some(c)) = (on, colour_light, last) {
+            l.keep(id, c);
+        }
+        match last {
+            Some(c) => (c, true),
+            None => (green(), !colour_light),
+        }
+    })
+}
+
 /// A picture of the UI bundle (page assets the app sets as properties).
 pub fn picture(rel: &str) -> slint::Image {
     let path = std::path::Path::new(env!("PANELOS_UI_PICTURES")).join(rel);
@@ -129,8 +204,7 @@ pub fn picture(rel: &str) -> slint::Image {
 /// The quick controls page from the states (only when the panel has one).
 pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     let pages = ui.get_pages();
-    let Some(slot) = (0..slint::Model::row_count(&pages)).filter_map(|i| slint::Model::row_data(&pages, i)).find(|p| p.kind == "quick")
-    else {
+    let Some(slot) = (0..pages.row_count()).filter_map(|i| pages.row_data(i)).find(|p| p.kind == "quick") else {
         return;
     };
     ui.set_quick_look(slot.variant);
@@ -147,7 +221,7 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         // the lever's throw: 9 frames, down … up
         let frames: Vec<slint::Image> = (0..9).map(|k| picture(&format!("quick/toggle3d-{k}.png"))).collect();
         if frames.iter().all(|f| f.size().width > 0) {
-            ui.set_quick_lever_frames(slint::ModelRc::new(slint::VecModel::from(frames)));
+            ui.set_quick_lever_frames(ModelRc::new(VecModel::from(frames)));
         }
         ui.set_quick_lamp_off(picture("quick/lamp-off.png"));
         ui.set_quick_lamp_glow(picture("quick/lamp-glow.png"));
@@ -162,11 +236,12 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     if DECK_N.with(|d| d.replace(n)) != n {
         ui.set_quick_deck_panel(picture(&format!("quick/deck-panel-{n}.png")));
     }
-    // the mixing desk: a tiny label tape under each fader (the integration's tape text, else the
-    // name's last word), coloured by kind
+    // the mixing desk: a tiny label tape under each fader, as wide as its strip (the integration's label, else the
+    // name without the room), coloured by kind; the flight deck's plates show the same short text
     let looks = crate::page_looks(ui, "quick");
     if looks.contains(&1) || looks.contains(&2) {
         let own = crate::page_option(s, "quick", "tapes").and_then(|v| v.as_array().cloned()).unwrap_or_default();
+        let width = tape_width(list.len());
         for (i, (t, id)) in list.iter_mut().zip(&entities).enumerate() {
             let text = own
                 .get(i)
@@ -179,13 +254,37 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
                 "media_player" => crate::draw::Tint::Red,
                 _ => crate::draw::Tint::Blue,
             };
-            // the flight deck's plates show the short text too
             t.label = text.clone().into();
             if looks.contains(&1) && crate::draw::AVAILABLE {
                 let seed = crate::draw::seed(id);
-                t.tape = crate::draw::get(crate::draw::Job::DeskTape { text, tint, seed });
+                t.tape = crate::draw::get(crate::draw::Job::DeskTape { text, tint, seed, width });
                 t.has_tape = t.tape.size().width > 0;
             }
+        }
+        // the desk's settings menu: "SETTINGS" on the same tape
+        if looks.contains(&1) && crate::draw::AVAILABLE && ui.get_quick_settings_tape().size().width == 0 {
+            let job = crate::draw::Job::DeskTape { text: "SETTINGS".into(), tint: crate::draw::Tint::Blue, seed: crate::draw::seed("SETTINGS"), width: 140 };
+            ui.set_quick_settings_tape(crate::draw::get(job));
+        }
+    }
+    // the flight deck's painted group frames
+    if looks.contains(&2) {
+        let mode = crate::page_option(s, "quick", "groups").and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        let starts: Vec<bool> = crate::page_option(s, "quick", "group_starts")
+            .and_then(|v| v.as_array().map(|a| a.iter().map(|x| x.as_bool().unwrap_or(false)).collect()))
+            .unwrap_or_default();
+        let names: Vec<String> = crate::page_option(s, "quick", "group_names")
+            .and_then(|v| v.as_array().map(|a| a.iter().map(|x| x.as_str().unwrap_or("").to_string()).collect()))
+            .unwrap_or_default();
+        let domains: Vec<&str> = entities.iter().map(|id| id.split('.').next().unwrap_or("")).collect();
+        // groups off: one frame with the panel's room, or a line for a panel that does not know where it is
+        let one = if room.is_empty() { texts::kept("quick.lost.group", 0) } else { room.clone() };
+        let groups: Vec<QuickGroup> = frames(&groupings(&domains, &mode, &starts, &names, &one))
+            .into_iter()
+            .map(|f| QuickGroup { row: f.row as i32, start: f.start as i32, count: f.count as i32, name: f.name.into() })
+            .collect();
+        if !same_rows(&ui.get_quick_groups(), &groups) {
+            ui.set_quick_groups(ModelRc::new(VecModel::from(groups)));
         }
     }
     let mood = mood(&list);
@@ -196,8 +295,19 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         ui.set_quick_tiles(m);
     }
     if ui.get_quick_sheet() {
-        details(ui, ui.get_quick_sheet_index().max(0) as usize);
+        details(ui, s, ui.get_quick_sheet_index().max(0) as usize);
     }
+}
+
+/// Whether a model holds exactly these rows.
+fn same_rows<T: Clone + PartialEq + 'static>(m: &ModelRc<T>, rows: &[T]) -> bool {
+    m.row_count() == rows.len() && rows.iter().enumerate().all(|(i, r)| m.row_data(i).as_ref() == Some(r))
+}
+
+/// The desk tape's widest visible strip for `n` channels: the strip's step (8 fill the desk, few get up to 84 px),
+/// less a little room between neighbours.
+fn tape_width(n: usize) -> u32 {
+    ((448.0 / n.max(1) as f32).min(84.0) - 4.0).round().max(36.0) as u32
 }
 
 /// An effect's name as words: underscores to spaces, the first letter capital.
@@ -211,16 +321,17 @@ fn effect_name(e: &str) -> String {
 }
 
 thread_local! {
-    /// The last colour each colour light reported while on.
-    static LAST_RGB: std::cell::RefCell<HashMap<String, Color>> = std::cell::RefCell::new(HashMap::new());
+    /// The colour lights' last colours (seen and kept).
+    static LAMPS: RefCell<Lamps> = RefCell::new(Lamps::default());
     /// The effects of the light whose details are open (Home Assistant's own names).
-    static EFFECTS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    static EFFECTS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// The number of levers the deck's plate was drawn for.
     static DECK_N: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// A control's label when none is set in the integration: its whole name, without the panel's room in front
-/// ("Living room shutter left" -> "SHUTTER LEFT"); the tape cuts it where it does not fit.
+/// ("Living room shutter left" -> "SHUTTER LEFT"); the desk's tape and the deck's plate take it in smaller letters or
+/// in two lines when it is long.
 fn short_name(name: &str, room: &str) -> String {
     let n = name.trim();
     let r = room.trim().to_lowercase();
@@ -251,6 +362,112 @@ pub fn mood(tiles: &[QuickTile]) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------- the flight deck's groups
+
+/// A painted frame over neighbouring levers of one row of the flight deck: the row, its first cell in the row, how
+/// many cells, its name.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Frame {
+    pub row: usize,
+    pub start: usize,
+    pub count: usize,
+    pub name: String,
+}
+
+/// The deck's two rows for `n` levers (at most 8): up to four in a row (5 = 3 + 2, 6 = 3 + 3, 7 = 4 + 3).
+pub fn deck_rows(n: usize) -> (usize, usize) {
+    let n = n.min(8);
+    let r0 = if n <= 4 {
+        n
+    } else if n <= 6 {
+        3
+    } else {
+        4
+    };
+    (r0, n - r0)
+}
+
+/// The name of an automatic group: what its controls are.
+fn group_name(domain: &str) -> &'static str {
+    match domain {
+        "light" => "LIGHTS",
+        "cover" => "SHUTTERS",
+        "climate" | "fan" | "water_heater" | "humidifier" => "CLIMATE",
+        "switch" | "input_boolean" => "SWITCHES",
+        "media_player" => "MEDIA",
+        "scene" => "SCENES",
+        "script" => "SCRIPTS",
+        "vacuum" => "CLEANING",
+        "sensor" => "SENSORS",
+        _ => "DEVICES",
+    }
+}
+
+/// Each lever's group (an id and its name; none: no frame), in the user's order:
+/// - automatic ("auto", the default): neighbours of one kind (LIGHTS, SHUTTERS, CLIMATE, SWITCHES, MEDIA …);
+/// - "off": one group over the top row, named `one` (the panel's room);
+/// - "custom": a group starts at the first lever and wherever `starts` says so, named by `names` at its first lever
+///   (an empty name: those levers have no frame).
+pub fn groupings(domains: &[&str], mode: &str, starts: &[bool], names: &[String], one: &str) -> Vec<Option<(usize, String)>> {
+    let n = domains.len().min(8);
+    let (r0, _) = deck_rows(n);
+    match mode {
+        "off" => (0..n).map(|i| (i < r0 && !one.is_empty()).then(|| (0, one.to_string()))).collect(),
+        "custom" => {
+            let (mut id, mut name) = (0usize, String::new());
+            (0..n)
+                .map(|i| {
+                    if i == 0 || starts.get(i).copied().unwrap_or(false) {
+                        id += 1;
+                        name = names.get(i).map(|s| s.trim().to_uppercase()).unwrap_or_default();
+                    }
+                    (!name.is_empty()).then(|| (id, name.clone()))
+                })
+                .collect()
+        }
+        _ => {
+            let (mut id, mut last) = (0usize, "");
+            domains[..n]
+                .iter()
+                .map(|d| {
+                    let g = group_name(d);
+                    if id == 0 || g != last {
+                        id += 1;
+                        last = g;
+                    }
+                    Some((id, g.to_string()))
+                })
+                .collect()
+        }
+    }
+}
+
+/// The frames of the levers' groups: a group's run of neighbours in a row; at the end of the top row the frame stops
+/// and the bottom row starts a new one with the same name.
+pub fn frames(levers: &[Option<(usize, String)>]) -> Vec<Frame> {
+    let n = levers.len().min(8);
+    let (r0, _) = deck_rows(n);
+    let mut out = Vec::new();
+    for (row, from, to) in [(0, 0, r0), (1, r0, n)] {
+        let mut k = from;
+        while k < to {
+            let Some((id, name)) = &levers[k] else {
+                k += 1;
+                continue;
+            };
+            let mut e = k + 1;
+            while e < to && levers[e].as_ref().map(|(i, _)| i) == Some(id) {
+                e += 1;
+            }
+            out.push(Frame { row, start: k - from, count: e - k, name: name.clone() });
+            k = e;
+        }
+    }
+    out
+}
+
+// ---------------------------------------------------------------------------- taps
+
 /// Taps on the page (`quick.*`): the entity at the tile's index.
 pub fn act(ui: &AppWindow, what: &str, value: &str) {
     let (entities, states) = with_state(|s| (crate::page_entities(s, "quick"), s.states.clone()));
@@ -274,12 +491,28 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 }
             }
         }
+        // a long press: the control's details in the look's menu
         "quick.details" => {
             let Some(i) = index(value) else { return };
+            with_state(|s| details(ui, s, i));
+            ui.set_quick_settings(false);
             ui.set_quick_sheet(true);
-            details(ui, i);
         }
-        "quick.close" => ui.set_quick_sheet(false),
+        // the page's settings (the quick shade's page row opens them through PageMenu; this is the same from outside)
+        "quick.settings" => {
+            ui.set_quick_sheet(false);
+            ui.set_quick_settings(true);
+        }
+        "quick.close" => {
+            ui.set_quick_sheet(false);
+            ui.set_quick_settings(false);
+        }
+        // the look chosen in the page's settings (0 tiles, 1 mixing desk, 2 flight deck), kept in the integration
+        "quick.look" => {
+            let look = value.parse::<i32>().unwrap_or(0).clamp(0, 2);
+            crate::page_set(ui, "quick", Some(look), Value::Null);
+            with_state(|s| refresh(ui, s));
+        }
         // value "index:level" with the level 0 … 1
         "quick.level" => {
             let Some(id) = id_of(value) else { return };
@@ -353,50 +586,187 @@ fn toggle(id: &str, states: &HashMap<String, EntityState>) {
     }
 }
 
-/// Colours offered for colour lights in the details sheet.
+/// Colours offered for colour lights in the details.
 const PALETTE: [u32; 7] = [0xffd8a8, 0xff6b6b, 0xffa94d, 0xffe066, 0x69db7c, 0x4dabf7, 0xb197fc];
 
-/// The details sheet of tile `i`: what the entity can do.
-pub fn details(ui: &AppWindow, i: usize) {
-    let (tile, st) = with_state(|s| {
-        let entities = crate::page_entities(s, "quick");
-        let tiles = tiles(&s.states, &entities, crate::accent(s));
-        (tiles.get(i).cloned(), entities.get(i).and_then(|id| s.states.get(id)).map(|e| (e.state.clone(), e.attrs.clone())))
-    });
-    let Some(tile) = tile else { return };
-    let modes: Vec<String> = st
-        .as_ref()
-        .and_then(|(_, a)| a.get("supported_color_modes"))
+/// The palette colour nearest to a light's colour, if it is near enough to count as that one.
+fn nearest_colour(rgb: [u8; 3]) -> Option<usize> {
+    let d = |c: u32| {
+        let p = [(c >> 16) as i32, ((c >> 8) & 255) as i32, (c & 255) as i32];
+        (0..3).map(|k| (p[k] - rgb[k] as i32).pow(2)).sum::<i32>()
+    };
+    let (k, best) = PALETTE.iter().enumerate().map(|(k, c)| (k, d(*c))).min_by_key(|(_, v)| *v)?;
+    (best <= 60 * 60).then_some(k)
+}
+
+/// The details of control `i`: what it can do (its tile from the page, with its label and tape).
+pub fn details(ui: &AppWindow, s: &crate::UiState, i: usize) {
+    let Some(tile) = ui.get_quick_tiles().row_data(i) else { return };
+    let entities = crate::page_entities(s, "quick");
+    let Some(id) = entities.get(i) else { return };
+    let domain = id.split('.').next().unwrap_or("");
+    let st = s.states.get(id);
+    let state = st.map(|e| e.state.as_str()).unwrap_or("unavailable");
+    let attr = |k: &str| st.and_then(|e| e.attrs.get(k));
+    let num = |k: &str| attr(k).and_then(Value::as_f64);
+    let modes: Vec<String> = attr("supported_color_modes")
         .and_then(Value::as_array)
         .map(|m| m.iter().filter_map(Value::as_str).map(str::to_string).collect())
         .unwrap_or_default();
-    let attrs = st.map(|(_, a)| a).unwrap_or_default();
-    let num = |k: &str| attrs.get(k).and_then(Value::as_f64);
-    let temp = if modes.iter().any(|m| m == "color_temp") {
-        let (warm, cool) = (num("min_color_temp_kelvin").unwrap_or(2000.0), num("max_color_temp_kelvin").unwrap_or(6500.0));
-        num("color_temp_kelvin").map(|k| ((k - warm) / (cool - warm).max(1.0)).clamp(0.0, 1.0) as f32).unwrap_or(0.5)
-    } else {
-        -1.0
+    // the level: brightness (not for an on / off light), a cover's position, a thermostat's set temperature
+    let level = match domain {
+        "light" => (modes.is_empty() && num("brightness").is_some()) || modes.iter().any(|m| m != "onoff"),
+        "cover" => num("current_position").is_some(),
+        "climate" => num("temperature").is_some(),
+        _ => false,
     };
-    ui.set_quick_sheet_temp(temp);
-    ui.set_quick_sheet_temp_text(num("color_temp_kelvin").map(|k| format!("{k:.0} K")).unwrap_or_default().into());
+    let has_temp = modes.iter().any(|m| m == "color_temp");
+    let (k_lo, k_hi) = (num("min_color_temp_kelvin").unwrap_or(2000.0), num("max_color_temp_kelvin").unwrap_or(6500.0));
+    let temp = num("color_temp_kelvin").map(|k| ((k - k_lo) / (k_hi - k_lo).max(1.0)).clamp(0.0, 1.0)).unwrap_or(0.5);
     let colourful = modes.iter().any(|m| matches!(m.as_str(), "hs" | "rgb" | "rgbw" | "rgbww" | "xy"));
-    let colours: Vec<Color> = if colourful {
-        PALETTE.iter().map(|c| Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, *c as u8)).collect()
-    } else {
-        Vec::new()
-    };
-    ui.set_quick_sheet_colours(ModelRc::new(VecModel::from(colours)));
-    // the light's effects: Home Assistant's names as words ("channel_change" -> "Channel change"); the raw names are
-    // what the light takes back
-    let raw: Vec<String> = attrs
-        .get("effect_list")
+    // the palette colour it shows (only while it shows a colour, not a white)
+    let colour = attr("color_mode")
+        .and_then(Value::as_str)
+        .filter(|m| matches!(*m, "hs" | "rgb" | "rgbw" | "rgbww" | "xy") && state == "on")
+        .and_then(|_| attr("rgb_color").and_then(Value::as_array))
+        .and_then(|c| {
+            let v: Vec<u8> = c.iter().filter_map(Value::as_u64).map(|x| x.min(255) as u8).collect();
+            (v.len() == 3).then(|| [v[0], v[1], v[2]])
+        })
+        .and_then(nearest_colour);
+    // the light's effects: Home Assistant's names as words ("channel_change" -> "Channel change"; the deck writes
+    // them in capitals); the raw names are what the light takes back
+    let raw: Vec<String> = attr("effect_list")
         .and_then(Value::as_array)
         .map(|l| l.iter().filter_map(Value::as_str).map(str::to_string).collect())
         .unwrap_or_default();
-    let effects: Vec<SharedString> = raw.iter().map(|e| effect_name(e).into()).collect();
+    let caps = ui.get_quick_look() == 2;
+    let effects: Vec<SharedString> = raw
+        .iter()
+        .map(|e| {
+            let words = effect_name(e);
+            SharedString::from(if caps { words.to_uppercase() } else { words })
+        })
+        .collect();
+    let effect = attr("effect").and_then(Value::as_str).and_then(|e| raw.iter().position(|r| r == e));
+    let d = QuickDetails {
+        level,
+        unit: if domain == "climate" { 1 } else { 0 },
+        lo: num("min_temp").unwrap_or(7.0) as f32,
+        hi: num("max_temp").unwrap_or(35.0) as f32,
+        step: num("target_temp_step").unwrap_or(0.5) as f32,
+        has_temp,
+        temp: temp as f32,
+        k_lo: k_lo as f32,
+        k_hi: k_hi as f32,
+        colour: colour.map_or(-1, |k| k as i32),
+        effect: effect.map_or(-1, |k| k as i32),
+        moving: match (domain, state) {
+            ("cover", "opening") => 0,
+            ("cover", "closing") => 2,
+            _ => -1,
+        },
+    };
     EFFECTS.with(|e| *e.borrow_mut() = raw);
-    ui.set_quick_sheet_effects(ModelRc::new(VecModel::from(effects)));
-    ui.set_quick_sheet_index(i as i32);
-    ui.set_quick_sheet_tile(tile);
+    // only what changed (a state change elsewhere refreshes the page while the details are open)
+    let colours: Vec<Color> = if colourful { PALETTE.iter().map(|c| Color::from_rgb_u8((c >> 16) as u8, (c >> 8) as u8, *c as u8)).collect() } else { Vec::new() };
+    if !same_rows(&ui.get_quick_sheet_colours(), &colours) {
+        ui.set_quick_sheet_colours(ModelRc::new(VecModel::from(colours)));
+    }
+    if !same_rows(&ui.get_quick_sheet_effects(), &effects) {
+        ui.set_quick_sheet_effects(ModelRc::new(VecModel::from(effects)));
+    }
+    if ui.get_quick_details() != d {
+        ui.set_quick_details(d);
+    }
+    if ui.get_quick_sheet_index() != i as i32 {
+        ui.set_quick_sheet_index(i as i32);
+    }
+    if ui.get_quick_sheet_tile() != tile {
+        ui.set_quick_sheet_tile(tile);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn names(v: &[&str]) -> Vec<String> {
+        v.iter().map(|s| s.to_string()).collect()
+    }
+
+    fn frame(row: usize, start: usize, count: usize, name: &str) -> Frame {
+        Frame { row, start, count, name: name.into() }
+    }
+
+    #[test]
+    fn rows_of_the_deck() {
+        assert_eq!(deck_rows(1), (1, 0));
+        assert_eq!(deck_rows(4), (4, 0));
+        assert_eq!(deck_rows(5), (3, 2));
+        assert_eq!(deck_rows(6), (3, 3));
+        assert_eq!(deck_rows(7), (4, 3));
+        assert_eq!(deck_rows(12), (4, 4));
+    }
+
+    #[test]
+    fn automatic_groups_follow_the_kinds_and_stop_at_the_row_end() {
+        let d = ["light", "light", "light", "cover", "cover", "climate", "fan", "switch"];
+        let f = frames(&groupings(&d, "auto", &[], &[], "HALL"));
+        assert_eq!(
+            f,
+            vec![
+                frame(0, 0, 3, "LIGHTS"),
+                frame(0, 3, 1, "SHUTTERS"),
+                frame(1, 0, 1, "SHUTTERS"),
+                frame(1, 1, 2, "CLIMATE"),
+                frame(1, 3, 1, "SWITCHES"),
+            ]
+        );
+        // the same kind again later is a group of its own
+        let f = frames(&groupings(&["light", "switch", "light"], "", &[], &[], ""));
+        assert_eq!(f, vec![frame(0, 0, 1, "LIGHTS"), frame(0, 1, 1, "SWITCHES"), frame(0, 2, 1, "LIGHTS")]);
+    }
+
+    #[test]
+    fn groups_off_is_one_frame_over_the_top_row() {
+        let d = ["light", "cover", "climate", "switch", "media_player"];
+        assert_eq!(frames(&groupings(&d, "off", &[], &[], "KITCHEN")), vec![frame(0, 0, 3, "KITCHEN")]);
+        assert!(frames(&groupings(&d, "off", &[], &[], "")).is_empty());
+    }
+
+    #[test]
+    fn own_groups_start_where_the_user_says() {
+        let d = ["light", "light", "cover", "cover", "switch", "switch", "light"];
+        let starts = [false, false, true, false, true, false, true];
+        let n = names(&["Couch", "", "Blinds", "", "", "", "lights"]);
+        // 4 + 3: COUCH over 0-1, BLINDS over 2-3 (row 0); the unnamed group (4-5) has no frame; LIGHTS over 6
+        assert_eq!(
+            frames(&groupings(&d, "custom", &starts, &n, "")),
+            vec![frame(0, 0, 2, "COUCH"), frame(0, 2, 2, "BLINDS"), frame(1, 2, 1, "LIGHTS")]
+        );
+        // two neighbouring groups with the same name keep their own frames
+        let f = frames(&groupings(&["light", "light"], "custom", &[false, true], &names(&["A", "a"]), ""));
+        assert_eq!(f, vec![frame(0, 0, 1, "A"), frame(0, 1, 1, "A")]);
+    }
+
+    #[test]
+    fn palette_colour_of_a_light() {
+        assert_eq!(nearest_colour([0x4d, 0xab, 0xf7]), Some(5));
+        assert_eq!(nearest_colour([0x50, 0xb0, 0xf0]), Some(5));
+        assert_eq!(nearest_colour([0x00, 0x00, 0x00]), None);
+    }
+
+    #[test]
+    fn tape_width_follows_the_strips() {
+        assert_eq!(tape_width(8), 52);
+        assert_eq!(tape_width(3), 80);
+        assert_eq!(tape_width(0), 80);
+    }
+
+    #[test]
+    fn short_names_drop_the_room() {
+        assert_eq!(short_name("Living room shutter left", "living room"), "SHUTTER LEFT");
+        assert_eq!(short_name("Desk lamp", "living room"), "DESK LAMP");
+    }
 }

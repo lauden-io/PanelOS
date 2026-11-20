@@ -32,8 +32,13 @@
 //! When the music stalls (its buffer runs dry, see `sendspin`) and nothing else is going on,
 //! the check runs at once during the music, at most every 10 minutes: the stream breaks up
 //! anyway, and the move still needs an access point at least 10 dB stronger.
+//!
+//! Roaming can be switched off in the integration (`wifi_roaming`): then there are no roam
+//! checks, no stall checks and no link probes (all of them can move the panel). The link watch,
+//! which makes a dead link again, and the Wi-Fi power save staying off do not depend on it.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 const IFACE: &str = "wlan0";
@@ -71,6 +76,20 @@ const POOR_FILE: &str = "/tmp/panelos-poor-aps";
 /// A stalling stream: how often the roam thread looks, and the least time between two checks it starts.
 const STALL_POLL: Duration = Duration::from_secs(5);
 const STALL_GAP: Duration = Duration::from_secs(10 * 60);
+
+/// Roaming on (the default) or off (the integration's `wifi_roaming`).
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Switches roaming on or off (a change is written to the connection log).
+pub fn set_enabled(on: bool) {
+    if ENABLED.swap(on, Ordering::SeqCst) != on {
+        crate::connlog::note(if on { "roaming on" } else { "roaming off: no roam checks, stall checks or link probes" });
+    }
+}
+
+fn enabled() -> bool {
+    ENABLED.load(Ordering::SeqCst)
+}
 
 /// The current connection.
 #[derive(Debug, Clone, PartialEq)]
@@ -112,6 +131,37 @@ fn parse_status(text: &str) -> Option<Link> {
         return None;
     }
     Some(Link { bssid: get("bssid")?.to_ascii_lowercase(), ssid: get("ssid")?.to_string() })
+}
+
+/// An SSID as wpa_cli prints it (printf-escaped: `\xNN`, `\\`, `\"`, `\e`, `\n`, `\r`, `\t`) back to its bytes.
+fn unescape_ssid(s: &str) -> Vec<u8> {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'\\' && i + 1 < b.len() {
+            let hex = (b[i + 1] == b'x' && i + 3 < b.len())
+                .then(|| std::str::from_utf8(&b[i + 2..i + 4]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
+                .flatten();
+            if let Some(v) = hex {
+                out.push(v);
+                i += 4;
+                continue;
+            }
+            out.push(match b[i + 1] {
+                b'e' => 0x1b,
+                b'n' => b'\n',
+                b'r' => b'\r',
+                b't' => b'\t',
+                c => c,
+            });
+            i += 2;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    out
 }
 
 /// `wpa_cli signal_poll`: the link's signal in dBm.
@@ -210,6 +260,10 @@ fn mark_poor(bssid: &str) {
 /// One check. False when it could not run (not connected, scan refused, the
 /// panel got busy): the caller tries again soon.
 fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
+    // the network is being changed in the settings: not now
+    if crate::wifi::switching() {
+        return false;
+    }
     let Some(link) = wpa_cli(&["status"]).as_deref().and_then(parse_status) else { return false };
     let Some(signal) = wpa_cli(&["signal_poll"]).as_deref().and_then(parse_signal) else { return false };
     if signal >= GOOD_SIGNAL && !leaving {
@@ -219,7 +273,7 @@ fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
     // A scan for the network's own name: an access point that does not broadcast it (a hidden SSID) answers only a
     // probe that names it, and a plain scan lists it without a name. FAIL-BUSY while wpa_supplicant scans or connects
     // by itself.
-    let hex: String = link.ssid.bytes().map(|b| format!("{b:02x}")).collect();
+    let hex: String = unescape_ssid(&link.ssid).iter().map(|b| format!("{b:02x}")).collect();
     if !ok(wpa_cli(&["scan", "ssid", &hex])) && !ok(wpa_cli(&["scan"])) {
         return false;
     }
@@ -241,8 +295,8 @@ fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
             crate::connlog::note(&format!("roam check: {current} dBm on {}, no other access point of the network, staying", link.bssid))
         }
         Decision::Move { current, to } => {
-            // A voice run may have started during the scan.
-            if !idle() {
+            // A voice run may have started during the scan (or roaming was switched off).
+            if !idle() || !enabled() {
                 return false;
             }
             crate::connlog::note(&format!(
@@ -343,7 +397,8 @@ fn watch(linked: impl Fn() -> bool) {
         // missed beacons and answered pings in 0.25-3 s; off, in a few ms
         power_save_off();
         std::thread::sleep(WATCH_EVERY);
-        if linked() {
+        // (also while the network is being changed in the settings: that switch makes and checks the link itself)
+        if linked() || crate::wifi::switching() {
             away_since = None;
             continue;
         }
@@ -361,6 +416,64 @@ fn watch(linked: impl Fn() -> bool) {
     }
 }
 
+/// wpa_supplicant's own link events (it changes the access point by itself when beacons are lost, and the drops the
+/// link watch repairs start there): beacon losses, disconnects with their reason, connections, one line each in the
+/// connection log. Read from `wpa_cli` in interactive mode, which prints the events as they come; started again when
+/// wpa_cli ends (wpa_supplicant restarted).
+fn wpa_events() {
+    use std::io::BufRead;
+    let mut last_loss: Option<std::time::Instant> = None;
+    loop {
+        let child = Command::new("wpa_cli")
+            .args(["-i", IFACE])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        let Ok(mut child) = child else {
+            std::thread::sleep(Duration::from_secs(60));
+            continue;
+        };
+        // stdin stays open and is never written: interactive mode keeps listening
+        let _stdin = child.stdin.take();
+        if let Some(out) = child.stdout.take() {
+            for line in std::io::BufReader::new(out).lines().map_while(Result::ok) {
+                if let Some(note) = wpa_event_note(&line, &mut last_loss) {
+                    crate::connlog::note(&note);
+                }
+            }
+        }
+        let _ = child.kill();
+        let _ = child.wait();
+        std::thread::sleep(Duration::from_secs(10));
+    }
+}
+
+/// The connection log line for one wpa_cli event line (none for the others); beacon losses at most once in 30 s.
+fn wpa_event_note(line: &str, last_loss: &mut Option<std::time::Instant>) -> Option<String> {
+    let ev = line.split("CTRL-EVENT-").nth(1)?.trim();
+    let field = |key: &str| ev.split_whitespace().find_map(|w| w.strip_prefix(key)).map(str::to_string);
+    if ev.starts_with("BEACON-LOSS") {
+        if last_loss.is_some_and(|t| t.elapsed() < Duration::from_secs(30)) {
+            return None;
+        }
+        *last_loss = Some(std::time::Instant::now());
+        let on = wpa_cli(&["status"]).as_deref().and_then(parse_status).map(|l| format!(" on {}", l.bssid)).unwrap_or_default();
+        return Some(format!("Wi-Fi: beacons lost{on}"));
+    }
+    if ev.starts_with("DISCONNECTED") {
+        let bssid = field("bssid=").unwrap_or_default();
+        let reason = field("reason=").unwrap_or_default();
+        let by_panel = field("locally_generated=").is_some_and(|v| v == "1");
+        return Some(format!("Wi-Fi: disconnected from {bssid} (reason {reason}{})", if by_panel { ", by the panel" } else { "" }));
+    }
+    if ev.starts_with("CONNECTED") {
+        let to = ev.split("Connection to ").nth(1).and_then(|r| r.split_whitespace().next()).unwrap_or("?");
+        return Some(format!("Wi-Fi: connected to {to}"));
+    }
+    None
+}
+
 /// Runs the roam check thread (`idle`: whether the panel is idle; `stalled`: the music stalls and
 /// nothing else is going on) and the link watch (`linked`: whether the link to Home Assistant is up).
 pub fn spawn(
@@ -371,12 +484,21 @@ pub fn spawn(
     if let Err(e) = std::thread::Builder::new().name("link-watch".into()).spawn(move || watch(linked)) {
         crate::connlog::note(&format!("link watch not started: {e}"));
     }
+    if let Err(e) = std::thread::Builder::new().name("wpa-events".into()).spawn(wpa_events) {
+        crate::connlog::note(&format!("Wi-Fi event log not started: {e}"));
+    }
     let started = std::thread::Builder::new().name("roam".into()).spawn(move || {
         // the first check waits a while after the start; a stalling stream does not
         let mut next_check = std::time::Instant::now() + FIRST_CHECK;
         let mut poor_probes = 0;
         let mut stall_check: Option<std::time::Instant> = None;
         loop {
+            // roaming off: nothing that could move the panel (the link watch runs on)
+            if !enabled() {
+                poor_probes = 0;
+                std::thread::sleep(STALL_POLL);
+                continue;
+            }
             if std::time::Instant::now() >= next_check {
                 let done = idle() && check(&idle, false);
                 next_check = std::time::Instant::now() + if done { INTERVAL } else { RETRY };
@@ -387,6 +509,9 @@ pub fn spawn(
             let mut stall = false;
             while std::time::Instant::now() < wake {
                 std::thread::sleep(STALL_POLL.min(wake.saturating_duration_since(std::time::Instant::now())));
+                if !enabled() {
+                    break;
+                }
                 if stalled() && stall_check.is_none_or(|t| t.elapsed() >= STALL_GAP) {
                     stall = true;
                     break;
@@ -398,7 +523,7 @@ pub fn spawn(
                 check(&|| idle() || stalled(), false);
                 continue;
             }
-            if !idle() {
+            if !idle() || !enabled() {
                 continue;
             }
             // the link's quality: two poor probes in a row (30 s apart) and the panel leaves this access point
@@ -460,6 +585,27 @@ mod tests {
         let link = parse_status(STATUS).unwrap();
         assert_eq!(link, Link { bssid: "aa:00:00:00:00:01".into(), ssid: "Home".into() });
         assert_eq!(parse_status(&STATUS.replace("COMPLETED", "SCANNING")), None);
+    }
+
+    #[test]
+    fn ssid_escapes() {
+        assert_eq!(unescape_ssid("Home"), b"Home".to_vec());
+        assert_eq!(unescape_ssid(r#"Caf\xc3\xa9 \"x\""#), "Café \"x\"".as_bytes().to_vec());
+        assert_eq!(unescape_ssid(r"a\\b"), b"a\\b".to_vec());
+    }
+
+    #[test]
+    fn wpa_event_lines() {
+        let mut last = None;
+        assert_eq!(
+            wpa_event_note("<3>CTRL-EVENT-DISCONNECTED bssid=aa:00:00:00:00:01 reason=4 locally_generated=1", &mut last).as_deref(),
+            Some("Wi-Fi: disconnected from aa:00:00:00:00:01 (reason 4, by the panel)")
+        );
+        assert_eq!(
+            wpa_event_note("> <3>CTRL-EVENT-CONNECTED - Connection to aa:00:00:00:00:02 completed [id=0 id_str=]", &mut last).as_deref(),
+            Some("Wi-Fi: connected to aa:00:00:00:00:02")
+        );
+        assert_eq!(wpa_event_note("<3>CTRL-EVENT-SCAN-RESULTS ", &mut last), None);
     }
 
     #[test]

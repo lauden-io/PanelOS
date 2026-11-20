@@ -10,6 +10,8 @@
 // white mask (colorize = the colour) with a grey + alpha shading layer on top.
 import { Theme, Act, Clock, Words } from "theme.slint";
 import { Icon, Glyph, PlayGlyph, GlowText, Dropdown, MenuHost, PageMenu } from "widgets.slint";
+import { AlarmClock, AlarmEditor, AlarmSettings, AlarmRing } from "alarm_menus.slint";
+import { WatchSettings } from "watch_menus.slint";
 import { FlapCard } from "panels.slint";
 import { NewTimerMenu, TimerSettingsMenu, LookFrame, TimerLooks, RollTime, ArcKey } from "timer_menus.slint";
 import { ArcadeScreen, ArcadeBlock } from "arcade.slint";
@@ -38,7 +40,7 @@ export struct AlarmItem {
 // a random line, never the last one, a random 10–30 s from below the front edge to the horizon; the next
 // one comes when it is gone)
 export struct SwCar {
-    line: float,        // which floor line (0 = the middle one, negative = left)
+    line: float,        // which floor line (-4 … 4: 0 = the middle one, negative = left)
     kind: int,          // 0 wedge, 1 flat tail with four round lights, 2 rounded fastback, 3 louvre, 4 winged, 5 patrol (police)
     tint: color,        // its colour (random, vivid)
     born: float,        // the scene clock (seconds) when it appeared
@@ -324,16 +326,60 @@ component TimerControls inherits HorizontalLayout {
         ring-w: 1.5px; ring-c: root.neon ? root.tint.with-alpha(0.6) : TFg.c.with-alpha(0.30); icon: "\u{F0156}"; } }
 }
 
-// a settings chip
-component Chip inherits Rectangle {
-    in property <string> text;
-    in property <bool> on;
-    in property <bool> check;          // multi-choice: a tick when on
-    in property <color> fill: Theme.accent;
-    width: ct.preferred-width + 26px + (root.check && root.on ? 20px : 0px); height: 32px; border-radius: 16px;
-    background: root.on ? (root.check ? TFg.c.with-alpha(0.18) : TFg.c) : transparent; border-width: root.on ? 0px : 1px; border-color: TFg.c.with-alpha(0.25);
-    if root.check && root.on: Icon { x: 12px; width: 16px; height: parent.height; text: "\u{F012C}"; font-size: 15px; color: TFg.c; }
-    ct := Text { x: root.check && root.on ? 33px : 13px; width: self.preferred-width; height: parent.height; text: root.text; font-size: 14px; font-weight: 500; color: root.on && !root.check ? (Theme.dark ? #101114 : #F5F3EE) : TFg.c; vertical-alignment: center; }
+// The alarms as chips (twin-bell, sunrise, 24-hour dial): a dot in the alarm's colour (filled while on), its time and
+// days; two to a row, further rows scroll, so every alarm can be reached. A tap switches it on or off; a hold of 500 ms
+// opens it in the editor (its dot blinks twice while held; it opens on release).
+component AlarmChips inherits Rectangle {
+    in property <[AlarmItem]> alarms;
+    in property <color> fill;
+    in property <color> ink;
+    in property <color> fade-to: transparent;   // the page's ground: more rows below fade into it
+    callback toggled(int);
+    callback edit(int);
+    property <length> cw: (root.width - 8px) / 2;
+    property <int> rows: Math.ceil(root.alarms.length / 2);
+    fl := Flickable {
+        width: root.width; height: root.height;
+        content-height: Math.max(self.height, root.rows * 48px - 8px);
+        interactive: root.rows * 48px - 8px > self.height;
+        for a[i] in root.alarms: chip := Rectangle {
+            x: root.alarms.length == 1 ? (root.width - root.cw) / 2 : Math.mod(i, 2) * (root.cw + 8px);
+            y: Math.floor(i / 2) * 48px;
+            width: root.cw; height: 40px; border-radius: 20px; background: root.fill; opacity: a.on ? 1 : 0.5;
+            property <bool> down;
+            property <bool> held;
+            property <duration> t0;
+            Timer { interval: 500ms; running: chip.down && !chip.held; triggered => { chip.held = true; } }
+            property <bool> blink: chip.down && !chip.held && Math.mod(Math.floor((animation-tick() - chip.t0) / 125ms), 2) == 1;
+            Rectangle { x: 12px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: a.on ? a.tint : transparent;
+                border-width: 1.5px; border-color: a.tint; opacity: chip.blink ? 0 : 1; }
+            tm := Text { x: 26px; height: parent.height; text: AlarmClock.of(a.hour); font-size: 14px; font-weight: 600; color: root.ink; vertical-alignment: center; }
+            property <length> dx: 26px + tm.preferred-width + 8px;
+            probe := Text { visible: false; text: a.days; font-size: 13px; font-weight: 500; }
+            Text { x: chip.dx; width: parent.width - chip.dx - 12px; height: parent.height; text: a.days;
+                font-size: probe.preferred-width <= parent.width - chip.dx - 12px ? 13px : 11px; font-weight: 500;
+                color: root.ink.with-alpha(0.75); vertical-alignment: center; wrap: word-wrap; }
+            TouchArea {
+                pointer-event(ev) => {
+                    if ev.kind == PointerEventKind.down {
+                        chip.down = true;
+                        chip.held = false;
+                        chip.t0 = animation-tick();
+                    } else if ev.kind == PointerEventKind.up && chip.down {
+                        chip.down = false;
+                        if chip.held { root.edit(i); } else { root.toggled(i); }
+                        chip.held = false;
+                    } else if ev.kind == PointerEventKind.cancel {
+                        chip.down = false;
+                        chip.held = false;
+                    }
+                }
+            }
+        }
+    }
+    // more below: a soft fade at the foot (until the list is scrolled to its end)
+    if root.fade-to != transparent && fl.content-y > fl.height - fl.content-height + 2px: Rectangle {
+        y: root.height - 22px; height: 22px; background: @linear-gradient(180deg, root.fade-to.with-alpha(0) 0%, root.fade-to 100%); }
 }
 
 // The synthwave scene: sky, floor with lines gliding towards the viewer, a shooting star now and then
@@ -412,7 +458,7 @@ export component SynthScene inherits Rectangle {
             if self.mouse-y < 330px {
                 root.tap-x = self.mouse-x / 1px; root.tap-y = self.mouse-y / 1px; root.tap-t0 = animation-tick(); root.tap-star = true;
             } else {
-                Act.act("synth.lane", self.mouse-x / 1px);
+                Act.act("synth.lane", (self.mouse-x / 1px) + ":" + (self.mouse-y / 1px));
             }
         }
     }
@@ -653,6 +699,14 @@ export component TimersPage inherits Rectangle {
     in property <int> kb-layer;
     in property <int> kb-layout;            // letters: 0 Latin, 1 Cyrillic (the globe key)
     in property <color> edit-tint: #ffb21e;
+    // the page is on the screen (the pager shows it; no screensaver): its menus close when it leaves (#9)
+    in property <bool> on-screen: true;
+    // a snoozed alarm: the time of day it rings again (-1: none); the ringing alarm's time as hours of the day
+    in property <float> snooze-h: -1;
+    in property <float> ring-h: -1;
+    // the alarm and stopwatch tabs' settings menus (spec 35, 36), raised by the quick shade's page row
+    in-out property <bool> al-menu;
+    in-out property <bool> sw-menu;
     property <[string]> sounds: ["Rise and Shine", "Up and At 'Em", "Early Bird", "Saved by the Bell", "Old School", "Neon Sunrise"];
 
     pure function two(n: int) -> string { (n < 10 ? "0" : "") + n }
@@ -694,7 +748,6 @@ export component TimersPage inherits Rectangle {
     background: Theme.background;
 
     // ---------------------------------------------------------------- the timers tab: its state (spec 34, 25.T14)
-    in property <bool> on-screen;          // the page is the one on screen (the pager settled on it, no screensaver)
     in property <[int]> cells;             // the grids' timers: the four that end soonest (indexes into timers)
     pure function eo(u: float) -> float { return 1 - Math.pow(1 - clamp(u, 0, 1), 3); }
     // the timer a grid cell shows
@@ -1144,6 +1197,17 @@ export component TimersPage inherits Rectangle {
     changed lap-n => { if root.lap-n > root.lap-last { root.lap-t0 = animation-tick(); root.lap-sliding = true; } root.lap-last = root.lap-n; }
     Timer { interval: 200ms; running: root.lap-sliding; triggered => { root.lap-sliding = false; } }
     property <length> lap-off: root.lap-sliding ? -34px * Math.pow(1 - clamp((animation-tick() - root.lap-t0) / 180ms, 0, 1), 3) : 0px;
+    // ---------------------------------------------------------------- the next-alarm line (#31: a snoozed ring shows first)
+    property <bool> snoozed: root.snooze-h >= 0;
+    property <string> next-line: root.snoozed ? "Snoozed · rings at " + AlarmClock.of(root.snooze-h)
+        : root.next-in >= 0 ? AlarmClock.of(root.next-h) + " · " + AlarmClock.when(root.next-in) : "No alarm on";
+    // a tap on a chip switches the alarm (the look's T10-T13 motion when it goes on); a hold opens the editor
+    function chip-toggle(i: int) {
+        if i < root.alarms.length && !root.alarms[i].on {
+            root.bell-t0 = animation-tick(); root.bell-shake = true; root.on-t0 = animation-tick(); root.on-i = i; root.on-anim = true;
+        }
+        Act.act("alarms.toggle", i);
+    }
     // ---------------------------------------------------------------- alarm looks (spec 24): 4 24-hour dial
     // midnight at the bottom, noon at the top, the night darker; the sleep arc from now to the next alarm in Signal with the
     // sleep left in the middle; the alarms as markers (filled: on and due within 24 h, a ring: on, another day, faint: off);
@@ -1189,61 +1253,112 @@ export component TimersPage inherits Rectangle {
         for a in root.alarms: Rectangle { x: (root.dpx(a.hour, 112) - 10.5) * 1px; y: (root.dpy(a.hour, 112) - 10.5) * 1px; width: 21px; height: 21px; border-radius: 10.5px;
             background: a.on && a.soon ? a.tint : Theme.background; border-width: 3px; border-color: a.on ? a.tint : parent.faint; }
         // between the 6 and the 18: the time left (or that no alarm is on) and the next alarm under it
-        Text { x: 172px; y: 166px; width: 136px; height: 34px; text: root.next-in < 0 ? "No alarm on" : root.left-text(root.next-in);
-            font-family: root.next-in < 0 ? "Noto Sans" : "Space Grotesk"; font-size: root.next-in < 0 ? 15px : root.next-in >= 600 ? 22px : 26px; font-weight: root.next-in < 0 ? 600 : 500;
+        Text { x: 172px; y: 166px; width: 136px; height: 34px; text: root.snoozed ? "Snoozed" : root.next-in < 0 ? "No alarm on" : root.left-text(root.next-in);
+            font-family: root.next-in < 0 || root.snoozed ? "Noto Sans" : "Space Grotesk"; font-size: root.next-in < 0 || root.snoozed ? 15px : root.next-in >= 600 ? 22px : 26px;
+            font-weight: root.next-in < 0 || root.snoozed ? 600 : 500;
             color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
-        if root.next-in >= 0: Text { x: 172px; y: 198px; width: 136px; height: 18px; text: "of sleep until " + root.next-time; font-size: 13px; font-weight: 500;
+        if root.next-in >= 0 || root.snoozed: Text { x: 162px; y: 198px; width: 156px; height: 18px;
+            text: root.snoozed ? "rings at " + AlarmClock.of(root.snooze-h) : "of sleep until " + AlarmClock.of(root.next-h); font-size: 13px; font-weight: 500;
             color: parent.faint; horizontal-alignment: center; vertical-alignment: center; }
         // the alarms as chips
-        HorizontalLayout { x: 20px; y: 362px; width: root.width - 40px; height: 40px; spacing: 8px; alignment: center;
-            for a[i] in root.alarms: Rectangle {
-                visible: i < 3;
-                width: i < 3 ? cl.preferred-width + 34px : 0px; border-radius: 20px; background: TFg.c.with-alpha(0.08); opacity: a.on ? 1 : 0.45;
-                Rectangle { x: 12px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: a.on ? a.tint : transparent;
-                    border-width: 1.5px; border-color: a.tint; }
-                cl := Text { x: 26px; height: parent.height; text: a.time + "  " + a.days; font-size: 14px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
-                TouchArea { clicked => { if !a.on { root.bell-t0 = animation-tick(); root.bell-shake = true; root.on-t0 = animation-tick(); root.on-i = i; root.on-anim = true; } Act.act("alarms.toggle", i); } }
-            }
-        }
+        AlarmChips { x: 16px; y: 358px; width: root.width - 32px; height: 90px; alarms: root.alarms; fill: TFg.c.with-alpha(0.08); ink: TFg.c; fade-to: Theme.background;
+            toggled(i) => { root.chip-toggle(i); } edit(i) => { Act.act("alarms.edit", i); } }
     }
 
-    // 3 clock radio: the body (a picture), the red LED time, AL1 / AL2 lit for the first two alarms when on, three preset keys
-    // (the alarms, each with its LED; a tap toggles), the next alarm under it
+    // 3 clock radio (spec 24.7, 35.7): the body (a picture) centred in the free space between the tabs and the next-alarm line;
+    // the red LED time (a PM dot in 12-hour mode), AL1-AL3 lit for the presets that are on, three preset keys (a tap
+    // switches that alarm on or off, a hold of 500 ms opens it in the editor while its LED blinks twice; an empty slot is a
+    // "+" key for a new alarm: the radio handles three alarms), a 12H / 24H slide switch on the body
     property <bool> radio-al: root.on-anim && root.on-i >= 0 && root.on-i < root.alarms.length && root.alarm-look == 3;
     property <float> radio-h: root.radio-al ? root.alarms[root.on-i].hour : root.now-h;
-    property <int> radio-hh: Math.floor(root.radio-h);
+    property <int> radio-hh: Math.floor(root.radio-h + 0.0001);
+    property <int> radio-sh: Clock.h24 ? root.radio-hh : (Math.mod(root.radio-hh, 12) == 0 ? 12 : Math.mod(root.radio-hh, 12));
     property <int> radio-mm: Math.mod(Math.floor(root.radio-h * 60 + 0.001), 60);
     if !root.ringing && root.mode == 0 && root.alarm-look == 3: radio := Rectangle {
-        Image { x: 30px; y: 98px; width: 420px; height: 236px; source: Theme.dark ? @image-url("timers/radio-dark.png") : @image-url("timers/radio-light.png"); }
-        Seg7 { d: root.radio-hh >= 10 ? Math.floor(root.radio-hh / 10) : -1; x0: 234; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-        Seg7 { d: Math.mod(root.radio-hh, 10); x0: 274; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-        Seg7 { d: Math.floor(root.radio-mm / 10); x0: 326; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-        Seg7 { d: Math.mod(root.radio-mm, 10); x0: 366; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
-        Rectangle { x: 311px; y: 170px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
-        Rectangle { x: 309px; y: 202px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
-        Text { x: 228px; y: 236px; text: "AL1"; font-size: 10px; font-weight: 700; letter-spacing: 1px;
-            color: root.alarms.length > 0 && root.alarms[0].on ? #ff2d1a : #3a1410; }
-        Text { x: 258px; y: 236px; text: "AL2"; font-size: 10px; font-weight: 700; letter-spacing: 1px;
-            color: root.alarms.length > 1 && root.alarms[1].on ? #ff2d1a : #3a1410; }
+        property <length> ry: root.top - 10px + Math.max(0px, (404px - (root.top - 10px) - 236px) / 2);
+        property <length> dy: radio.ry - 98px;
+        property <color> body: Theme.dark ? #17171a : #e7dec9;
+        property <color> print: Theme.dark ? #4a4a50 : #b3a585;
+        Image { x: 30px; y: radio.ry; width: 420px; height: 236px; source: Theme.dark ? @image-url("timers/radio-dark.png") : @image-url("timers/radio-light.png"); }
+        Rectangle { x: 0; y: radio.dy; width: 480px; height: 480px;
+            Seg7 { d: root.radio-sh >= 10 ? Math.floor(root.radio-sh / 10) : -1; x0: 234; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Seg7 { d: Math.mod(root.radio-sh, 10); x0: 274; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Seg7 { d: Math.floor(root.radio-mm / 10); x0: 326; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Seg7 { d: Math.mod(root.radio-mm, 10); x0: 366; y0: 152; w: 34; h: 62; t: 7; slant: 0; gap: 0.2; ghost: false; ink: #ff2d1a; off: #2a0c09; }
+            Rectangle { x: 311px; y: 170px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
+            Rectangle { x: 309px; y: 202px; width: 8px; height: 8px; border-radius: 4px; background: #ff2d1a; }
+            // 12-hour mode: the PM dot beside the digits, as real clock radios have it
+            if !Clock.h24: Rectangle { x: 217px; y: 156px; width: 7px; height: 7px; border-radius: 3.5px; background: root.radio-hh >= 12 ? #ff2d1a : #3a1410;
+                drop-shadow-blur: root.radio-hh >= 12 ? 5px : 0px; drop-shadow-color: #ff2d1acc; }
+            if !Clock.h24: Text { x: 210px; y: 166px; width: 21px; text: "PM"; font-size: 8px; font-weight: 700; color: root.radio-hh >= 12 ? #ff2d1a : #3a1410; horizontal-alignment: center; }
+            // AL1-AL3: one per preset key, lit while that alarm is on
+            for k in 3: Text { x: (228 + k * 30) * 1px; y: 236px; text: "AL" + (k + 1); font-size: 10px; font-weight: 700; letter-spacing: 1px;
+                color: k < root.alarms.length && root.alarms[k].on ? #ff2d1a : #3a1410; }
+        }
+        // the 12H / 24H slide switch on the body, where the print was (the print moves left of it)
+        sw12 := Rectangle { x: 30px + 18px; y: radio.ry + 210px; width: 160px; height: 21px; background: radio.body;
+            Text { x: 4px; height: parent.height; text: "PANELOS"; font-size: 9px; font-weight: 700; letter-spacing: 2px; color: radio.print; vertical-alignment: center; }
+            property <float> sk: Clock.h24 ? 1 : 0;
+            animate sk { duration: 120ms; easing: ease-out; }
+            Text { x: 78px; height: parent.height; text: "12H"; font-size: 9px; font-weight: 700; letter-spacing: 1px; vertical-alignment: center;
+                color: Clock.h24 ? radio.print : radio.print.mix(Theme.dark ? #ffffff : #000000, 0.45); }
+            Rectangle { x: 100px; y: 5px; width: 30px; height: 12px; border-radius: 6px; background: Theme.dark ? #0b0b0d : #cfc3a6;
+                Rectangle { x: 2px + 12px * sw12.sk; y: 1px; width: 14px; height: 10px; border-radius: 5px; background: Theme.dark ? #5a5b62 : #f6f1e4; } }
+            Text { x: 134px; height: parent.height; text: "24H"; font-size: 9px; font-weight: 700; letter-spacing: 1px; vertical-alignment: center;
+                color: Clock.h24 ? radio.print.mix(Theme.dark ? #ffffff : #000000, 0.45) : radio.print; }
+            TouchArea { x: 70px; y: -12px; width: 90px; height: 44px; clicked => { Clock.h24 = !Clock.h24; Act.act("set.h24", Clock.h24 ? "true" : "false"); } }
+        }
         // the preset keys
-        for a[i] in root.alarms: Rectangle {
-            visible: i < 3;
-            x: 212px + i * (68px + 8px); y: 262px + (kta.pressed ? 2px : 0px); width: 68px; height: 54px; border-radius: 9px;
+        for k in 3: key := Rectangle {
+            property <bool> has: k < root.alarms.length;
+            property <AlarmItem> a: key.has ? root.alarms[k] : { time: "", days: "", label: "", on: false, tint: #ffffff, hour: 0, soon: false };
+            property <bool> down;
+            property <bool> held;
+            property <duration> t0;
+            Timer { interval: 500ms; running: key.down && key.has && !key.held; triggered => { key.held = true; } }
+            // while held: the LED blinks twice
+            property <bool> blink: key.down && key.has && !key.held && Math.mod(Math.floor((animation-tick() - key.t0) / 125ms), 2) == 1;
+            x: 212px + k * (68px + 8px); y: radio.ry + 164px + (key.down ? 2px : 0px); width: 68px; height: 54px; border-radius: 9px;
             background: Theme.dark ? #26262b : #f4eedf;
             Rectangle { x: 0; y: parent.height - 3px; width: parent.width; height: 3px; border-bottom-left-radius: 9px; border-bottom-right-radius: 9px;
                 background: Theme.dark ? #121214 : #cdbf9f; }
-            Rectangle { x: 8px; y: 7px; width: 6px; height: 6px; border-radius: 3px; background: a.on ? #ff2d1a : (Theme.dark ? #3a3a40 : #bfb196);
-                drop-shadow-blur: a.on ? 6px : 0px; drop-shadow-color: #ff2d1a;
+            if key.has: Rectangle { x: 8px; y: 7px; width: 6px; height: 6px; border-radius: 3px;
+                background: (key.a.on != key.blink) ? #ff2d1a : (Theme.dark ? #3a3a40 : #bfb196);
+                drop-shadow-blur: key.a.on != key.blink ? 6px : 0px; drop-shadow-color: #ff2d1a;
                 animate background { duration: 150ms; } }
-            Text { x: parent.width - 18px; y: 4px; width: 10px; text: i + 1; font-size: 10px; font-weight: 700; color: Theme.dark ? #e8e4dc : #3a332a; opacity: 0.6;
+            Text { x: parent.width - 18px; y: 4px; width: 10px; text: k + 1; font-size: 10px; font-weight: 700; color: Theme.dark ? #e8e4dc : #3a332a; opacity: 0.6;
                 horizontal-alignment: right; }
-            Text { x: 0; y: 20px; width: parent.width; height: 24px; text: a.time; font-size: 15px; font-weight: 700; color: Theme.dark ? #e8e4dc : #3a332a;
-                horizontal-alignment: center; vertical-alignment: center; opacity: a.on ? 1 : 0.5; }
-            kta := TouchArea { clicked => { if !a.on { root.bell-t0 = animation-tick(); root.bell-shake = true; root.on-t0 = animation-tick(); root.on-i = i; root.on-anim = true; } Act.act("alarms.toggle", i); } }
+            if key.has: Text { x: 2px; y: 18px; width: parent.width - 4px; height: 28px; text: AlarmClock.of(key.a.hour); font-size: Clock.h24 ? 15px : 13px; font-weight: 700;
+                color: Theme.dark ? #e8e4dc : #3a332a; horizontal-alignment: center; vertical-alignment: center; opacity: key.a.on ? 1 : 0.5; }
+            // an empty slot: a dim "+"
+            if !key.has: Icon { y: 6px; text: "\u{F0415}"; font-size: 24px; color: Theme.dark ? #e8e4dc : #3a332a; opacity: 0.35; }
+            TouchArea {
+                pointer-event(ev) => {
+                    if ev.kind == PointerEventKind.down {
+                        key.down = true;
+                        key.held = false;
+                        key.t0 = animation-tick();
+                    } else if ev.kind == PointerEventKind.up && key.down {
+                        key.down = false;
+                        if !key.has {
+                            Act.act("alarms.new", "");
+                        } else if key.held {
+                            Act.act("alarms.edit", k);
+                        } else {
+                            root.chip-toggle(k);
+                        }
+                        key.held = false;
+                    } else if ev.kind == PointerEventKind.cancel {
+                        key.down = false;
+                        key.held = false;
+                    }
+                }
+            }
         }
-        HorizontalLayout { x: 0; y: 344px; width: root.width; height: 22px; alignment: center; spacing: 8px;
-            Text { text: root.next-in < 0 ? "No alarm on" : "Next " + root.next-time; font-size: 15px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
-            if root.next-in >= 0: Text { text: "in " + root.left-text(root.next-in); font-size: 15px; font-weight: 500;
+        HorizontalLayout { x: 16px; y: 410px; width: root.width - 32px; height: 22px; alignment: center; spacing: 8px;
+            if root.snoozed: Icon { text: "\u{F068E}"; font-size: 17px; color: TFg.c.with-alpha(0.7); }
+            Text { text: root.snoozed ? "Snoozed" : root.next-in < 0 ? "No alarm on" : "Next " + AlarmClock.of(root.next-h); font-size: 15px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
+            if root.next-in >= 0 || root.snoozed: Text { text: root.snoozed ? "rings at " + AlarmClock.of(root.snooze-h) : AlarmClock.when(root.next-in); font-size: 15px; font-weight: 500;
                 color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
         }
     }
@@ -1278,22 +1393,20 @@ export component TimersPage inherits Rectangle {
         Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480;
             fill: Theme.dark ? #2e1d29.mix(#060a14, root.dawn) : #c49c86.mix(#b4bcc6, root.dawn);
             commands: "M 0 362 C 90 352 160 366 240 364 C 330 362 400 350 480 356 L 480 480 L 0 480 Z"; }
-        Text { x: 0; y: 128px; width: root.width; height: 100px; text: root.next-in < 0 ? "–:––" : root.next-time; font-family: "Space Grotesk"; font-size: 96px; font-weight: 500;
-            letter-spacing: -2px; color: sky.fg; horizontal-alignment: center; vertical-alignment: center; }
+        HorizontalLayout { x: 0; y: 128px; width: root.width; height: 100px; alignment: center; spacing: 6px;
+            Text { text: root.next-in < 0 ? "–:––" : AlarmClock.digits(root.next-h); font-family: "Space Grotesk"; font-size: 96px; font-weight: 500;
+                letter-spacing: -2px; color: sky.fg; vertical-alignment: center; }
+            if root.next-in >= 0 && !Clock.h24: VerticalLayout { padding-bottom: 22px; alignment: end;
+                Text { text: AlarmClock.ampm(root.next-h); font-family: "Space Grotesk"; font-size: 30px; font-weight: 500; color: sky.fg; } }
+        }
         Text { x: 0; y: 234px; width: root.width; height: 22px; text: root.next-in < 0 ? "No alarm on" : root.next-label; font-size: 17px; font-weight: 600; color: sky.fg;
             horizontal-alignment: center; vertical-alignment: center; }
-        if root.next-in >= 0: Text { x: 0; y: 256px; width: root.width; height: 20px; font-size: 14px; color: sky.faint; horizontal-alignment: center; vertical-alignment: center;
-            text: "in " + root.left-text(root.next-in) + " · the sky brightens from " + root.dawn-from; }
-        HorizontalLayout { x: 16px; y: 388px; width: root.width - 32px; height: 40px; spacing: 8px; alignment: center;
-            for a[i] in root.alarms: Rectangle {
-                visible: i < 3;
-                width: i < 3 ? sl.preferred-width + 34px : 0px; border-radius: 20px; background: Theme.dark ? #F5F3EE1f : #10111414; opacity: a.on ? 1 : 0.5;
-                Rectangle { x: 12px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: a.on ? a.tint : transparent;
-                    border-width: 1.5px; border-color: a.tint; }
-                sl := Text { x: 26px; height: parent.height; text: a.time + "  " + a.days; font-size: 14px; font-weight: 600; color: Theme.dark ? #F5F3EE : #101114; vertical-alignment: center; }
-                TouchArea { clicked => { if !a.on { root.bell-t0 = animation-tick(); root.bell-shake = true; root.on-t0 = animation-tick(); root.on-i = i; root.on-anim = true; } Act.act("alarms.toggle", i); } }
-            }
-        }
+        if root.next-in >= 0 || root.snoozed: Text { x: 16px; y: 256px; width: root.width - 32px; height: 20px; font-size: 14px; color: sky.faint;
+            horizontal-alignment: center; vertical-alignment: center; wrap: word-wrap;
+            text: root.snoozed ? "Snoozed · rings at " + AlarmClock.of(root.snooze-h)
+                : AlarmClock.when(root.next-in) + " · the sky brightens from " + AlarmClock.of(Math.mod(root.next-h + 23.5, 24)); }
+        AlarmChips { x: 16px; y: 352px; width: root.width - 32px; height: 96px; alarms: root.alarms; fill: Theme.dark ? #F5F3EE1f : #10111414; ink: Theme.dark ? #F5F3EE : #101114;
+            toggled(i) => { root.chip-toggle(i); } edit(i) => { Act.act("alarms.edit", i); } }
     }
 
     // 1 twin-bell clock: the red clock (a picture) with its hour, minute and second hands and the alarm hand (Signal, an
@@ -1302,20 +1415,13 @@ export component TimersPage inherits Rectangle {
         TwinBellClock { x: 150px; y: 98px; width: 180px; height: 206px; metal: Theme.dark ? #b9b6af : #8d8a84; highlight: false; shadow: false;
             hours: Math.mod(root.now-h, 12); minutes: Math.mod(root.now-h * 60, 60); seconds: root.now-s;
             ting: root.on-t < 150; ting-t: root.on-t; }
-        HorizontalLayout { x: 0; y: 318px; width: root.width; height: 24px; alignment: center; spacing: 8px;
-            Text { text: root.next-in < 0 ? "No alarm on" : "Next " + root.next-time; font-size: 16px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
-            if root.next-in >= 0: Text { text: "in " + root.left-text(root.next-in); font-size: 15px; color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
+        HorizontalLayout { x: 0; y: 316px; width: root.width; height: 24px; alignment: center; spacing: 8px;
+            Text { text: root.snoozed ? "Snoozed" : root.next-in < 0 ? "No alarm on" : "Next " + AlarmClock.of(root.next-h); font-size: 16px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
+            if root.next-in >= 0 || root.snoozed: Text { text: root.snoozed ? "rings at " + AlarmClock.of(root.snooze-h) : AlarmClock.when(root.next-in); font-size: 15px;
+                color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
         }
-        HorizontalLayout { x: 16px; y: 356px; width: root.width - 32px; height: 40px; spacing: 8px; alignment: center;
-            for a[i] in root.alarms: Rectangle {
-                visible: i < 3;
-                width: i < 3 ? bl.preferred-width + 34px : 0px; border-radius: 20px; background: TFg.c.with-alpha(0.08); opacity: a.on ? 1 : 0.45;
-                Rectangle { x: 12px; y: (parent.height - 8px) / 2; width: 8px; height: 8px; border-radius: 4px; background: a.on ? a.tint : transparent;
-                    border-width: 1.5px; border-color: a.tint; }
-                bl := Text { x: 26px; height: parent.height; text: a.time + "  " + a.days; font-size: 14px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
-                TouchArea { clicked => { if !a.on { root.bell-t0 = animation-tick(); root.bell-shake = true; root.on-t0 = animation-tick(); root.on-i = i; root.on-anim = true; } Act.act("alarms.toggle", i); } }
-            }
-        }
+        AlarmChips { x: 16px; y: 352px; width: root.width - 32px; height: 96px; alarms: root.alarms; fill: TFg.c.with-alpha(0.08); ink: TFg.c; fade-to: Theme.background;
+            toggled(i) => { root.chip-toggle(i); } edit(i) => { Act.act("alarms.edit", i); } }
     }
 
     // ---------------------------------------------------------------- alarms
@@ -1362,8 +1468,8 @@ export component TimersPage inherits Rectangle {
                 // M20: switching an alarm on shakes the bell ±2 px, 3 cycles in 300 ms
                 Rectangle { width: 22px;
                     Icon { x: root.bell-shake ? 2px * Math.sin(1080deg * clamp((animation-tick() - root.bell-t0) / 300ms, 0, 1)) : 0px;
-                        width: parent.width; height: parent.height; text: "\u{F0020}"; font-size: 20px; color: root.next-tint; } }
-                Text { text: root.next-alarm != "" ? root.next-alarm : "No alarm on"; font-size: 15px; font-weight: 600; color: TFg.c.with-alpha(0.85); vertical-alignment: center; overflow: elide; }
+                        width: parent.width; height: parent.height; text: root.snoozed ? "\u{F068E}" : "\u{F0020}"; font-size: 20px; color: root.next-tint; } }
+                Text { text: root.next-line; font-size: 15px; font-weight: 600; color: TFg.c.with-alpha(0.85); vertical-alignment: center; overflow: elide; }
             }
         }
         Flickable {
@@ -1374,9 +1480,16 @@ export component TimersPage inherits Rectangle {
             x: 20px; y: i * 78px; width: root.width - 40px; height: 70px; border-radius: 18px; background: TFg.c.with-alpha(0.04);
             TouchArea { clicked => { Act.act("alarms.edit", i); } }
             Rectangle { x: 0; y: 14px; width: 4px; height: parent.height - 28px; border-radius: 2px; background: a.on ? a.tint : TFg.c.with-alpha(0.15); }
-            Text { x: 18px; y: 0; width: 120px; height: parent.height; text: a.time; font-size: 34px; font-weight: 600; color: a.on ? TFg.c : TFg.c.with-alpha(0.35); vertical-alignment: center; }
-            Text { x: 138px; y: 13px; width: parent.width - 138px - 80px; height: 22px; text: a.label; font-size: 16px; font-weight: 600; color: a.on ? a.tint.mix(TFg.c, 0.5) : TFg.c.with-alpha(0.35); overflow: elide; vertical-alignment: center; }
-            Text { x: 138px; y: 35px; width: parent.width - 138px - 80px; height: 20px; text: a.days; font-size: 13px; color: a.on ? TFg.c.with-alpha(0.60) : TFg.c.with-alpha(0.25); overflow: elide; vertical-alignment: center; }
+            rt := Text { x: 18px; y: 0; height: parent.height; text: AlarmClock.digits(a.hour); font-size: 34px; font-weight: 600; color: a.on ? TFg.c : TFg.c.with-alpha(0.35); vertical-alignment: center; }
+            // 12-hour mode: AM / PM small beside the digits, on their baseline
+            ra := Text { x: 18px + rt.preferred-width + 4px; y: 0; height: parent.height - 18px; text: AlarmClock.ampm(a.hour); font-size: 15px; font-weight: 600;
+                color: a.on ? TFg.c.with-alpha(0.7) : TFg.c.with-alpha(0.3); vertical-alignment: bottom; }
+            property <length> lx: Math.max(138px, 18px + rt.preferred-width + (Clock.h24 ? 0px : ra.preferred-width + 4px) + 16px);
+            lp := Text { visible: false; text: a.label; font-size: 16px; font-weight: 600; }
+            property <bool> long: lp.preferred-width > self.width - self.lx - 80px;
+            Text { x: parent.lx; y: parent.long ? 6px : 13px; width: parent.width - parent.lx - 80px; height: parent.long ? 36px : 22px; text: a.label;
+                font-size: parent.long ? 13px : 16px; font-weight: 600; color: a.on ? a.tint.mix(TFg.c, 0.5) : TFg.c.with-alpha(0.35); wrap: word-wrap; vertical-alignment: center; }
+            Text { x: parent.lx; y: parent.long ? 44px : 35px; width: parent.width - parent.lx - 80px; height: 20px; text: a.days; font-size: 13px; color: a.on ? TFg.c.with-alpha(0.60) : TFg.c.with-alpha(0.25); wrap: word-wrap; vertical-alignment: center; }
             Rectangle {
                 x: parent.width - 72px; y: (parent.height - 30px) / 2; width: 54px; height: 30px; border-radius: 15px; background: a.on ? a.tint : TFg.c.with-alpha(0.15);
                 TouchArea { x: -12px; y: -16px; width: parent.width + 24px; height: parent.height + 32px; clicked => { if !a.on { root.bell-t0 = animation-tick(); root.bell-shake = true; root.on-t0 = animation-tick(); root.on-i = i; root.on-anim = true; } Act.act("alarms.toggle", i); } }
@@ -1397,7 +1510,23 @@ export component TimersPage inherits Rectangle {
     property <color> sw-faint: TFg.c.with-alpha(0.55);
     // 1 chronograph: the dial (a picture), the 30-minute counter's hand, the digital window, the sweep hand (Signal, with a tail
     // and a counterweight, every frame), the laps as small triangles outside the dial (the newest Signal)
+    // (#87) with laps the dial slides left (300 ms) and the lap list stands at its right: newest on top, every lap scrolls into view
+    property <float> chrono-k: root.laps.length > 0 ? 1 : 0;
+    animate chrono-k { duration: 300ms; easing: ease-out; }
+    if !root.ringing && root.mode == 2 && root.sw-look == 1 && root.chrono-k > 0.001: Flickable {
+        x: 288px + 40px * (1 - root.chrono-k); y: 100px; width: 176px; height: 252px; opacity: root.chrono-k;
+        content-height: Math.max(self.height, root.laps.length * 36px);
+        for l[i] in root.laps: Rectangle {
+            y: i * 36px + root.lap-off; height: 32px; opacity: i == 0 ? 1 + root.lap-off / 34px : 1;
+            border-radius: 8px; background: i == 0 ? #FF4A1C.with-alpha(Theme.dark ? 0.16 : 0.12) : TFg.c.with-alpha(0.05);
+            Text { x: 10px; width: 64px; height: parent.height; text: "LAP " + (root.laps.length - i); font-size: 11px; font-weight: 700; letter-spacing: 1px;
+                color: i == 0 ? #FF4A1C : root.sw-faint; vertical-alignment: center; }
+            Text { x: parent.width - 10px - 100px; width: 100px; height: parent.height; text: root.lapfmt(l); font-family: "Space Grotesk"; font-size: 16px; font-weight: 500;
+                color: TFg.c; horizontal-alignment: right; vertical-alignment: center; }
+        }
+    }
     if !root.ringing && root.mode == 2 && root.sw-look == 1: Rectangle {
+        x: -102px * root.chrono-k;
         Image { x: 109px; y: 95px; width: 262px; height: 262px; source: Theme.dark ? @image-url("timers/sw/chrono-dark.png") : @image-url("timers/sw/chrono-light.png"); }
         property <angle> sa: root.flyback ? Math.mod(root.fly-from, 60) / 60 * 360deg * (1 - root.fly-k) : Math.mod(root.watch, 60) / 60 * 360deg;
         property <angle> ma: root.flyback ? Math.mod(root.fly-from / 60, 30) / 30 * 360deg * (1 - root.fly-k) : Math.mod(root.watch / 60, 30) / 30 * 360deg;
@@ -1452,11 +1581,13 @@ export component TimersPage inherits Rectangle {
         Text { x: 360px; y: 190px; width: 96px; height: 18px; text: "GAP"; font-size: 11px; font-weight: 700; letter-spacing: 1.4px; color: root.sw-faint; vertical-alignment: center;
             horizontal-alignment: right; }
         property <float> push: root.lap-t < 220 ? 1 - Math.pow(1 - root.lap-t / 220, 3) : 1;
+        // (#87) every lap: five rows show, the older ones scroll into view
+        Flickable { x: 24px; y: 210px; width: 432px; height: 147px;
+            content-height: Math.max(self.height, root.laps.length * 30px);
         for l[i] in root.laps: row := Rectangle {
             property <bool> best: root.lap-best >= 0 && Math.abs(l - root.lap-best) < 0.0005;
-            visible: i < 5 || (i == 5 && tower.push < 1);
-            x: 24px; y: 210px + (i - 1 + tower.push) * 30px; width: 432px; height: 27px; border-radius: 6px; background: TFg.c.with-alpha(0.05);
-            opacity: i == 0 ? tower.push : i == 5 ? 1 - tower.push : 1;
+            x: 0; y: (i - 1 + tower.push) * 30px; width: 432px; height: 27px; border-radius: 6px; background: TFg.c.with-alpha(0.05);
+            opacity: i == 0 ? tower.push : 1;
             clip: true;
             // a new best lap: a purple shimmer sweeps across its row (500 ms)
             if i == 0 && row.best && root.lap-t < 500: Rectangle {
@@ -1468,6 +1599,7 @@ export component TimersPage inherits Rectangle {
             Text { x: 44px; width: 220px; height: parent.height; text: root.lapfmt(l); font-family: "Space Grotesk"; font-size: 17px; font-weight: 500; color: TFg.c; vertical-alignment: center; }
             Text { x: parent.width - 104px; width: 96px; height: parent.height; text: row.best ? "BEST" : "+" + root.d2(l - root.lap-best);
                 font-family: "Space Grotesk"; font-size: 15px; font-weight: 500; color: row.best ? #9b4dff : root.sw-faint; horizontal-alignment: right; vertical-alignment: center; }
+        }
         }
     }
 
@@ -1513,16 +1645,25 @@ export component TimersPage inherits Rectangle {
         Rectangle { x: 201.4px; y: 201.4px; width: 7.2px; height: 7.2px; border-radius: 3.6px; background: lcdw.ink; }
         Rectangle { x: 198.4px; y: 227.4px; width: 7.2px; height: 7.2px; border-radius: 3.6px; background: lcdw.ink; }
         Rectangle { x: 312px; y: 246px; width: 5px; height: 5px; background: lcdw.ink; }
-        // the last lap: L n m ss cc
-        property <float> last: root.laps.length > 0 ? root.laps[0] : 0;
-        if root.laps.length > 0: Rectangle {
-            Seg7 { d: 10; x0: 104; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
-            Seg7 { d: Math.mod(root.laps.length, 10); x0: 124; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
-            Seg7 { d: Math.mod(Math.floor(lcdw.last / 60), 10); x0: 168; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
-            Seg7 { d: Math.floor(Math.mod(Math.floor(lcdw.last), 60) / 10); x0: 194; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
-            Seg7 { d: Math.mod(Math.floor(lcdw.last), 10); x0: 214; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
-            Seg7 { d: Math.floor(Math.mod(Math.floor(lcdw.last * 100), 100) / 10); x0: 244; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
-            Seg7 { d: Math.mod(Math.floor(lcdw.last * 100), 10); x0: 264; y0: 272; w: 15; h: 24; t: 3.6; ink: lcdw.ink; lag: true; }
+        // (#87) the laps in two LCD lines, L nn m:ss.cc, newest on top; the older ones scroll into view
+        if root.laps.length > 0: Flickable {
+            x: 96px; y: 256px; width: 290px; height: 48px;
+            content-height: Math.max(self.height, root.laps.length * 24px);
+            for l[i] in root.laps: Rectangle {
+                property <int> n: root.laps.length - i;
+                y: i * 24px; height: 24px;
+                Seg7 { x: -96px; y: 0; d: 10; x0: 104; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: parent.n >= 10 ? Math.mod(Math.floor(parent.n / 10), 10) : -1; x0: 122; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: Math.mod(parent.n, 10); x0: 138; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: Math.mod(Math.floor(l / 60), 10); x0: 170; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Rectangle { x: 90px; y: 7px; width: 3px; height: 3px; background: lcdw.ink; }
+                Rectangle { x: 89px; y: 15px; width: 3px; height: 3px; background: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: Math.floor(Math.mod(Math.floor(l), 60) / 10); x0: 196; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: Math.mod(Math.floor(l), 10); x0: 212; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Rectangle { x: 133px; y: 19px; width: 3px; height: 3px; background: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: Math.floor(Math.mod(Math.floor(l * 100), 100) / 10); x0: 236; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+                Seg7 { x: -96px; y: 0; d: Math.mod(Math.floor(l * 100), 10); x0: 252; y0: 2; w: 13; h: 20; t: 3; ink: lcdw.ink; }
+            }
         }
     }
 
@@ -1607,9 +1748,9 @@ export component TimersPage inherits Rectangle {
         Text { visible: sw.plain; x: 0; y: root.top + 124px; width: root.width; height: 20px; text: root.watch-running ? "Running" : root.watch > 0 ? "Stopped" : ""; font-size: 14px; color: TFg.c.with-alpha(0.50);
             horizontal-alignment: center; vertical-alignment: center; }
         // M19: a new lap slides in from the top and pushes the others down (180 ms); the fourth slides out under the edge
-        Rectangle { visible: sw.plain; x: 40px; y: root.top + 156px; width: root.width - 80px; height: 3 * 34px; clip: true;
+        Flickable { visible: sw.plain; x: 40px; y: root.top + 156px; width: root.width - 80px; height: 3 * 34px;
+            content-height: Math.max(self.height, root.laps.length * 34px);
         for l[i] in root.laps: Rectangle {
-            visible: i < 4;
             x: 0; y: i * 34px + root.lap-off; width: parent.width; height: 30px;
             opacity: i == 0 ? 1 + root.lap-off / 34px : 1;
             Text { x: 0; width: 100px; height: parent.height; text: "Lap " + (root.laps.length - i); font-size: 15px; color: TFg.c.with-alpha(0.60); vertical-alignment: center; }
@@ -1675,7 +1816,12 @@ export component TimersPage inherits Rectangle {
     }
 
     // ---------------------------------------------------------------- ringing: full screen until stop
-    if root.ring-shown: Rectangle {
+    // (an alarm in the twin-bell, sunrise, clock radio or 24-hour dial look rings in its look's own way, #30)
+    if root.ring-shown && root.ring-alarm && root.alarm-look > 0: AlarmRing {
+        look: root.alarm-look; time: root.ring-time; hour: root.ring-h >= 0 ? root.ring-h : root.now-h; label: root.ring-label; pulse: root.pulse;
+        tint: root.ring-tint; now-h: root.now-h; sunrise-h: root.sunrise-h; sunset-h: root.sunset-h;
+    }
+    if root.ring-shown && !(root.ring-alarm && root.alarm-look > 0): Rectangle {
         background: @radial-gradient(circle, root.ring-tint.mix(#000000, 0.55 + 0.25 * root.pulse) 0%, root.ring-tint.mix(#000000, 0.22) 100%);
         if !root.ring-alarm: Rectangle { x: (root.width - 112px) / 2; y: 70px; width: 112px; height: 112px; border-radius: 56px; background: #ffffff26;
             Icon { width: parent.width; height: parent.height; text: "\u{F13AB}"; font-size: 60px; color: #ffffff; } }
@@ -1776,97 +1922,15 @@ export component TimersPage inherits Rectangle {
         }
     }
 
-    // ---------------------------------------------------------------- alarm editor: time, days, sound, label
-    // (a sheet sized to its content, under the status bar; delete sits in the header for a saved alarm)
-    if root.edit && !root.edit-timer && !root.edit-keyboard: Rectangle { background: #00000080; TouchArea { clicked => { Act.act("alarm.close", ""); } } }
-    if root.edit && !root.edit-timer && !root.edit-keyboard: ed := Rectangle {
-        TouchArea { }
-        property <bool> ha: root.edit-ha-sound != "" && !root.edit-timer;
-        property <length> dy: 56px;                       // drums
-        property <length> ty: self.dy + 120px + 14px;     // days
-        property <length> sy: self.ty + 40px + 18px;      // sounds (two lines, a third for the one set in Home Assistant)
-        property <length> ly: root.edit-timer ? self.dy + 120px + 18px : self.sy + 48px + 18px;      // label
-        x: 0; y: root.height - self.height; width: root.width; height: self.ly + 44px + 14px;
-        border-top-left-radius: 24px; border-top-right-radius: 24px; background: Theme.sheet;
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: TFg.c.with-alpha(0.25); }
-        Text { x: 20px; y: 16px; height: 32px; text: root.edit-timer ? "New timer" : root.edit-new ? "New alarm" : "Edit alarm"; font-size: 20px; font-weight: 600; color: TFg.c; vertical-alignment: center; }
-        if !root.edit-new && !root.edit-timer: Rectangle { x: parent.width - 16px - 88px - 46px - 46px; y: 14px; width: 36px; height: 36px; border-radius: 18px; border-width: 1px; border-color: #ff5a5f80;
-            Icon { width: parent.width; height: parent.height; text: "\u{F01B4}"; font-size: 20px; color: #ff7a7e; }
-            TouchArea { clicked => { Act.act("alarm.delete", ""); } } }
-        Rectangle { x: parent.width - 16px - 88px - 46px; y: 14px; width: 36px; height: 36px; border-radius: 18px; background: TFg.c.with-alpha(0.12);
-            Icon { width: parent.width; height: parent.height; text: "\u{F0156}"; font-size: 21px; color: TFg.c.with-alpha(0.90); }
-            TouchArea { clicked => { Act.act("alarm.close", ""); } } }
-        // brand: a button's text is Ink or Paper, its ground the text colour
-        Rectangle { x: parent.width - 16px - 88px; y: 15px; width: 88px; height: 34px; border-radius: 17px; background: TFg.c;
-            Text { width: parent.width; height: parent.height; text: root.edit-timer ? "Start" : "Save"; font-size: 15px; font-weight: 600; color: Theme.dark ? #101114 : #F5F3EE; horizontal-alignment: center; vertical-alignment: center; }
-            TouchArea { clicked => { Act.act(root.edit-timer ? "timers.create" : "alarm.save", ""); } } }
-        // time: two drums, the middle row is the value
-        Rectangle { x: 72px; y: ed.dy + 40px; width: parent.width - 144px; height: 40px; border-radius: 14px; background: TFg.c.with-alpha(0.07); }
-        for col[ci] in [{ v: root.edit-h, n: 24, x: 118 }, { v: root.edit-m, n: 60, x: 256 }]: drum := Rectangle {
-            property <int> base;
-            // drag: a row (40 px) per step; a tap on the upper or lower row: one step
-            TouchArea {
-                x: col.x * 1px; y: ed.dy; width: 106px; height: 120px;
-                pointer-event(ev) => { if ev.kind == PointerEventKind.down { drum.base = col.v; } }
-                moved => {
-                    let k = Math.round((self.pressed-y - self.mouse-y) / 40px);
-                    let v = Math.mod(drum.base + k + col.n * 4, col.n);
-                    if ci == 0 { root.edit-h = v; } else { root.edit-m = v; }
-                }
-                clicked => {
-                    let k = self.mouse-y < 40px ? -1 : self.mouse-y > 80px ? 1 : 0;
-                    let v = Math.mod(col.v + k + col.n, col.n);
-                    if ci == 0 { root.edit-h = v; } else { root.edit-m = v; }
-                }
-            }
-            for r in [-1, 0, 1]: Text {
-                property <int> val: Math.mod(col.v + r + col.n * 2, col.n);
-                x: col.x * 1px; y: ed.dy + 40px + r * 40px; width: 106px; height: 40px;
-                text: ci == 0 ? "" + self.val : root.two(self.val);
-                font-size: r == 0 ? 38px : 24px; font-weight: r == 0 ? 600 : 500;
-                color: r == 0 ? TFg.c : TFg.c.with-alpha(0.35); horizontal-alignment: center; vertical-alignment: center;
-            }
-        }
-        if !root.edit-timer: Text { x: 0; y: ed.dy + 40px; width: parent.width; height: 40px; text: ":"; font-size: 36px; font-weight: 600; color: TFg.c; horizontal-alignment: center; vertical-alignment: center; }
-        if root.edit-timer: Text { x: 198px; y: ed.dy + 40px; width: 30px; height: 40px; text: "h"; font-size: 16px; color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
-        if root.edit-timer: Text { x: 336px; y: ed.dy + 40px; width: 44px; height: 40px; text: "min"; font-size: 16px; color: TFg.c.with-alpha(0.55); vertical-alignment: center; }
-        // days
-        if !root.edit-timer: HorizontalLayout {
-            x: 16px; y: ed.ty; width: parent.width - 32px; height: 40px; alignment: space-between;
-            for d[i] in ["M", "T", "W", "T", "F", "S", "S"]: Rectangle {
-                width: 54px; height: 40px; border-radius: 20px;
-                TouchArea { clicked => { Act.act("alarm.day", i); } }
-                background: root.edit-days[i] ? root.edit-tint : transparent; border-width: root.edit-days[i] ? 0px : 1px; border-color: TFg.c.with-alpha(0.25);
-                Text { width: parent.width; height: parent.height; text: d; font-size: 15px; font-weight: 600; color: root.edit-days[i] ? #ffffff : TFg.c.with-alpha(0.70); horizontal-alignment: center; vertical-alignment: center; }
-            }
-        }
-        // sound: a dropdown of the built-in ones (picking one plays it) and the one set in Home Assistant; the info button
-        if !root.edit-timer: Dropdown {
-            x: 16px; y: ed.sy; width: parent.width - 32px - (root.ha-sounds ? 44px : 0px); up: true;
-            options: ed.ha ? [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5], root.edit-ha-sound]
-                : [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5]];
-            selected: root.edit-sound;
-            picked(i) => { Act.act("alarm.sound", i); }
-        }
-        if !root.edit-timer && root.ha-sounds: Rectangle { x: parent.width - 16px - 36px; y: ed.sy + 6px; width: 36px; height: 36px; border-radius: 18px;
-            background: root.edit-info ? TFg.c.with-alpha(0.18) : TFg.c.with-alpha(0.08);
-            Icon { width: parent.width; height: parent.height; text: "\u{F02FD}"; font-size: 18px; color: TFg.c.with-alpha(0.80); }
-            TouchArea { clicked => { Act.act("alarm.info", ""); } } }
-        // label: a tap opens the keyboard
-        Rectangle {
-            x: 16px; y: ed.ly; width: parent.width - 32px; height: 44px; border-radius: 14px; background: TFg.c.with-alpha(0.07);
-            Icon { x: 14px; width: 22px; height: parent.height; text: "\u{F04F9}"; font-size: 19px; color: TFg.c.with-alpha(0.60); }
-            TouchArea { clicked => { Act.act("alarm.label", ""); } }
-            Text { x: 46px; width: parent.width - 60px; height: parent.height; text: root.edit-label != "" ? root.edit-label : "Label"; font-size: 16px;
-                color: root.edit-label != "" ? TFg.c : TFg.c.with-alpha(0.40); vertical-alignment: center; overflow: elide; }
-        }
-        // the info note: where the other sounds come from
-        if root.edit-info: Rectangle {
-            x: 16px; y: ed.sy - 96px; width: parent.width - 32px; height: 88px; border-radius: 16px; background: Theme.dark ? #2c2c32 : #e9e6df;
-            border-width: 1px; border-color: TFg.c.with-alpha(0.12);
-            Text { x: 16px; y: 12px; width: parent.width - 32px; height: parent.height - 24px; wrap: word-wrap; font-size: 14px; color: TFg.c.with-alpha(0.85); vertical-alignment: center;
-                text: "Music from Music Assistant or a sound of your own: pick it for this alarm in Home Assistant and it shows up here."; }
-        }
+    // ---------------------------------------------------------------- alarm editor (spec 35): the alarm look's own menu under the
+    // status bar, from the + or an alarm; hidden (not closed) while its label keyboard is up
+    AlarmEditor {
+        visible: !root.edit-keyboard;
+        open: root.edit && !root.edit-timer && !root.ringing;
+        look: root.alarm-look; is-new: root.edit-new; h <=> root.edit-h; m <=> root.edit-m; days: root.edit-days; label: root.edit-label;
+        sound: root.edit-sound; ha-sounds: root.ha-sounds; info: root.edit-info; now-h: root.now-h + root.now-s / 3600;
+        sound-options: root.edit-ha-sound != "" ? [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5], root.edit-ha-sound]
+            : [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5]];
     }
     // label keyboard (the same block as on the setup screens); a label holds up to 60 characters (a timer's; an alarm's 32):
     // the count shows under the field, and a key pressed at the limit shakes the field (±4 px, three times in 300 ms); the
@@ -1898,7 +1962,7 @@ export component TimersPage inherits Rectangle {
                 TouchArea { clicked => { Act.act("alarm.key", "clear"); } } }
         }
         Text { x: 20px; y: 162px; width: parent.width - 40px - 72px; height: 20px; text: root.edit-timer ? (root.edit-h > 0 ? root.edit-h + " h " : "") + root.edit-m + " min"
-                : root.edit-h + ":" + root.two(root.edit-m) + "  ·  " + root.sounds[min(root.edit-sound, root.sounds.length - 1)];
+                : AlarmClock.hm(root.edit-h, root.edit-m) + "  ·  " + root.sounds[min(root.edit-sound, root.sounds.length - 1)];
             font-size: 13px; color: TFg.c.with-alpha(0.50); vertical-alignment: center; overflow: elide; }
         Text { x: parent.width - 20px - 72px; y: 162px; width: 72px; height: 20px; text: kbv.count + " / " + kbv.limit; font-size: 13px;
             font-weight: kbv.full ? 700 : 400; color: kbv.full ? root.edit-tint : TFg.c.with-alpha(0.50); horizontal-alignment: right; vertical-alignment: center; }
@@ -1912,63 +1976,56 @@ export component TimersPage inherits Rectangle {
             } }
     }
 
-    // ---------------------------------------------------------------- settings: functions, colour, theme (+ scene)
-    // the settings fades in (240 ms) and out (200 ms) instead of popping
-    property <float> settings-k: root.settings && root.mode != 1 ? 1 : 0;
-    animate settings-k { duration: root.settings ? 240ms : 200ms; easing: ease-out; }
-    if root.settings-k > 0.001: Rectangle { opacity: root.settings-k; background: #00000080; }
-    if root.settings-k > 0.001: st := Rectangle { opacity: root.settings-k;
-        property <bool> scenes: root.theme == 3;
-        property <length> r0: 72px;
-        property <length> r1: self.r0 + 32px + 22px;
-        property <length> r2: self.r1 + 32px + 22px;
-        property <length> r3: self.r2 + 32px + 8px + 32px + 22px;
-        x: 0; y: root.height - self.height; width: root.width;
-        height: (st.scenes ? self.r3 + 32px + 8px + 32px : self.r2 + 32px + 8px + 32px) + 24px;
-        border-top-left-radius: 24px; border-top-right-radius: 24px;
-        background: Theme.sheet;
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: TFg.c.with-alpha(0.25); }
-        Text { x: 20px; y: 22px; text: "Alarms & timers"; font-size: 20px; font-weight: 600; color: TFg.c; }
-        Rectangle { x: parent.width - 16px - 88px - 46px; y: 18px; width: 36px; height: 36px; border-radius: 18px; background: TFg.c.with-alpha(0.12);
-            Icon { width: parent.width; height: parent.height; text: "\u{F02FD}"; font-size: 21px; color: TFg.c.with-alpha(0.90); } }
-        Rectangle { x: parent.width - 16px - 88px; y: 19px; width: 88px; height: 34px; border-radius: 17px; background: Theme.text;
-            Text { width: parent.width; height: parent.height; text: "Done"; font-size: 15px; font-weight: 600; color: Theme.background; horizontal-alignment: center; vertical-alignment: center; } }
-        HorizontalLayout {
-            x: 16px; y: st.r0; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: "Alarm"; on: root.alarm-on; check: true; }
-            Chip { text: "Timer"; on: root.timer-on; check: true; }
-            Chip { text: "Stopwatch"; on: root.watch-on; check: true; }
+    // ---------------------------------------------------------------- the alarm and stopwatch tabs' settings (spec 35, 36): the page's
+    // settings in the look's own menu, raised by the quick shade's page row (PageMenu) while the tab is on screen
+    AlarmSettings { open <=> root.al-menu; look: root.alarm-look; alarm-on: root.alarm-on; timer-on: root.timer-on; watch-on: root.watch-on; colourful: root.colourful; }
+    WatchSettings { open <=> root.sw-menu; look: root.sw-look; alarm-on: root.alarm-on; timer-on: root.timer-on; watch-on: root.watch-on; colourful: root.colourful; }
+    property <[string]> alarm-looks: ["Plain", "Twin-bell", "Sunrise", "Clock radio", "24-hour dial"];
+    property <[string]> watch-looks: ["Plain", "Chronograph", "Timing tower", "LCD watch", "Nixie"];
+    property <[string]> alarm-icons: ["\u{F0020}", "\u{F078E}", "\u{F059C}", "\u{F0439}", "\u{F1478}"];
+    property <[string]> watch-icons: ["\u{F051B}", "\u{F0589}", "\u{F023C}", "\u{F0897}", "\u{F06E9}"];
+    // what the shade's page row shows for the tab on screen (the timers tab fills in its own)
+    property <string> pm-look: root.mode == 0 ? "Alarms · " + root.alarm-looks[Math.max(0, Math.min(4, root.alarm-look))]
+        : root.mode == 2 ? "Stopwatch · " + root.watch-looks[Math.max(0, Math.min(4, root.sw-look))] : "";
+    function pm-fill() {
+        if root.on-screen && root.mode != 1 {
+            PageMenu.title = "Timers settings";
+            PageMenu.look = root.pm-look;
+            PageMenu.icon = root.mode == 0 ? root.alarm-icons[Math.max(0, Math.min(4, root.alarm-look))] : root.watch-icons[Math.max(0, Math.min(4, root.sw-look))];
+            PageMenu.has-settings = true;
         }
-        HorizontalLayout {
-            x: 16px; y: st.r1; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.0"); on: root.colourful; }
-            for c in [#ff3d6e, #ffb21e, #22d3a6, #3d9bff, #a76bff]: VerticalLayout { alignment: center;
-                Rectangle { width: 10px; height: 10px; border-radius: 5px; background: c; opacity: root.colourful ? 1 : 0.35; } }
-            Rectangle { width: 10px; }
-            Chip { text: Words.line("ui.looks.timers.1"); on: !root.colourful; }
-            VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: Theme.accent; opacity: root.colourful ? 0.35 : 1; } }
+    }
+    Rectangle {
+        // (helper properties: a page knows when it is on screen, its tab and the page row's request)
+        property <bool> shown: root.on-screen;
+        property <string> look: root.pm-look;
+        property <int> req: PageMenu.open-request;
+        property <int> tab: root.mode;
+        property <bool> rings: root.ringing;
+        init => { root.pm-fill(); }
+        changed shown => {
+            root.pm-fill();
+            // #9: the menus close when the page leaves the screen
+            if !root.on-screen {
+                root.al-menu = false;
+                root.sw-menu = false;
+                if root.edit && !root.edit-timer { Act.act("alarm.close", ""); }
+            }
         }
-        HorizontalLayout {
-            x: 16px; y: st.r2; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.2"); on: root.theme == 0; }
-            Chip { text: Words.line("ui.looks.timers.3"); on: root.theme == 1; }
-            Chip { text: Words.line("ui.looks.timers.4"); on: root.theme == 2; }
+        changed look => { root.pm-fill(); }
+        changed tab => { root.al-menu = false; root.sw-menu = false; root.pm-fill(); }
+        changed rings => {
+            if root.ringing {
+                root.al-menu = false;
+                root.sw-menu = false;
+                if root.edit && !root.edit-timer { Act.act("alarm.close", ""); }
+            }
         }
-        HorizontalLayout {
-            x: 16px; y: st.r2 + 40px; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.5"); on: root.theme == 3; }
-            Chip { text: Words.line("ui.looks.timers.6"); on: root.theme == 4; }
-        }
-        if st.scenes: HorizontalLayout {
-            x: 16px; y: st.r3; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: Words.line("ui.looks.timers.7"); on: root.sw-choice < 0; }
-            Chip { text: Words.line("ui.looks.timers.8"); on: root.sw-choice == 0; }
-            Chip { text: "Concrete Jungle"; on: root.sw-choice == 1; }
-        }
-        if st.scenes: HorizontalLayout {
-            x: 16px; y: st.r3 + 40px; height: 32px; alignment: start; spacing: 6px;
-            Chip { text: "Life's a Beach"; on: root.sw-choice == 2; }
-            Chip { text: "Starry-Eyed"; on: root.sw-choice == 3; }
+        changed req => {
+            if root.on-screen && !root.ringing {
+                if root.mode == 0 { root.sw-menu = false; root.al-menu = true; }
+                if root.mode == 2 { root.al-menu = false; root.sw-menu = true; }
+            }
         }
     }
 }

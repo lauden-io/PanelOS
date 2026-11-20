@@ -52,12 +52,12 @@ pub enum FromApi {
 }
 
 /// voice thread → UI
-/// The microphone level while a run streams (0 … 1 for -60 … -20 dBFS, f32
-/// bits): the voice view's halo and trace read it.
+/// The microphone level while the voice view shows (0 … 1 for -60 … -20 dBFS, f32 bits): the view's halo and trace
+/// read it.
 pub static MIC_LEVEL: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
-/// The last 100 ms of the microphone and of the panel's own sound (16 kHz): the oscilloscope look draws the sound itself.
-/// Set while the voice view shows: the microphone's level and trace are then kept up to date outside a run too.
+/// Set while the voice view shows: only then are the level and the traces kept up to date.
 pub static METER_ON: AtomicBool = AtomicBool::new(false);
+/// The last 100 ms of the microphone and of the panel's own sound (16 kHz): the oscilloscope look draws the sound itself.
 pub static MIC_TRACE: std::sync::Mutex<std::collections::VecDeque<i16>> = std::sync::Mutex::new(std::collections::VecDeque::new());
 pub static OUT_TRACE: std::sync::Mutex<std::collections::VecDeque<i16>> = std::sync::Mutex::new(std::collections::VecDeque::new());
 const TRACE_KEEP: usize = 1600;
@@ -1008,7 +1008,9 @@ fn player_thread(
                 for tri in mono[..written.min(mono.len())].chunks(3) {
                     q.push_back((tri.iter().map(|v| *v as i32).sum::<i32>() / tri.len() as i32) as i16);
                 }
-                keep_trace(&OUT_TRACE, q.iter().skip(start).copied());
+                if METER_ON.load(Ordering::Relaxed) {
+                    keep_trace(&OUT_TRACE, q.iter().skip(start).copied());
+                }
                 while q.len() > 16000 {
                     q.pop_front();
                 }
@@ -1058,7 +1060,7 @@ enum State {
 pub struct VoiceControl {
     pub muted: Arc<AtomicBool>,
     /// A finished timer rings: listen without a wake word (as the ESPHome
-    /// satellites do); a short sentence (e.g. "stop") stops it.
+    /// satellites do); a stop word or a short stop phrase stops it.
     pub ringing: Arc<AtomicBool>,
     pub active_wake_words: Arc<Mutex<Vec<String>>>,
     /// Home Assistant base URL, for relative announcement media URLs.
@@ -1349,17 +1351,19 @@ pub fn spawn(
                                 test_audio = None;
                                 if kind == 4 {
                                     let text = get("text").unwrap_or_default();
-                                    let words = text.split_whitespace().count();
-                                    if control.ringing.load(Ordering::SeqCst) {
+                                    let ringing = control.ringing.load(Ordering::SeqCst);
+                                    if ringing {
                                         eprintln!("nspanel-app: voice: heard while the timer rings: '{text}'");
                                     }
-                                    if control.ringing.load(Ordering::SeqCst) && words > 0 && words <= 5 {
-                                        // Ringing timer + a short sentence = stop
-                                        // (speech recognition often returns only a
-                                        // fragment of a short word); not sent on to the assistant.
+                                    if ringing && crate::stt::is_only_stop(&text) {
+                                        // A timer rang up during the run and the run's whole sentence is a stop
+                                        // phrase: it stops the ring and the run (nothing for the assistant). Any
+                                        // other sentence, however short, is a command and goes on to the assistant.
                                         eprintln!("nspanel-app: voice: '{text}' while the timer rings -> stop");
                                         control.ringing.store(false, Ordering::SeqCst);
                                         let _ = to_api.send(ToApi::Stop);
+                                        state = State::Idle;
+                                        quiet_until = Some(Instant::now() + Duration::from_secs(3));
                                         player.stop();
                                         ui(VoiceUi::Stopped);
                                         follow_up_pending = false;
@@ -1604,7 +1608,8 @@ pub fn spawn(
                     eprintln!("nspanel-app: voice: '{text}' is not a stop phrase");
                 }
             }
-            if METER_ON.load(Ordering::Relaxed) && state != State::Streaming {
+            // the voice view's meter, only while the view shows: the microphone's level and trace
+            if METER_ON.load(Ordering::Relaxed) {
                 let rms = if muted { 0.0 } else { (chunk.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / chunk.len().max(1) as f64).sqrt() };
                 let db = 20.0 * (rms / 32768.0).max(1e-9).log10();
                 MIC_LEVEL.store((((db + 60.0) / 40.0).clamp(0.0, 1.0) as f32).to_bits(), Ordering::Relaxed);
@@ -1756,12 +1761,6 @@ pub fn spawn(
                             follow_up_run = false;
                             continue;
                         }
-                    }
-                    {
-                        let rms = (chunk.iter().map(|&v| (v as f64) * (v as f64)).sum::<f64>() / chunk.len().max(1) as f64).sqrt();
-                        let db = 20.0 * (rms / 32768.0).max(1e-9).log10();
-                        MIC_LEVEL.store((((db + 60.0) / 40.0).clamp(0.0, 1.0) as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
-                        keep_trace(&MIC_TRACE, chunk.iter().copied());
                     }
                     if let Some((samples, pos)) = test_audio.as_mut() {
                         // Test audio, then silence.
