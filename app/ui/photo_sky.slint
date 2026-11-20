@@ -767,8 +767,8 @@ export component PhotoSky inherits Rectangle {
     // 10. lightning flash over everything
     if root.stormy && root.flash && root.pulse > 0: Rectangle { background: #dfe7ff; opacity: root.pulse * (root.theme == 7 ? 0.12 : 0.42); }
 
-    // 11. drops on the glass: drawn by the app as a post-process over the finished frame
-    //     (they refract everything under them, text included). See glass.rs.
+    // 11. drops on the glass: drawn by the app over the finished frame (they refract everything under them,
+    //     text included): src/glass.rs, src/glass_gl.rs
 
     // 12. legibility for the white text: a photo's texture hides a soft dark glow, but on the flat
     //     drawn skies it shows as a dark spot, so they get about a third (light scenes a bit more);

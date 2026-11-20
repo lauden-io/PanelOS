@@ -21,6 +21,10 @@ pub struct Settings {
     /// "clock" or "black".
     pub screensaver_style: String,
     pub proximity_wake: bool,
+    /// Drops on the glass over the photo backgrounds when it rains.
+    pub rain_on_glass: bool,
+    /// Lightning (flashes and bolts) in the storm scenes.
+    pub lightning: bool,
     /// Dashboard url_path; empty = the one in app.json.
     pub dashboard: String,
     /// Weather entity shown on the screensaver; empty = none.
@@ -50,6 +54,10 @@ pub struct Settings {
     pub alarms: Vec<crate::alarms::Alarm>,
     /// The touch calibration's correction (pixels), from the touch test.
     pub touch_offset: (f32, f32),
+    /// Child lock: touches do nothing until the lock is held (see `device_options`).
+    pub child_lock: bool,
+    /// The time format of every clock time the panel shows: true 24-hour, false 12-hour.
+    pub time_24h: bool,
 }
 
 /// What the web view shows in dashboard mode.
@@ -180,6 +188,8 @@ impl Default for Settings {
             screensaver_seconds: 120,
             screensaver_style: "clock".into(),
             proximity_wake: true,
+            rain_on_glass: true,
+            lightning: true,
             dashboard: String::new(),
             weather_entity: String::new(),
             wake_words: vec!["okay_nabu".into(), "hey_jarvis".into()],
@@ -193,6 +203,8 @@ impl Default for Settings {
             calendar_view: 0,
             alarms: Vec::new(),
             touch_offset: (0.0, 0.0),
+            child_lock: false,
+            time_24h: true,
         }
     }
 }
@@ -202,7 +214,7 @@ fn path() -> String {
 }
 
 /// A file next to the settings (the same folder, so a second instance with its own settings keeps its own).
-fn beside(name: &str) -> std::path::PathBuf {
+pub fn beside(name: &str) -> std::path::PathBuf {
     std::path::Path::new(&path()).with_file_name(name)
 }
 

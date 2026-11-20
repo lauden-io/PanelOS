@@ -663,7 +663,8 @@ pub fn spawn(
         // Current outage: since when, and the last logged cause. Cells: the
         // session reports its connection through the emit callback.
         let failing_since: std::cell::Cell<Option<Instant>> = std::cell::Cell::new(None);
-        let last_logged: std::cell::RefCell<Option<String>> = std::cell::RefCell::new(None);
+        // the causes already logged in this outage (two causes taking turns are logged once each)
+        let last_logged: std::cell::RefCell<Vec<String>> = std::cell::RefCell::new(Vec::new());
         loop {
             if !reloading && failing_since.get().is_none() {
                 emit(Event::Status { text: "Connecting to Home Assistant…".into(), connected: false });
@@ -674,7 +675,7 @@ pub fn spawn(
                     if let Some(since) = failing_since.take() {
                         crate::connlog::note(&format!("Home Assistant connected again after {} s", since.elapsed().as_secs()));
                     }
-                    last_logged.borrow_mut().take();
+                    last_logged.borrow_mut().clear();
                 }
                 emit(event)
             });
@@ -699,9 +700,9 @@ pub fn spawn(
                 Failure::Offline => "no network".to_string(),
                 _ => e.clone(),
             };
-            if last_logged.borrow().as_deref() != Some(cause.as_str()) {
+            if !last_logged.borrow().contains(&cause) {
                 crate::connlog::note(&format!("Home Assistant session ended: {e}"));
-                *last_logged.borrow_mut() = Some(cause);
+                last_logged.borrow_mut().push(cause);
             }
             if failing_since.get().is_none() {
                 failing_since.set(Some(Instant::now()));

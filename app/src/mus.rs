@@ -133,6 +133,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             with_state(|s| {
                 s.settings.music_player = id;
                 s.settings.save();
+                // the holds of the player shown before do not carry over to this one
+                s.music_hold = None;
+                s.music_skip = None;
             });
             ui.set_music_picker(false);
             crate::apply_panel_config(ui);
@@ -145,6 +148,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             with_state(|s| {
                 s.settings.music_player = id;
                 s.settings.save();
+                // the holds of the player shown before do not carry over to this one
+                s.music_hold = None;
+                s.music_skip = None;
             });
             ui.set_music_picker(false);
             crate::apply_panel_config(ui);

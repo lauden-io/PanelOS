@@ -10,7 +10,10 @@ handler unchanged. A conversation agent's tool calls carry the device too, so th
 does with a command (a plain "play" becomes resume there).
 
 The handlers of the media player integration are wrapped once Home Assistant has started (it registers them while it
-sets up); the reply is Home Assistant's own for that intent, in the language of the command.
+sets up), and again whenever a handler of these intents is registered anew (an intent_script or conversation reload,
+an integration set up later); the reply is Home Assistant's own for that intent, in the language of the command. A
+chosen player that cannot do what was asked gets Home Assistant's own "not supported" reply; an unavailable one leaves
+the command to Home Assistant's own handler.
 """
 
 from __future__ import annotations
@@ -31,6 +34,8 @@ from homeassistant.components.media_player import (
 )
 from homeassistant.const import (
     ATTR_ENTITY_ID,
+    EVENT_CALL_SERVICE,
+    EVENT_COMPONENT_LOADED,
     SERVICE_MEDIA_NEXT_TRACK,
     SERVICE_MEDIA_PAUSE,
     SERVICE_MEDIA_PLAY,
@@ -39,11 +44,20 @@ from homeassistant.const import (
     SERVICE_VOLUME_MUTE,
     SERVICE_VOLUME_SET,
     SERVICE_VOLUME_UP,
+    STATE_UNAVAILABLE,
 )
-from homeassistant.core import HomeAssistant, callback
+from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
-from homeassistant.util import dt as dt_util
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er, intent
+from homeassistant.helpers.event import async_call_later
+from homeassistant.util import dt as dt_util
+
+from .const import DOMAIN
+
+try:
+    from homeassistant.exceptions import ServiceNotSupported
+except ImportError:  # an older Home Assistant: the feature check before the call is all
+    ServiceNotSupported = None  # type: ignore[assignment,misc]
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -64,6 +78,21 @@ _SERVICES = {
 _TARGET_SLOTS = ("name", "floor", "device_class")
 # search and play needs a player that can do both
 _SEARCH_AND_PLAY = MediaPlayerEntityFeature.SEARCH_MEDIA | MediaPlayerEntityFeature.PLAY_MEDIA
+# what the player must support for each intent (as Home Assistant's own handlers ask; resume: the play service)
+_FEATURES = {
+    "HassMediaNext": MediaPlayerEntityFeature.NEXT_TRACK,
+    "HassMediaPrevious": MediaPlayerEntityFeature.PREVIOUS_TRACK,
+    "HassMediaPause": MediaPlayerEntityFeature.PAUSE,
+    "HassMediaUnpause": MediaPlayerEntityFeature.PLAY,
+    "HassSetVolume": MediaPlayerEntityFeature.VOLUME_SET,
+    "HassSetVolumeRelative": MediaPlayerEntityFeature.VOLUME_SET,
+    "HassMediaPlayerMute": MediaPlayerEntityFeature.VOLUME_MUTE,
+    "HassMediaPlayerUnmute": MediaPlayerEntityFeature.VOLUME_MUTE,
+}
+# after a reload service (intent_script, conversation, all YAML) the wrap is checked again this many seconds later: the
+# event comes before the reload has registered its handlers
+_RECHECK_AFTER_RELOAD = (1, 5, 15)
+_LISTENING = "voice_intents_listening"
 
 
 def _slot(intent_obj: intent.Intent, key: str) -> Any:
@@ -128,7 +157,12 @@ def _panel_player(hass: HomeAssistant, intent_obj: intent.Intent) -> str | None:
     from .panel import voice_player  # noqa: PLC0415
 
     player = voice_player(hass, satellite)
-    if not player or hass.states.get(player) is None:
+    state = hass.states.get(player) if player else None
+    if state is None:
+        return None
+    if state.state == STATE_UNAVAILABLE:
+        # a service call would skip it and the reply would say done: Home Assistant's own handler answers instead
+        _LOGGER.debug("%s is unavailable; %s goes to Home Assistant's own handler", player, intent_obj.intent_type)
         return None
     return player
 
@@ -138,6 +172,26 @@ def _can_search(hass: HomeAssistant, player: str) -> bool:
     state = hass.states.get(player)
     features = int(state.attributes.get("supported_features") or 0) if state else 0
     return features & _SEARCH_AND_PLAY == _SEARCH_AND_PLAY
+
+
+def _features(hass: HomeAssistant, player: str) -> int:
+    state = hass.states.get(player)
+    try:
+        return int(state.attributes.get("supported_features") or 0) if state else 0
+    except (TypeError, ValueError):
+        return 0
+
+
+def _not_supported(features: int) -> intent.IntentError:
+    """Home Assistant's own error for a device that cannot do what was asked (its reply: "not supported", in the
+    language of the command)."""
+    try:
+        return intent.MatchFailedError(
+            result=intent.MatchTargetsResult(False, intent.MatchFailedReason.FEATURE),
+            constraints=intent.MatchTargetsConstraints(domains={MEDIA_PLAYER_DOMAIN}, features=features),
+        )
+    except (AttributeError, TypeError):  # an older Home Assistant without these classes
+        return intent.IntentHandleError("The player does not support this")
 
 
 def _field(item: Any, key: str) -> Any:
@@ -185,6 +239,10 @@ async def _search_and_play(hass: HomeAssistant, intent_obj: intent.Intent, playe
 async def _act(hass: HomeAssistant, intent_obj: intent.Intent, intent_type: str, player: str) -> intent.IntentResponse:
     if intent_type == "HassMediaSearchAndPlay":
         return await _search_and_play(hass, intent_obj, player)
+    needed = int(_FEATURES[intent_type])
+    if _features(hass, player) & needed != needed:
+        _LOGGER.debug("%s cannot do %s (said to a panel)", player, intent_type)
+        raise _not_supported(needed)
     data: dict[str, Any] = {ATTR_ENTITY_ID: player}
     service = _SERVICES[intent_type]
     if intent_type == "HassSetVolume":
@@ -220,7 +278,12 @@ async def _act(hass: HomeAssistant, intent_obj: intent.Intent, intent_type: str,
             await asyncio.sleep(0.7)
         except Exception:  # noqa: BLE001 - a player that cannot seek (a radio stream): plain previous
             _LOGGER.debug("%s cannot seek; previous as it is", player)
-    await hass.services.async_call(MEDIA_PLAYER_DOMAIN, service, data, blocking=True, context=intent_obj.context)
+    try:
+        await hass.services.async_call(MEDIA_PLAYER_DOMAIN, service, data, blocking=True, context=intent_obj.context)
+    except HomeAssistantError as err:
+        if ServiceNotSupported is not None and isinstance(err, ServiceNotSupported):
+            raise _not_supported(needed) from err
+        raise
     _LOGGER.debug("%s on %s (said to a panel)", intent_type, player)
     response = intent_obj.create_response()
     response.response_type = intent.IntentResponseType.ACTION_DONE
@@ -230,8 +293,8 @@ async def _act(hass: HomeAssistant, intent_obj: intent.Intent, intent_type: str,
 
 
 @callback
-def async_setup_voice_intents(hass: HomeAssistant) -> None:
-    """Wraps Home Assistant's media intent handlers (once; call after Home Assistant has started)."""
+def _wrap(hass: HomeAssistant) -> None:
+    """Wraps the media intent handlers registered now; a handler already wrapped is left as it is."""
     handlers = hass.data.get(intent.DATA_KEY) or {}
     wrapped = []
     for intent_type in _SERVICES:
@@ -251,3 +314,31 @@ def async_setup_voice_intents(hass: HomeAssistant) -> None:
         wrapped.append(intent_type)
     if wrapped:
         _LOGGER.info("Music by voice on panels: %s act on each panel's chosen player", ", ".join(wrapped))
+
+
+@callback
+def async_setup_voice_intents(hass: HomeAssistant) -> None:
+    """Wraps Home Assistant's media intent handlers (call after Home Assistant has started), and again whenever they
+    may have been registered anew: after a reload service and when an integration has been set up."""
+    _wrap(hass)
+    data = hass.data.setdefault(DOMAIN, {})
+    if data.get(_LISTENING):
+        return
+    data[_LISTENING] = True
+
+    @callback
+    def _recheck(_now: Any) -> None:
+        _wrap(hass)
+
+    @callback
+    def _service_called(event: Event) -> None:
+        if event.data.get("service") in ("reload", "reload_all"):
+            for delay in _RECHECK_AFTER_RELOAD:
+                async_call_later(hass, delay, _recheck)
+
+    @callback
+    def _component_loaded(_event: Event) -> None:
+        _wrap(hass)
+
+    hass.bus.async_listen(EVENT_CALL_SERVICE, _service_called)
+    hass.bus.async_listen(EVENT_COMPONENT_LOADED, _component_loaded)

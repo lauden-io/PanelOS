@@ -1,17 +1,18 @@
 //! Status screens and critical alerts, sent by the integration (it evaluates
 //! the house-wide rules and tells each panel). A status screen covers the
 //! panel while its state lasts; a swipe or its button folds it into the strip
-//! on top, and a tap on the strip opens it again. A critical alert takes the
-//! whole screen on the notifications page, sounds until it is held (when the
-//! integration allows holding) and stays in the strip, red, until its sensor
-//! clears.
+//! under the status bar, a tap on the strip opens it again and its × closes
+//! the strip (the state goes on without it). A critical alert takes the whole
+//! screen on the notifications page, sounds until it is held (when the
+//! integration allows holding) and stays in the strip, red and without ×,
+//! until its sensor clears.
 
 use std::time::Instant;
 
 use serde_json::Value;
 use slint::Color;
 
-use crate::pages::{local_format, now};
+use crate::pages::now;
 use crate::{icons, texts, with_state, AppWindow, StatusScreen};
 
 #[derive(Clone, Debug)]
@@ -29,6 +30,8 @@ pub struct Status {
     since: i64,
     started: Instant,
     folded: bool,
+    /// Its strip was closed (×): the state goes on, nothing shows it.
+    closed: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -153,6 +156,7 @@ pub fn show(ui: &AppWindow, v: &Value) {
                     since: now(),
                     started: Instant::now(),
                     folded,
+                    closed: false,
                 });
                 !folded
             });
@@ -196,9 +200,10 @@ pub fn show(ui: &AppWindow, v: &Value) {
     refresh(ui);
 }
 
-/// Taps: `status.fold`, `strip.open`, `info.crit-silence`.
+/// Taps: `status.fold`, `strip.open`, `strip.close`, `info.crit-silence`.
 pub fn act(ui: &AppWindow, what: &str) {
     let mut to_info = false;
+    let mut note_strip = false;
     with_state(|s| match what {
         "status.fold" => {
             if let Some(t) = s.statuses.last_mut() {
@@ -212,6 +217,16 @@ pub fn act(ui: &AppWindow, what: &str) {
                 t.folded = false;
             }
         }
+        // the strip's ×: a folded status screen's strip goes (a critical alert's strip has none); a notification's strip
+        // (the integration's "strip" for new notifications) just closes
+        "strip.close" => {
+            let critical_strip = s.critical.as_ref().is_some_and(|c| c.silenced);
+            if !s.alert_strip {
+                note_strip = true;
+            } else if let Some(t) = s.statuses.last_mut().filter(|t| t.folded && !critical_strip) {
+                t.closed = true;
+            }
+        }
         "info.crit-silence" => {
             if let Some(c) = s.critical.as_mut() {
                 c.silenced = true;
@@ -219,6 +234,9 @@ pub fn act(ui: &AppWindow, what: &str) {
         }
         _ => {}
     });
+    if note_strip {
+        ui.set_strip_on(false);
+    }
     if to_info && !crate::go_to_page(ui, "info") {
         crate::open_temporary_page(ui, "info");
     }
@@ -262,7 +280,7 @@ pub fn refresh(ui: &AppWindow) -> Option<String> {
             picto_small: small,
             has_picto: has,
             tint: t.tint,
-            since: format!("since {} · {}", local_format(t.since, "%H:%M"), minutes(t.since)).into(),
+            since: format!("since {} · {}", crate::clock::local_hm(t.since), minutes(t.since)).into(),
             button: t.button.as_str().into(),
             left,
             left_text: left_text.into(),
@@ -275,7 +293,7 @@ pub fn refresh(ui: &AppWindow) -> Option<String> {
     // the strip: a silenced critical alert (red), else a folded status screen
     let strip = match (&crit, &top) {
         (Some(c), _) if c.silenced => Some((c.title.clone(), minutes(c.since), glyph(&c.icon), Default::default(), false, Color::from_rgb_u8(0x8e, 0x0d, 0x14), true)),
-        (_, Some(t)) if t.folded => {
+        (_, Some(t)) if t.folded && !t.closed => {
             let small = picto(&t.picto).1;
             let has = small.size().width > 0;
             let sub = match t.countdown {

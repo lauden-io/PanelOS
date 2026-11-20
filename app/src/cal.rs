@@ -632,7 +632,7 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     // New models rebuild the page: only when the events, the minute, the view, the shown calendars or the time
     // format changed.
     thread_local!(static LAST: std::cell::Cell<u64> = const { std::cell::Cell::new(0) });
-    let key = events.iter().fold((t / 60) as u64 ^ ((view as u64) << 56) ^ ((shift as u64) << 40), |k, e| {
+    let key = events.iter().fold((t / 60) as u64 ^ ((view as u64) << 56) ^ ((shift as u64) << 40) ^ ((crate::clock::h24() as u64) << 63), |k, e| {
         k.wrapping_mul(31).wrapping_add(e.start as u64 ^ (e.end as u64).rotate_left(17) ^ e.title.len() as u64)
     }) ^ c.names.iter().fold(0u64, |k, n| k.wrapping_mul(131).wrapping_add(n.len() as u64 ^ n.bytes().map(u64::from).sum::<u64>()))
         ^ (crate::clock::h24() as u64) << 62
