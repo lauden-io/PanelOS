@@ -23,7 +23,11 @@ A panel that (re)connects gets what is active at that moment.
 
 Status screen triggers: an entity's state (on, off, above or below a number,
 equal to a text), "after" another status screen ends (for its countdown, 10
-minutes when none is set), or the ``panelos.show_status`` action.
+minutes when none is set), or the ``panelos.show_status`` action. An entity
+that becomes unavailable or unknown for a moment (its integration reloads, a
+device reconnects) does not end a screen whose trigger held: it stays for up
+to ``UNAVAILABLE_GRACE`` seconds and ends only if the entity is still not
+back then (or comes back in a state that does not hold).
 """
 
 from __future__ import annotations
@@ -50,6 +54,8 @@ _LOGGER = logging.getLogger(__name__)
 
 STORE_VERSION = 1
 AFTER_DEFAULT_MINUTES = 10
+# how long a status screen whose trigger entity became unavailable or unknown stays (seconds)
+UNAVAILABLE_GRACE = 120
 
 # Plain texts of a critical alert per device class: the title and the icon.
 CRITICAL_TEXTS = {
@@ -190,9 +196,14 @@ def empty_house() -> dict[str, Any]:
     return {"critical": [], "own_critical": [], "dismissed": [], "status": [], "sounds": []}
 
 
+def state_known(state: State | None) -> bool:
+    """Whether an entity's state says anything (it exists and is neither unavailable nor unknown)."""
+    return state is not None and state.state not in ("unavailable", "unknown")
+
+
 def trigger_on(trigger: dict[str, Any], state: State | None) -> bool:
     """Whether an entity trigger holds for the entity's state."""
-    if state is None or state.state in ("unavailable", "unknown"):
+    if not state_known(state):
         return False
     op = trigger.get("op", "on")
     # a lock is "on" when unlocked
@@ -228,6 +239,8 @@ class House:
         self._after: dict[str, float] = {}
         # status screens switched on by the action: id -> since
         self._manual: dict[str, float] = {}
+        # status screens whose trigger held and whose entity is unavailable or unknown now: id -> since when
+        self._unknown: dict[str, float] = {}
         # own critical alerts started by the action (panelos.critical_alert)
         self._crit_manual: set[str] = set()
         # what is shown where: key ("critical:<entity>" / "status:<id>") -> (request, panel ids)
@@ -258,7 +271,7 @@ class House:
             await self.hass.async_add_executor_job(self._delete_files, gone)
         self._crit_manual &= {c["id"] for c in data.get("own_critical", [])}
         known = {s["id"] for s in data["status"]}
-        for table in (self._since, self._after, self._manual):
+        for table in (self._since, self._after, self._manual, self._unknown):
             for status_id in [i for i in table if i not in known]:
                 table.pop(status_id)
         self._track()
@@ -334,15 +347,32 @@ class House:
         """Every PanelOS entry: entry id -> panel id."""
         return {e.entry_id: panel_config(e)["panel_id"] for e in self.hass.config_entries.async_entries(DOMAIN)}
 
-    def _base_active(self, now: float) -> tuple[set[str], set[str]]:
+    def _entity_holds(self, status: dict[str, Any], now: float) -> tuple[bool, float | None]:
+        """Whether a status screen's entity trigger holds now, and when to look again (the end of the
+        grace while its entity is unavailable or unknown)."""
+        trigger = status["trigger"]
+        state = self.hass.states.get(trigger["entity"]) if trigger["entity"] else None
+        if state is not None and not state_known(state) and status["id"] in self._since:
+            # it held before: it goes on holding for a while, the entity may be back in a moment
+            end = self._unknown.setdefault(status["id"], now) + UNAVAILABLE_GRACE
+            if now < end:
+                return True, end
+        self._unknown.pop(status["id"], None)
+        return trigger_on(trigger, state), None
+
+    def _base_active(self, now: float) -> tuple[set[str], set[str], float | None]:
         """Status screens whose own trigger (entity or action) holds now: those to show
-        (switched on, countdown not over) and every one that holds (for the "after" screens)."""
+        (switched on, countdown not over), every one that holds (for the "after" screens),
+        and when to look again (an unavailable entity's grace ends)."""
         active = set()
         holding = set()
+        wake: float | None = None
         for s in self.data["status"]:
             trigger = s["trigger"]
             if trigger["kind"] == "entity":
-                holds = trigger_on(trigger, self.hass.states.get(trigger["entity"])) if trigger["entity"] else False
+                holds, grace_end = self._entity_holds(s, now)
+                if grace_end is not None:
+                    wake = grace_end if wake is None else min(wake, grace_end)
                 if not holds:
                     self._since.pop(s["id"], None)
                     continue
@@ -360,16 +390,15 @@ class House:
             holding.add(s["id"])
             if s["on"]:
                 active.add(s["id"])
-        return active, holding
+        return active, holding, wake
 
     def _active(self, now: float) -> tuple[dict[str, dict[str, Any]], float | None]:
         """Requests that should be shown now (key -> request) and when to look again."""
-        base, holding = self._base_active(now)
+        base, holding, wake = self._base_active(now)
         # a source "ends" when its trigger stops holding (not when it is switched off)
         ended = self._base_before - holding
         self._base_before = holding
         wanted: dict[str, dict[str, Any]] = {}
-        wake: float | None = None
         for s in self.data["status"]:
             trigger = s["trigger"]
             if trigger["kind"] == "after":
@@ -558,9 +587,12 @@ class House:
 
     @callback
     def clear_status(self, status_id: str) -> None:
+        """panelos.clear_status: a screen started by the action (or by another one's end) ends; one that
+        follows an entity ends when the entity says so."""
         status = self._status_named(status_id)
-        self._manual.pop(status["id"] if status else status_id, None)
-        self._after.pop(status_id, None)
+        item_id = status["id"] if status else status_id
+        self._manual.pop(item_id, None)
+        self._after.pop(item_id, None)
         self.evaluate()
 
     @callback
