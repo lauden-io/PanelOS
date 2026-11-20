@@ -400,8 +400,9 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         ui.set_todo_empty_sub(texts::kept("todo.empty.subs", 0).into());
     }
     let n_open = open.iter().filter(|i| !i.done).count();
-    if tapes {
-        // the menus' heads, labels and Done, on the same tapes
+    if draw::AVAILABLE {
+        // the label maker's menus: the heads, labels and Done on the same tapes (drawn ahead, so a change to that look
+        // opens its settings with them)
         let menu: Vec<slint::Image> = [
             ("LISTS", Tint::Black, false, 501),
             ("SETTINGS", Tint::Black, false, 502),
@@ -415,6 +416,8 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
         if let Some(m) = crate::pages::update_rows(&ui.get_todo_menu_tapes(), menu) {
             ui.set_todo_menu_tapes(m);
         }
+    }
+    if tapes {
         let count = if n_open == 0 { "ALL CLEAR".to_string() } else { format!("{n_open} TO DO") };
         ui.set_todo_label_head(draw::get(Job::TapeHead { name: name.clone(), count, seed: draw::seed(&name) }));
         ui.set_todo_label_done_head(draw::get(Job::Tape { text: format!("DONE · {}", done.len()), tint: Tint::Black, small: true, seed: 77 + done.len() as u32 }));
