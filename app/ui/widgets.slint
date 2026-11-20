@@ -833,7 +833,8 @@ export component Dropdown inherits Rectangle {
                     Text { x: 40px; y: 0; width: parent.width - 50px; height: parent.height; text: root.tk-caps ? o.to-uppercase() : o; font-family: root.tk-font;
                         font-size: root.tk-font-size; font-weight: i == root.selected ? Math.max(600, root.tk-font-weight) : Math.min(400, root.tk-font-weight);
                         color: root.tk-text; vertical-alignment: center; overflow: elide; }
-                    row-ta := TouchArea { clicked => { root.pop-open = false; menu.close(); root.picked(i); } }
+                    // the pick goes out before the popup closes (closing ends the popup, and with it this handler)
+                    row-ta := TouchArea { clicked => { root.picked(i); root.pop-open = false; menu.close(); } }
                 }
             }
         }
