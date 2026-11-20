@@ -19,7 +19,9 @@ For administrators. The page uses these websocket commands:
   nine-point test; the result shows on the panel);
 * ``panelos/page/proximity_calibration``: start the panel's wake distance
   calibration (it measures the proximity sensor's resting level; the result
-  shows on the panel).
+  shows on the panel);
+* ``panelos/page/forget_user``: forget the panel's Home Assistant user (the
+  next user that subscribes for the panel is kept).
 
 The panel sends that picture with ``panelos/screen`` when its subscription
 asks for it (command ``screenshot``).
@@ -94,7 +96,7 @@ from .const import (
     WAKE_DISTANCES,
 )
 from .house import HOUSE_SCHEMA, House, _tone
-from .panel import KEY_DOMAIN, Panel, find_entry, panel_caps, panel_config
+from .panel import KEY_DOMAIN, Panel, find_entry, panel_caps, panel_config, panel_user, set_panel_user
 
 _LOGGER = logging.getLogger(__name__)
 from .resources import async_resource_list
@@ -370,6 +372,7 @@ async def async_setup_page(hass: HomeAssistant) -> None:
         ws_page_alarms,
         ws_page_ma,
         ws_page_ma_player,
+        ws_page_forget_user,
         ws_screen,
     ):
         websocket_api.async_register_command(hass, command)
@@ -420,6 +423,8 @@ def _page_data(hass: HomeAssistant) -> dict[str, Any]:
                 "title": entry.title,
                 "device": entry.data.get(CONF_DEVICE, {}),
                 "device_id": panel.device_id if panel else None,
+                # the name of the Home Assistant user the panel logs in with, None until it subscribed
+                "panel_user": (panel_user(entry) or {}).get("name"),
                 "loaded": panel is not None,
                 "connected": bool(panel and panel.connected),
                 "states": dict(panel.states) if panel else {},
@@ -764,6 +769,19 @@ def ws_page_proximity_calibration(hass: HomeAssistant, connection: websocket_api
         connection.send_error(msg["id"], "not_connected", str(err))
         return
     async_dispatcher_send(hass, SIGNAL_SHOW, panel_config(panel.entry)["panel_id"], {"type": "proximity_calibration"})
+    connection.send_result(msg["id"])
+
+
+@websocket_api.require_admin
+@websocket_api.websocket_command({vol.Required("type"): "panelos/page/forget_user", vol.Required("entry_id"): str})
+@callback
+def ws_page_forget_user(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Forget the panel's Home Assistant user: its links end, and the next user that subscribes for the panel is kept."""
+    entry = hass.config_entries.async_get_entry(msg["entry_id"])
+    if entry is None or entry.domain != DOMAIN:
+        connection.send_error(msg["id"], "not_found", "No such PanelOS entry")
+        return
+    set_panel_user(hass, entry, None)
     connection.send_result(msg["id"])
 
 

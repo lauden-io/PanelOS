@@ -158,6 +158,11 @@ SIGNAL_SHOW = "panelos_show"
 # the entry so the device is complete before the panel connects.
 CONF_DEVICE = "device"
 
+# The Home Assistant user the panel logs in with ({"id", "name"}): the first user that is not an administrator to
+# subscribe for the panel. Only this user and administrators may act as the panel; forgotten on the PanelOS page (the
+# next subscriber is kept) and when the user is deleted.
+CONF_PANEL_USER = "panel_user"
+
 # The panel's own device: its entities are fed by panelos/report and send
 # their commands back through panelos/subscribe. The voice satellite stays
 # on the ESPHome device, which is linked to this one ("Connected via").
@@ -198,5 +203,7 @@ ESPHOME_ENTITIES = {
 }
 
 SIGNAL_LINKS = "panelos_links"
+# A panel's user is kept or forgotten (entry id, user id or None): the links of other users end.
+SIGNAL_PANEL_USER = "panelos_panel_user"
 # Something the sidebar page shows changed (a report, a link).
 SIGNAL_PAGE = "panelos_page"

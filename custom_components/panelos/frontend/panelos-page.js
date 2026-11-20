@@ -4787,6 +4787,8 @@ class PanelOSPage extends HTMLElement {
         this._row("Room", this._btn(this._parea(p) || "None", () => this._openSheet({ kind: "rename", panel: p.entry_id }), { cls: "small", icon: "pencil-outline", disabled: !p.device_id }), { info: "The panel's area in Home Assistant. Quick controls use it." }),
         this._row("Address", h("span", { class: "muted num wrap" }, s.ip_address || "–")),
         this._row("Panel ID", h("span", { class: "muted wrap" }, st.panel_id || "–")),
+        this._row("Home Assistant user", p.panel_user != null ? this._armed(`forget:${p.entry_id}`, "Forget", "Tap again to forget", () => this._forgetUser(p), { cls: "small", icon: "account-remove-outline" }) : h("span", { class: "muted wrap" }, "–"),
+          { sub: p.panel_user || null, info: "Only this user and administrators can connect as this panel. After Forget, the next user that connects as this panel is kept." }),
         this._row("What it can do", null, { stack: true, sub: p.caps_reported ? "As the panel reports it" : "Not reported yet: treated as an NSPanel Pro" }),
         h("div", { class: "below muted" }, this._caps(p).map((c) => CAP_NAMES[c] || c).join(" · "))),
       this._card("Wi-Fi", {},
@@ -4826,6 +4828,15 @@ class PanelOSPage extends HTMLElement {
       await this._hass.callApi("DELETE", `config/config_entries/entry/${p.entry_id}`);
       this._toast(`${this._pname(p)} removed`);
       this._go("/all");
+    } catch (err) {
+      this._toast(err.message || String(err), null, true);
+    }
+  }
+
+  async _forgetUser(p) {
+    try {
+      await this._hass.callWS({ type: "panelos/page/forget_user", entry_id: p.entry_id });
+      this._toast(`${this._pname(p)}: user forgotten`);
     } catch (err) {
       this._toast(err.message || String(err), null, true);
     }

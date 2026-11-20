@@ -13,6 +13,7 @@ import logging
 import time
 from typing import Any
 
+from homeassistant.auth.models import User
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import HomeAssistantError
@@ -31,6 +32,7 @@ from .const import (
     CONF_DEVICE,
     CONF_MEDIA_PLAYER,
     CONF_PANEL_ID,
+    CONF_PANEL_USER,
     CONF_SHOW_CONVERSATION,
     CONF_VOICE_LOOK,
     CONF_VOICE_PLAYER,
@@ -71,6 +73,7 @@ from .const import (
     SIGNAL_CONFIG_UPDATED,
     SIGNAL_LINKS,
     SIGNAL_PAGE,
+    SIGNAL_PANEL_USER,
     SIGNAL_SHOW,
 )
 from .resources import async_resource_list
@@ -133,6 +136,41 @@ def find_entry(hass: HomeAssistant, panel_id: str) -> ConfigEntry | None:
         if {**entry.data, **entry.options}.get(CONF_PANEL_ID) == panel_id:
             return entry
     return entries[0] if len(entries) == 1 else None
+
+
+def panel_user(entry: ConfigEntry) -> dict[str, str] | None:
+    """The Home Assistant user the panel logs in with ({"id", "name"}), None until one subscribed for it."""
+    user = entry.data.get(CONF_PANEL_USER)
+    return user if isinstance(user, dict) and isinstance(user.get("id"), str) else None
+
+
+@callback
+def set_panel_user(hass: HomeAssistant, entry: ConfigEntry, user: User | None) -> None:
+    """Keep the panel's user (None: forget it, the next subscriber is kept). The links of every other user that is not
+    an administrator end first (SIGNAL_PANEL_USER), so none of them is asked again when the entry changes."""
+    async_dispatcher_send(hass, SIGNAL_PANEL_USER, entry.entry_id, user.id if user else None)
+    data = {key: value for key, value in entry.data.items() if key != CONF_PANEL_USER}
+    if user is not None:
+        data[CONF_PANEL_USER] = {"id": user.id, "name": user.name or ""}
+    hass.config_entries.async_update_entry(entry, data=data)
+
+
+@callback
+def may_act(hass: HomeAssistant, entry: ConfigEntry, user: User) -> bool:
+    """Whether this user may act as the entry's panel: administrators always, otherwise only the panel's user. While
+    the panel has none, the first user that is not an administrator becomes its user."""
+    if user.is_admin:
+        return True
+    kept = panel_user(entry)
+    if kept is None:
+        set_panel_user(hass, entry, user)
+        return True
+    if kept["id"] != user.id:
+        return False
+    if kept.get("name") != (user.name or ""):
+        # renamed in Home Assistant: the PanelOS page shows the new name
+        set_panel_user(hass, entry, user)
+    return True
 
 
 def panel_config(entry: ConfigEntry) -> dict[str, Any]:

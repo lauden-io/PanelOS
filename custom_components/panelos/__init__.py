@@ -26,7 +26,9 @@ integration gives each panel:
 
 Panels follow their settings, show requests and commands with
 ``panelos/subscribe``, so the panel's Home Assistant user does not need to be
-an administrator.
+an administrator. The first user that is not an administrator to subscribe for
+a panel is kept as the panel's user; the panel's commands accept only that user
+and administrators.
 """
 
 from __future__ import annotations
@@ -38,10 +40,11 @@ from typing import Any
 
 import voluptuous as vol
 
+from homeassistant.auth import EVENT_USER_REMOVED
 from homeassistant.components import websocket_api
 from homeassistant.components.intent.const import TIMER_DATA
-from homeassistant.config_entries import ConfigEntry
-from homeassistant.core import HomeAssistant, ServiceCall, callback
+from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntry, ConfigEntryChange
+from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
@@ -68,6 +71,7 @@ from .const import (
     SERVICE_SHOW_VIEW,
     SIGNAL_CONFIG_UPDATED,
     SIGNAL_LINKS,
+    SIGNAL_PANEL_USER,
     SIGNAL_SHOW,
     VIEWS,
 )
@@ -76,7 +80,7 @@ from .notes import Notes
 from .players import async_register_players_view
 from .sounds import async_register_views
 from .page import async_hide_page, async_setup_page, async_show_page, checked_page, split_quick_pages
-from .panel import Panel, alive, find_entry, link_gone, links, panel_config, voice_player
+from .panel import Panel, alive, find_entry, link_gone, links, may_act, panel_config, panel_user, set_panel_user, voice_player
 
 type PanelOSConfigEntry = ConfigEntry[Panel]
 
@@ -116,14 +120,48 @@ def _loaded_panel(hass: HomeAssistant, panel_id: str) -> Panel | None:
     return getattr(entry, "runtime_data", None) if entry else None
 
 
+_NOT_SUBSCRIBED = "Subscribe with panelos/subscribe first"
+_OTHER_USER = "Only the panel's own Home Assistant user and administrators may act as this panel"
+
+
+def _refusal(hass: HomeAssistant, connection: websocket_api.ActiveConnection, panel_id: str) -> tuple[str, str] | None:
+    """Why this connection may not act as the panel (error code, message), None when it may. Administrators always
+    may; another user only for a panel set up here, as the panel's user (the first one becomes it)."""
+    if connection.user.is_admin:
+        return None
+    entry = find_entry(hass, panel_id)
+    if entry is None:
+        return (websocket_api.ERR_NOT_FOUND, f"No PanelOS entry for the panel '{panel_id}'")
+    if not may_act(hass, entry, connection.user):
+        return (websocket_api.ERR_UNAUTHORIZED, _OTHER_USER)
+    return None
+
+
+def _linked(hass: HomeAssistant, connection: websocket_api.ActiveConnection, panel_id: str) -> bool:
+    """An administrator, or the connection that holds the panel's subscription."""
+    panel = _loaded_panel(hass, panel_id)
+    return connection.user.is_admin or (panel is not None and panel.linked_on(id(connection)))
+
+
 @websocket_api.websocket_command(
     {vol.Required("type"): "panelos/subscribe", vol.Optional("panel_id", default=""): str}
 )
 @callback
 def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """Send a panel its settings now and on every change, then its show requests and commands."""
+    """Send a panel its settings now and on every change, then its show requests and commands. Only the panel's own
+    user and administrators may subscribe (see `_refusal`)."""
     panel_id = msg["panel_id"]
     key = hash((id(connection), msg["id"]))
+    if why := _refusal(hass, connection, panel_id):
+        connection.send_error(msg["id"], *why)
+        return
+
+    @callback
+    def end(code: str, message: str) -> None:
+        # the subscription ends with an error: the panel asks again (and is refused, or kept as the new user)
+        if connection.subscriptions.pop(msg["id"], None) is not None:
+            unsubscribe()
+            connection.send_message(websocket_api.error_message(msg["id"], code, message))
 
     @callback
     def send_config() -> None:
@@ -134,7 +172,18 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     @callback
     def config_changed(changed_panel: str) -> None:
         if not panel_id or changed_panel in (panel_id, ""):
+            # the entry removed or added again: asked again as on a new subscription
+            if why := _refusal(hass, connection, panel_id):
+                end(*why)
+                return
             send_config()
+
+    @callback
+    def user_changed(entry_id: str, user_id: str | None) -> None:
+        # the panel's user kept or forgotten: another user's subscription (not an administrator's) ends
+        entry = find_entry(hass, panel_id)
+        if entry is not None and entry.entry_id == entry_id and not connection.user.is_admin and connection.user.id != user_id:
+            end(websocket_api.ERR_UNAUTHORIZED, _OTHER_USER)
 
     @callback
     def show(target: str, request: dict[str, Any]) -> None:
@@ -151,12 +200,14 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
     unsub_config = async_dispatcher_connect(hass, SIGNAL_CONFIG_UPDATED, config_changed)
     unsub_show = async_dispatcher_connect(hass, SIGNAL_SHOW, show)
+    unsub_user = async_dispatcher_connect(hass, SIGNAL_PANEL_USER, user_changed)
     links(hass)[key] = (panel_id, id(connection), command)
 
     @callback
     def unsubscribe() -> None:
         unsub_config()
         unsub_show()
+        unsub_user()
         links(hass).pop(key, None)
         alive(hass).pop(id(connection), None)
         async_dispatcher_send(hass, SIGNAL_LINKS)
@@ -190,6 +241,9 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 @callback
 def ws_notification(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
     """A panel answered one of PanelOS's notifications (OK, a button, Dismiss)."""
+    if not _linked(hass, connection, msg["panel_id"]):
+        connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
+        return
     entry = find_entry(hass, msg["panel_id"])
     panel_id = panel_config(entry)["panel_id"] if entry else msg["panel_id"]
     hass.data[DOMAIN]["notes"].answer(panel_id, msg["notification_id"], msg["answer"], msg.get("button"))
@@ -199,7 +253,14 @@ def ws_notification(hass: HomeAssistant, connection: websocket_api.ActiveConnect
 @websocket_api.websocket_command({vol.Required("type"): "panelos/alive", vol.Optional("panel_id", default=""): str})
 @callback
 def ws_alive(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """The panel is there (every second); the answer tells the panel that the integration is too."""
+    """The panel is there (every second); the answer tells the panel that the integration is too. Noted for a
+    connection that holds a panel's subscription."""
+    if not any(cid == id(connection) for _, cid, _ in links(hass).values()):
+        if connection.user.is_admin:
+            connection.send_result(msg["id"])
+        else:
+            connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
+        return
     gone = link_gone(hass, id(connection))
     alive(hass)[id(connection)] = time.monotonic()
     if gone:
@@ -235,8 +296,13 @@ def _append_log(path: str, lines: list[str]) -> None:
 )
 @websocket_api.async_response
 async def ws_log(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """Lines of a development panel's system log, kept in a file in the config folder."""
-    name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (msg["panel_id"] or "panel"))[:40]
+    """Lines of a development panel's system log, kept in a file in the config folder (named after the panel's entry)."""
+    if not _linked(hass, connection, msg["panel_id"]):
+        connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
+        return
+    entry = find_entry(hass, msg["panel_id"])
+    panel_id = panel_config(entry)["panel_id"] if entry else msg["panel_id"]
+    name = "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in (panel_id or "panel"))[:40]
     await hass.async_add_executor_job(_append_log, hass.config.path("panelos", "logs", f"{name}.log"), msg["lines"])
     connection.send_result(msg["id"])
 
@@ -263,7 +329,7 @@ def ws_report(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
         return
     # Only the connection that follows the panel's subscription reports for it.
     if not panel.linked_on(id(connection)):
-        connection.send_error(msg["id"], "not_subscribed", "Subscribe with panelos/subscribe first")
+        connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
         return
     panel.apply_report(msg)
     connection.send_result(msg["id"])
@@ -290,7 +356,7 @@ def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
         connection.send_error(msg["id"], "not_found", f"No PanelOS entry for the panel '{msg['panel_id']}'")
         return
     if not panel.linked_on(id(connection)):
-        connection.send_error(msg["id"], "not_subscribed", "Subscribe with panelos/subscribe first")
+        connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
         return
     entry = panel.entry
     pages = [dict(p) for p in {**entry.data, **entry.options}.get(CONF_PAGES, DEFAULT_PAGES)]
@@ -341,7 +407,7 @@ def ws_timer(hass: HomeAssistant, connection: websocket_api.ActiveConnection, ms
         connection.send_error(msg["id"], "not_found", f"No PanelOS entry for the panel '{msg['panel_id']}'")
         return
     if not panel.linked_on(id(connection)):
-        connection.send_error(msg["id"], "not_subscribed", "Subscribe with panelos/subscribe first")
+        connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
         return
     manager = hass.data.get(TIMER_DATA)
     device_id = panel.timer_device_id()
@@ -401,6 +467,24 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             async_dispatcher_send(hass, SIGNAL_LINKS)
 
     async_track_time_interval(hass, check_alive, timedelta(seconds=1), cancel_on_shutdown=True)
+
+    # A Home Assistant user deleted: no panel's user any more (the panel's next user is kept).
+    @callback
+    def user_removed(event: Event) -> None:
+        for entry in hass.config_entries.async_entries(DOMAIN):
+            if (panel_user(entry) or {}).get("id") == event.data.get("user_id"):
+                set_panel_user(hass, entry, None)
+
+    hass.bus.async_listen(EVENT_USER_REMOVED, user_removed)
+
+    # A panel's entry deleted: its subscriptions are asked again now that it is gone from the list (a user that is not
+    # an administrator has nothing to follow any more).
+    @callback
+    def entry_changed(change: ConfigEntryChange, entry: ConfigEntry) -> None:
+        if change is ConfigEntryChange.REMOVED and entry.domain == DOMAIN:
+            async_dispatcher_send(hass, SIGNAL_CONFIG_UPDATED, panel_config(entry)["panel_id"])
+
+    async_dispatcher_connect(hass, SIGNAL_CONFIG_ENTRY_CHANGED, entry_changed)
 
     # A person added to or removed from Home Assistant: the panels get their settings again (the People widgets that
     # show everyone follow the new list); a burst of them (Home Assistant starting) is sent once.
