@@ -39,6 +39,54 @@ pub fn local_hm(t: i64) -> String {
     }
 }
 
+/// An hour of the day alone (a forecast's hour) in the panel's time format: "18" or "6 PM".
+pub fn hour_label(h: u32) -> String {
+    if h24() {
+        format!("{:02}", h % 24)
+    } else {
+        let (hh, ampm) = twelve(h);
+        format!("{hh} {ampm}")
+    }
+}
+
+/// The hour as a digital clock face shows it, and its AM / PM mark: ("18", "") or ("6", "PM").
+pub fn face_hour(h: u32) -> (String, &'static str) {
+    if h24() {
+        (format!("{:02}", h % 24), "")
+    } else {
+        let (hh, ampm) = twelve(h);
+        (hh.to_string(), ampm)
+    }
+}
+
+/// Hour and minute of a clock time written by `hm` (either format) or as "HH:MM".
+pub fn parse_hm(text: &str) -> Option<(u32, u32)> {
+    let t = text.trim();
+    let (time, pm) = match t.strip_suffix("PM") {
+        Some(rest) => (rest.trim_end(), Some(true)),
+        None => match t.strip_suffix("AM") {
+            Some(rest) => (rest.trim_end(), Some(false)),
+            None => (t, None),
+        },
+    };
+    let (h, m) = time.split_once(':')?;
+    let (h, m): (u32, u32) = (h.trim().parse().ok()?, m.trim().parse().ok()?);
+    if m > 59 {
+        return None;
+    }
+    match pm {
+        None if h < 24 => Some((h, m)),
+        Some(pm) if (1..=12).contains(&h) => Some((h % 12 + if pm { 12 } else { 0 }, m)),
+        _ => None,
+    }
+}
+
+/// 0 → 12 AM, 12 → 12 PM, 18 → 6 PM.
+fn twelve(h: u32) -> (u32, &'static str) {
+    let h = h % 24;
+    (if h % 12 == 0 { 12 } else { h % 12 }, if h < 12 { "AM" } else { "PM" })
+}
+
 /// 2026-01-01: anything later means the clock has been set.
 const VALID_AFTER: u64 = 1_767_225_600;
 
@@ -106,6 +154,22 @@ mod tests {
         assert_eq!(hm_in(18, 45, false), "6:45 PM");
         assert_eq!(hm_in(0, 0, false), "12:00 AM");
         assert_eq!(hm_in(12, 30, false), "12:30 PM");
+        assert_eq!(twelve(23), (11, "PM"));
+        assert_eq!(twelve(0), (12, "AM"));
+    }
+
+    #[test]
+    fn time_formats_read_back() {
+        for h in 0..24 {
+            for m in [0, 7, 30, 59] {
+                assert_eq!(parse_hm(&hm_in(h, m, true)), Some((h, m)));
+                assert_eq!(parse_hm(&hm_in(h, m, false)), Some((h, m)));
+            }
+        }
+        assert_eq!(parse_hm("6:15"), Some((6, 15)));
+        assert_eq!(parse_hm("13:05 PM"), None);
+        assert_eq!(parse_hm("24:00"), None);
+        assert_eq!(parse_hm("--:--"), None);
     }
 
     #[test]

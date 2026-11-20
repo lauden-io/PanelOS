@@ -697,6 +697,7 @@ export component Segmented inherits Rectangle {
     in property <color> tk-text: Theme.text;
     in property <color> tk-on-text: Theme.background;
     in property <color> tk-accent: Theme.accent;
+    in property <color> tk-pill: root.tk-text;       // the pill, when a look gives it its own colour
     height: 40px;
     border-radius: 20px;
     background: root.tk-raised;
@@ -734,7 +735,7 @@ export component Segmented inherits Rectangle {
     property <length> pw: root.moving ? Math.max(0.6 * root.seg, root.pr - root.pl) : root.seg;
     property <length> px: root.moving ? (root.pl + root.pr) / 2 - root.pw / 2 : root.l1;
     property <length> phh: root.moving ? Math.max(0.8 * root.ph, Math.min(root.height - 2px, root.ph * Math.sqrt(root.seg / Math.max(1px, root.pw)))) : root.ph;
-    if root.selected >= 0: Rectangle { x: root.px; y: (root.height - root.phh) / 2; width: root.pw; height: root.phh; border-radius: self.height / 2; background: root.tk-text; }
+    if root.selected >= 0: Rectangle { x: root.px; y: (root.height - root.phh) / 2; width: root.pw; height: root.phh; border-radius: self.height / 2; background: root.tk-pill; }
     for o[i] in root.options: seg-item := Rectangle {
         x: root.pad + i * root.seg; y: 0; width: root.seg; height: root.height;
         // the labels change colour 70 ms after the tap, over 160 ms
@@ -779,11 +780,11 @@ export component Dropdown inherits Rectangle {
         font-size: 15px; font-weight: 500; color: root.selected >= 0 ? root.tk-text : root.tk-muted; vertical-alignment: center; overflow: elide; }
     Icon { x: parent.width - 36px; y: 0; width: 24px; height: parent.height; text: root.pop-open ? "\u{F0143}" : "\u{F0140}"; font-size: 22px; color: root.tk-muted; }
     TouchArea { clicked => { root.pop-open = true; menu.show(); } }
-    // the list stays on the screen between the status bar and the dots (y 48 … 468): a long list may cover its field
-    property <length> pop-y: root.opens-up ? -root.menu-h - 6px : root.height + 6px;
     menu := PopupWindow {
         x: 0;
-        y: Math.max(48px - root.absolute-position.y, Math.min(468px - root.menu-h - root.absolute-position.y, root.pop-y));
+        // kept on the screen between the status bar and the bottom (y 48-468); a long list may cover its field
+        y: Math.max(48px - root.absolute-position.y, Math.min(468px - root.absolute-position.y - root.menu-h,
+            root.opens-up ? -root.menu-h - 6px : root.height + 6px));
         width: root.width;
         height: root.menu-h;
         close-policy: close-on-click-outside;
@@ -1119,4 +1120,71 @@ export component BigSlider inherits VerticalLayout {
     TouchSlider { value: root.value; has-gradient: !root.show-fill; gradient: root.track;
         bubble-text: root.unit == 1 ? root.vtext : root.unit == 2 ? " " : "";
         changed(v, final) => { root.live = v; if final { root.changed(v); } } }
+}
+
+// The weekday row (spec 28.10, 28.15): seven round toggles Mo-Su (40 px), raised with a muted letter; a chosen day is a
+// disc in the look's colour with a ground-colour letter. Jelly: a press squashes the day to 1.08 x 0.92 (90 ms); choosing
+// pops the disc from 0.4 (J-edge 90/260, x J-wobble 0.20), the day's ground wobbles 0.10 and its neighbours 0.05 40 ms
+// later, the letter turns at 0.6; un-choosing swells the disc to 1.08 (60 ms) and drops it into the centre (120 ms), the
+// ground wobbles 0.08 from 60 ms, the neighbours 0.04 from 100 ms. Done in 750 ms.
+export component WeekdayRow inherits Rectangle {
+    in property <[bool]> days;
+    callback toggled(int);
+    // the look's colours (spec 32.0 tokens); the defaults are the plain look's
+    in property <color> tk-raised: Theme.surface-raised;
+    in property <color> tk-muted: Theme.muted;
+    in property <color> tk-text: Theme.text;          // the chosen day's disc
+    in property <color> tk-on-text: Theme.background; // its letter
+    in property <[string]> names: ["Mo", "Tu", "We", "Th", "Fr", "Sa", "Su"];
+    in property <string> family: "Noto Sans";
+    in property <int> weight: 500;
+    height: 40px;
+    property <length> cell: 40px;
+    property <length> step: (root.width - root.cell) / 6;
+    // the last change: which day, chosen or not, when
+    property <int> ci: -1;
+    property <bool> cv;
+    property <duration> t0;
+    property <bool> moving;
+    Timer { interval: 760ms; running: root.moving; triggered => { root.moving = false; } }
+    property <float> t: root.moving ? (animation-tick() - root.t0) / 1ms : 2000;
+    for d[i] in root.names: day := Rectangle {
+        property <bool> on: i < root.days.length && root.days[i];
+        property <bool> me: i == root.ci && root.moving;
+        property <bool> next: (i == root.ci - 1 || i == root.ci + 1) && root.moving;
+        // the ground's wobble (width; the height keeps the area)
+        property <float> gw: day.me ? (root.cv ? Jelly.wobble(root.t, 0.10) : (root.t < 60 ? 1 : Jelly.wobble(root.t - 60, 0.08)))
+            : day.next ? (root.cv ? (root.t < 40 ? 1 : Jelly.wobble(root.t - 40, 0.05)) : (root.t < 100 ? 1 : Jelly.wobble(root.t - 100, 0.04))) : 1;
+        // the disc's size: popping in, or swelling and dropping out
+        property <float> ds: !day.me ? (day.on ? 1 : 0)
+            : root.cv ? (0.4 + 0.6 * Jelly.edge(root.t, 90, 260)) * Jelly.wobble(root.t, 0.20)
+            : root.t < 60 ? 1 + 0.08 * root.t / 60 : 1.08 * Math.max(0, 1 - Math.pow((root.t - 60) / 120, 2));
+        property <bool> lit: day.me ? (root.cv ? day.ds > 0.6 : day.ds > 0.6) : day.on;
+        // pressing: 1.08 x 0.92 (90 ms)
+        property <float> pk: dta.pressed ? 1 : 0;
+        animate pk { duration: 90ms; easing: ease-out; }
+        property <float> sx: day.gw * (1 + 0.08 * day.pk);
+        property <float> sy: (1 / day.gw) * (1 - 0.08 * day.pk);
+        x: i * root.step; y: 0; width: root.cell; height: root.cell;
+        Rectangle {
+            width: root.cell * day.sx; height: root.cell * day.sy; x: (root.cell - self.width) / 2; y: (root.cell - self.height) / 2;
+            border-radius: Math.min(self.width, self.height) / 2; background: root.tk-raised;
+        }
+        if day.ds > 0.01: Rectangle {
+            width: root.cell * day.sx * Math.min(1.3, day.ds); height: root.cell * day.sy * Math.min(1.3, day.ds);
+            x: (root.cell - self.width) / 2; y: (root.cell - self.height) / 2;
+            border-radius: Math.min(self.width, self.height) / 2; background: root.tk-text;
+        }
+        Text { text: d; font-family: root.family; font-size: 13px; font-weight: root.weight; color: day.lit ? root.tk-on-text : root.tk-muted;
+            horizontal-alignment: center; vertical-alignment: center; }
+        dta := TouchArea {
+            clicked => {
+                root.ci = i;
+                root.cv = !day.on;
+                root.t0 = animation-tick();
+                root.moving = true;
+                root.toggled(i);
+            }
+        }
+    }
 }

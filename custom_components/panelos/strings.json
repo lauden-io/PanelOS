@@ -227,6 +227,9 @@
       },
       "display_mode": {
         "name": "Display mode"
+      },
+      "time_format": {
+        "name": "Time format"
       }
     },
     "sensor": {
@@ -255,6 +258,15 @@
       },
       "proximity_wake": {
         "name": "Wake on approach"
+      },
+      "child_lock": {
+        "name": "Child lock"
+      },
+      "rain_on_glass": {
+        "name": "Rain on the glass"
+      },
+      "lightning": {
+        "name": "Lightning"
       }
     },
     "notify": {

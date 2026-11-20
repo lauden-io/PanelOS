@@ -18,6 +18,8 @@ pub const MODEL: &str = "NSPanel Pro 86 Gen1";
 pub const THEMES: [(&str, &str); 3] = [("dark", "Dark"), ("light", "Light"), ("auto", "Auto")];
 pub const STYLES: [(&str, &str); 2] = [("clock", "Clock"), ("black", "Screen off")];
 pub const DISPLAY_MODES: [(&str, &str); 2] = [("dashboard", "Dashboard"), ("assistant", "Assistant")];
+/// The time format of every clock time the panel shows (the setting's values "24" / "12").
+pub const TIME_FORMATS: [(&str, &str); 2] = [("24", "24-hour"), ("12", "12-hour")];
 
 fn label(list: &[(&str, &str)], key: &str) -> Value {
     list.iter().find(|(k, _)| *k == key).map(|(_, l)| Value::from(*l)).unwrap_or(Value::Null)
@@ -74,6 +76,7 @@ pub fn options(s: &DeviceState) -> Map<String, Value> {
     m.insert("screensaver".into(), screensaver.into());
     m.insert("screensaver_style".into(), labels(&STYLES));
     m.insert("display_mode".into(), labels(&DISPLAY_MODES));
+    m.insert("time_format".into(), labels(&TIME_FORMATS));
     m
 }
 
@@ -94,7 +97,11 @@ pub fn states(s: &DeviceState) -> Map<String, Value> {
     m.insert("screensaver".into(), screensaver);
     m.insert("screensaver_style".into(), label(&STYLES, &s.screensaver_style));
     m.insert("proximity_wake".into(), s.proximity_wake.into());
+    m.insert("child_lock".into(), s.child_lock.into());
+    m.insert("rain_on_glass".into(), s.rain_on_glass.into());
+    m.insert("lightning".into(), s.lightning.into());
     m.insert("display_mode".into(), label(&DISPLAY_MODES, &s.display_mode));
+    m.insert("time_format".into(), label(&TIME_FORMATS, if s.time_24h { "24" } else { "12" }));
     m.insert("illuminance".into(), s.lux.into());
     m.insert("presence".into(), s.presence.into());
     m.insert("soc_temperature".into(), s.soc_temp.into());
@@ -155,13 +162,14 @@ pub fn command(key: &str, value: &Value, s: &DeviceState) -> Option<Control> {
         "theme" => key_of(&THEMES, text).and_then(|k| setting("theme", k.into())),
         "screensaver_style" => key_of(&STYLES, text).and_then(|k| setting("screensaver_style", k.into())),
         "display_mode" => key_of(&DISPLAY_MODES, text).and_then(|k| setting("display_mode", k.into())),
+        "time_format" => key_of(&TIME_FORMATS, text).and_then(|k| setting("time_format", k.into())),
         "screensaver" => crate::settings::SCREENSAVER_CHOICES
             .iter()
             .position(|(_, l)| *l == text)
             .and_then(|i| setting("screensaver_index", i.to_string())),
         "dashboard" => s.dashboards.iter().position(|(_, t)| *t == text).and_then(|i| setting("dashboard_index", i.to_string())),
         "brightness" => value.as_f64().and_then(|v| setting("brightness", format!("{}", v.round().clamp(1.0, 100.0) as i32))),
-        "auto_brightness" | "proximity_wake" => value.as_bool().and_then(|v| setting(key, v.to_string())),
+        "auto_brightness" | "proximity_wake" | "child_lock" | "rain_on_glass" | "lightning" => value.as_bool().and_then(|v| setting(key, v.to_string())),
         "restart_app" | "reboot" => setting(key, String::new()),
         // (the place of a page among the pages shown)
         "page" => value.as_u64().and_then(|i| setting("show_page", i.to_string())),

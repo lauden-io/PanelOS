@@ -213,6 +213,9 @@ fn set_proximity_led(iio: &Path) {
 /// Wake distance in cm: "something is close" above the resting level plus
 /// the signal of a hand at this distance (PROXIMITY_CURVE)...
 pub const PROXIMITY_WAKE_CM: f64 = 45.0;
+/// The wake distances the integration offers (near, medium, far), cm. Far is
+/// near the end of the measured curve: noisy readings often shorten it.
+pub const PROXIMITY_WAKE_CHOICES: [(&str, f64); 3] = [("near", 30.0), ("medium", PROXIMITY_WAKE_CM), ("far", 55.0)];
 /// ...or plus this many times the jitter (mean change between consecutive
 /// resting readings), if that is more: noisy readings shorten the range
 /// instead of waking the panel. (A fixed margin woke the panel by itself
@@ -243,6 +246,8 @@ pub struct ProximityWake {
     above: u32,
     /// Signal of a hand at the wake distance.
     wake_signal: f64,
+    /// The integration time the signals are for (seconds).
+    integration: f64,
 }
 
 impl Default for ProximityWake {
@@ -260,7 +265,50 @@ impl ProximityWake {
             previous: None,
             above: 0,
             wake_signal: proximity_signal(PROXIMITY_WAKE_CM, integration),
+            integration,
         }
+    }
+
+    /// The wake distance (cm, on the measured curve).
+    pub fn set_wake_cm(&mut self, cm: f64) {
+        let signal = proximity_signal(cm, self.integration);
+        if (signal - self.wake_signal).abs() > 0.01 {
+            eprintln!("nspanel-app: proximity: wake distance {cm:.0} cm (signal {signal:.0})");
+            self.wake_signal = signal;
+        }
+    }
+
+    /// The wake distance calibration: the resting level and the jitter measured from readings taken with nothing in
+    /// front, instead of the learned ones. The resting level is their median; the jitter is where the learning in
+    /// `update` settles for their consecutive changes (the largest tenth left out, so one stray reading does not
+    /// decide). False, and nothing changes, with fewer than 8 readings or when a reading lies above half the
+    /// threshold that results (something moved in front meanwhile).
+    pub fn calibrate(&mut self, readings: &[f64]) -> bool {
+        if readings.len() < 8 {
+            return false;
+        }
+        let mut sorted = readings.to_vec();
+        sorted.sort_by(f64::total_cmp);
+        let rest = sorted[sorted.len() / 2];
+        let mut steps: Vec<f64> = readings.windows(2).map(|w| (w[1] - w[0]).abs()).collect();
+        steps.sort_by(f64::total_cmp);
+        steps.truncate(steps.len() - steps.len() / 10);
+        let jitter = settled_jitter(&steps);
+        let margin = (jitter * PROXIMITY_JITTER_FACTOR).max(self.wake_signal);
+        if readings.iter().any(|&r| r > rest + margin / 2.0) {
+            return false;
+        }
+        eprintln!("nspanel-app: proximity: calibrated, rest {rest:.0}, jitter {jitter:.1} (were {:.0}, {:.1})", self.rest.unwrap_or(0.0), self.jitter);
+        self.rest = Some(rest);
+        self.jitter = jitter;
+        self.previous = None;
+        self.above = 0;
+        true
+    }
+
+    /// How far a hand wakes the panel now (cm): the wake distance, or less when the jitter sets the threshold.
+    pub fn reach_cm(&self) -> Option<f64> {
+        proximity_distance_cm(self.margin(), self.integration)
     }
 
     /// Someone (or something) is close to the panel right now.
@@ -320,6 +368,22 @@ impl ProximityWake {
     }
 }
 
+/// The jitter the learning in `ProximityWake::update` settles at for these changes between consecutive readings: it
+/// rises by a tenth of a larger change and falls by a hundredth of a smaller one, so it settles where both balance.
+fn settled_jitter(steps: &[f64]) -> f64 {
+    let pull = |j: f64| steps.iter().map(|&s| if s > j { 0.1 * (s - j) } else { -0.01 * (j - s) }).sum::<f64>();
+    let (mut lo, mut hi) = (0.0, steps.iter().copied().fold(0.0, f64::max));
+    for _ in 0..40 {
+        let mid = (lo + hi) / 2.0;
+        if pull(mid) > 0.0 {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) / 2.0
+}
+
 /// The darkest backlight level used, per mille: 0.8 %,
 /// still readable at night and without flicker.
 pub const BACKLIGHT_MIN_PERMILLE: f64 = 8.0;
@@ -377,4 +441,53 @@ pub fn set_volume(percent: u8) {
 
 pub fn soc_temperature() -> Option<f64> {
     Some(read_f64(PathBuf::from("/sys/class/thermal/thermal_zone0/temp"))? / 1000.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Readings around `rest` that change by `step` from one to the next.
+    fn readings(rest: f64, step: f64) -> Vec<f64> {
+        (0..20).map(|i| rest + if i % 2 == 0 { step / 2.0 } else { -step / 2.0 }).collect()
+    }
+
+    #[test]
+    fn wake_distance_sets_the_threshold() {
+        let mut p = ProximityWake::new(PROXIMITY_CURVE_INTEGRATION);
+        // a calm room: the threshold is the signal of a hand at the wake distance
+        assert!(p.calibrate(&readings(7000.0, 5.0)));
+        assert!((p.jitter() - 5.0).abs() < 0.01);
+        assert!((p.margin() - 114.0).abs() < 1.0);
+        assert!((p.reach_cm().unwrap() - 45.0).abs() < 0.5);
+        p.set_wake_cm(30.0);
+        assert!((p.margin() - 433.0).abs() < 1.0);
+        p.set_wake_cm(55.0);
+        assert!((p.reach_cm().unwrap() - 55.0).abs() < 0.5);
+        // a noisy room shortens the reach
+        assert!(p.calibrate(&readings(7000.0, 20.0)));
+        assert!((p.margin() - 100.0).abs() < 0.1);
+        let reach = p.reach_cm().unwrap();
+        assert!(reach > 45.0 && reach < 47.0);
+    }
+
+    #[test]
+    fn calibration_refuses_a_moving_hand() {
+        let mut p = ProximityWake::new(PROXIMITY_CURVE_INTEGRATION);
+        let mut r = readings(7000.0, 5.0);
+        r[9] += 600.0;
+        assert!(!p.calibrate(&r));
+        assert_eq!(p.rest(), None);
+        assert!(!p.calibrate(&r[..6]));
+    }
+
+    #[test]
+    fn calibrated_rest_wakes_above_it() {
+        let mut p = ProximityWake::new(PROXIMITY_CURVE_INTEGRATION);
+        assert!(p.calibrate(&readings(7000.0, 5.0)));
+        assert!(!p.update(7050.0));
+        assert!(!p.update(7200.0));
+        assert!(p.update(7200.0));
+        assert!(p.near());
+    }
 }

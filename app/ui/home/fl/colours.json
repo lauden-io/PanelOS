@@ -52,19 +52,19 @@
  },
  "stars": {
   "day": [
-   "#e05cff",
-   "#e87bff",
-   "#e87bff"
+   "#c46bff",
+   "#29f3ff",
+   "#29f3ff"
   ],
   "night": [
    "#b967ff",
-   "#c58cff",
-   "#c58cff"
+   "#29f3ff",
+   "#29f3ff"
   ],
   "dawn": [
    "#c99cff",
-   "#e0b8ff",
-   "#e0b8ff"
+   "#7df9ff",
+   "#7df9ff"
   ]
  }
 }

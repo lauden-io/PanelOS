@@ -324,6 +324,10 @@ impl GpuWindow {
             let display = Rc::downgrade(&display);
             let buffers = Rc::downgrade(&buffers);
             renderer.set_pre_present_callback(Some(Box::new(move || {
+                // rain on the glass over the finished frame (before the pictures read it)
+                if let Some(gl) = load_gl() {
+                    crate::glass_gl::draw(&gl, width as i32, height as i32);
+                }
                 T_PRESENT.with(|c| c.set(Some(std::time::Instant::now())));
                 if let (Some(display), Some(buffers)) = (display.upgrade(), buffers.upgrade()) {
                     wait_for_flip(&display, &buffers);
@@ -350,7 +354,8 @@ impl GpuWindow {
         let readback = READBACK.with(|r| !r.borrow().is_empty());
         let asked = self.needs_redraw.take();
         let animating = self.window.has_active_animations();
-        if !asked && !animating && !readback {
+        let glass = crate::glass::wants_frame();
+        if !asked && !animating && !readback && !glass {
             return Ok(false);
         }
         // Development: why frames are drawn (a property changed, an animation runs, a picture was asked for)
@@ -364,6 +369,8 @@ impl GpuWindow {
             });
         }
         let started = std::time::Instant::now();
+        // the drops move on to this frame
+        crate::glass::prepare();
         {
             use i_slint_renderer_skia::SkiaRendererExt;
             let _ = self.renderer.render_transformed_with_post_callback(
