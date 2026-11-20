@@ -22,6 +22,9 @@ mod devlog;
 mod display;
 mod draw;
 mod esphome;
+mod glass;
+#[cfg(feature = "gpu")]
+mod glass_gl;
 #[cfg(feature = "gpu")]
 mod gpu;
 mod ha;
@@ -788,6 +791,8 @@ fn refresh_pages(ui: &AppWindow) {
             set_wx_frames(ui, &cond);
             s.wx_cond = cond;
         }
+        // rain on the glass over the photo backgrounds: the scene's rain and wind (and the panel's switch)
+        glass::set_weather(s.settings.rain_on_glass, glass::rain_level(weather.rain, weather.mood), weather.wind_kmh, weather.gust_kmh);
         let key = weather_key(&weather);
         if key != s.weather_key {
             s.weather_key = key;
@@ -2786,7 +2791,7 @@ fn report_device(s: &mut UiState) {
     let before = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone()),
+        (d.mic_muted, d.alarms.clone(), d.rain_on_glass, d.lightning),
     );
     d.theme = s.settings.theme.clone();
     d.brightness = s.settings.brightness;
@@ -2794,6 +2799,8 @@ fn report_device(s: &mut UiState) {
     d.screensaver_seconds = s.settings.screensaver_seconds;
     d.screensaver_style = s.settings.screensaver_style.clone();
     d.proximity_wake = s.settings.proximity_wake;
+    d.rain_on_glass = s.settings.rain_on_glass;
+    d.lightning = s.settings.lightning;
     d.screen_on = !s.screensaver;
     d.dashboard = s.shared.dashboard.lock().unwrap().clone();
     d.presence = s.proximity.near();
@@ -2808,7 +2815,7 @@ fn report_device(s: &mut UiState) {
     let after = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone()),
+        (d.mic_muted, d.alarms.clone(), d.rain_on_glass, d.lightning),
     );
     if lux_changed {
         d.lux = s.lux.map(|l| l.round());
@@ -3237,6 +3244,11 @@ fn on_setting(ui: &AppWindow, key: &str, value: &str) {
             }
             "screensaver_style" => s.settings.screensaver_style = value.to_string(),
             "proximity_wake" => s.settings.proximity_wake = value == "true",
+            "rain_on_glass" => s.settings.rain_on_glass = value == "true",
+            "lightning" => {
+                s.settings.lightning = value == "true";
+                ui.set_lightning(s.settings.lightning);
+            }
             "display_mode" => {
                 if matches!(value, "dashboard" | "assistant") {
                     s.settings.display_mode = value.to_string();
@@ -3299,6 +3311,14 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
                 windows::tap(ui, x, y);
             }
         }
+        // a finger wiping the drops off the glass (H1): its places along the stroke, then its end
+        "glass.wipe" => {
+            let mut it = value.split(':').map(|v| v.parse::<f32>().ok());
+            if let (Some(Some(x)), Some(Some(y))) = (it.next(), it.next()) {
+                glass::wipe(x, y);
+            }
+        }
+        "glass.wipe-end" => glass::wipe_end(),
         w if w.starts_with("timers.") || w.starts_with("watch.") => timers_act(ui, w, value),
         "voice.close" => ui.set_voice_on(false),
         // the bell: the notifications page, or the list as a temporary page when the panel has none
@@ -3672,6 +3692,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ui.set_speaker_muted(settings.volume == 0);
     let ringing_flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
     ui.set_mic_muted(settings.mic_muted);
+    ui.set_lightning(settings.lightning);
+    // the drops on the glass: how much of the screen shows a photo page with nothing over it, and whether a stroke
+    // there may wipe
+    {
+        let (see, wet) = (ui.as_weak(), ui.as_weak());
+        glass::connect(
+            move || see.upgrade().map_or(0.0, |ui| ui.get_glass_k()),
+            move |b| {
+                if let Some(ui) = wet.upgrade() {
+                    ui.set_glass_wet(b);
+                }
+            },
+        );
+    }
     ui.set_voice_assistant("".into());
     ui.set_app_version(env!("CARGO_PKG_VERSION").into());
     STATE.with(|s| {
@@ -3982,6 +4016,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(feature = "gpu")]
             if let Some(b) = v.get("frame_stats").and_then(Value::as_bool) {
                 gpu::FRAME_STATS.store(b, Ordering::SeqCst);
+            }
+            // Development: the glass drops' GPU pass off / on ({"glass_pass": false}, for measurements)
+            if let Some(b) = v.get("glass_pass").and_then(Value::as_bool) {
+                glass::set_pass(b);
+                ui.window().request_redraw();
             }
             if let Some(a) = v.get("assist").and_then(Value::as_array) {
                 ui.set_voice_heard(a.get(1).and_then(Value::as_str).unwrap_or("").into());

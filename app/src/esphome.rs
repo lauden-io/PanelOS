@@ -46,6 +46,8 @@ pub struct DeviceState {
     pub screensaver_seconds: u32,
     pub screensaver_style: String,
     pub proximity_wake: bool,
+    pub rain_on_glass: bool,
+    pub lightning: bool,
     pub screen_on: bool,
     pub dashboards: Vec<(String, String)>,
     pub dashboard: String,
