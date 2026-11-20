@@ -8,8 +8,13 @@ import { NixieClock, LcdClock, TwinBellClock } from "clocks.slint";
 
 export struct Person {
     initials: string,
-    home: bool,
+    home: bool,          // at home; away, in another zone or unknown: false (drawn faint)
     tint: color,
+    // the People widgets' list (home-people): the widget whose `style` is this group shows the person, at place `at`
+    // of the group's `n`
+    group: int,
+    at: int,
+    n: int,
 }
 
 export struct TimerInfo {

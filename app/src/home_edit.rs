@@ -13,6 +13,7 @@ use serde_json::{json, Value};
 use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
 
 use crate::ha::{Command, EntityState};
+use crate::pages::PeopleGroup;
 use crate::{AppWindow, HomeItem, HomeSensor, UiState};
 
 /// How long a finger rests on the page before the lock opens.
@@ -67,6 +68,14 @@ thread_local! {
     static SENSORS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// The sensors offered in a sensor widget's menu (the ones the panel knows).
     static CHOICES: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The People widgets' groups (their people, whether the ones away show) in the order first seen since the pages
+    /// were last drawn: a People widget's slot in the People list. The first one is everyone with the ones away (the
+    /// widget picker's preview).
+    static GROUPS: RefCell<Vec<PeopleGroup>> = const { RefCell::new(Vec::new()) };
+    /// The settings' own list of people (the default of a People widget without its own).
+    static PANEL_PEOPLE: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+    /// The people offered in a People widget's menu (the ones the panel knows, in entity id order).
+    static PERSONS: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
     /// The widgets sent to Home Assistant and not yet back in its settings: (page in its list, widgets, when).
     static PENDING: RefCell<Option<(usize, Value, Instant)>> = const { RefCell::new(None) };
     /// The widget picked in "Add widget", waiting for its place.
@@ -366,7 +375,14 @@ fn show_free(ui: &AppWindow) {
     };
     ui.set_home_layer_back(back);
     ui.set_home_layer_fwd(fwd);
-    ui.set_home_neon_on(items.iter().any(|i| i.get("neon").and_then(Value::as_bool).unwrap_or(true)));
+    // a widget without its own switch glows as the page's old switch says (as the page draws it)
+    let page = ui.get_page().max(0) as usize;
+    let page_neon = crate::with_state(|s| {
+        let ci = config_index(s, page)?;
+        s.panel_config.as_ref()?.get("pages")?.get(ci)?.get("options")?.get("neon")?.as_bool()
+    })
+    .unwrap_or(true);
+    ui.set_home_neon_on(items.iter().any(|i| i.get("neon").and_then(Value::as_bool).unwrap_or(page_neon)));
 }
 
 // ---------------------------------------------------------------- the sensor widget
@@ -400,6 +416,128 @@ pub fn item_entities(s: &UiState) -> Vec<String> {
         .filter(|e| e.starts_with("sensor."))
         .map(str::to_string)
         .collect()
+}
+
+// ---------------------------------------------------------------- the People widget
+
+/// Every widget of the settings: the pages' own and the panel's old layout.
+fn all_items(config: &Value) -> impl Iterator<Item = &Value> {
+    let pages = config.get("pages").and_then(Value::as_array).into_iter().flatten().filter_map(items_of).flatten();
+    pages.chain(config.get("home_items").and_then(Value::as_array).into_iter().flatten())
+}
+
+/// A list of people in the settings (person ids), without doubles, in entity id order.
+fn person_list(v: Option<&Value>) -> Vec<String> {
+    let mut ids: Vec<String> =
+        v.and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|e| e.starts_with("person.")).map(str::to_string).collect();
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// The settings' own list of people (`people`; none: everyone).
+fn panel_people(config: Option<&Value>) -> Vec<String> {
+    person_list(config.and_then(|c| c.get("people")))
+}
+
+/// The pages are drawn anew: the People groups start over (everyone with the ones away first).
+pub fn people_start(config: Option<&Value>) {
+    PANEL_PEOPLE.with(|p| *p.borrow_mut() = panel_people(config));
+    GROUPS.with(|g| {
+        let mut g = g.borrow_mut();
+        g.clear();
+        g.push(PeopleGroup { away: true, ids: Vec::new() });
+    });
+}
+
+/// The people a People widget shows: its own (`people`), else the settings' list; none: everyone.
+fn picked_people(item: &Value) -> Vec<String> {
+    let own = person_list(item.get("people"));
+    if own.is_empty() {
+        PANEL_PEOPLE.with(|p| p.borrow().clone())
+    } else {
+        own
+    }
+}
+
+/// The slot of a People widget's group in the People list (`style` of the widget on the panel).
+pub fn people_slot(item: &Value) -> i32 {
+    let away = item.get("opts").and_then(Value::as_i64).unwrap_or(0) & 1 == 1;
+    let group = PeopleGroup { away, ids: picked_people(item) };
+    GROUPS.with(|g| {
+        let mut g = g.borrow_mut();
+        match g.iter().position(|x| *x == group) {
+            Some(i) => i as i32,
+            None => {
+                g.push(group);
+                g.len() as i32 - 1
+            }
+        }
+    })
+}
+
+/// The people the panel follows for its People widgets: the ones they name, and everyone (Home Assistant's list of
+/// people, from the integration) when one of them shows everyone or the heads at the bottom of the pages are on.
+pub fn people_entities(config: Option<&Value>) -> Vec<String> {
+    let Some(c) = config else { return Vec::new() };
+    let panel = panel_people(Some(c));
+    let mut out = Vec::new();
+    let mut everyone = false;
+    let mut want = |ids: Vec<String>| {
+        if ids.is_empty() {
+            everyone = true;
+        } else {
+            out.extend(ids);
+        }
+    };
+    if c.get("show_people").and_then(Value::as_bool) == Some(true) {
+        want(panel.clone());
+    }
+    for it in all_items(c).filter(|i| i.get("kind").and_then(Value::as_i64) == Some(10)) {
+        let own = person_list(it.get("people"));
+        want(if own.is_empty() { panel.clone() } else { own });
+    }
+    if everyone {
+        out.extend(person_list(c.get("person_entities")));
+    }
+    out
+}
+
+/// A People widget's menu ticks or unticks one person (`all`: the people the panel knows, in entity id order). No
+/// list of its own means everyone; with everyone ticked again the list goes (people added later show too); the last
+/// one ticked stays. False when nothing changed.
+pub fn toggle_person(it: &mut Value, id: &str, all: &[String]) -> bool {
+    let own = person_list(it.get("people"));
+    let mut list = if own.is_empty() { all.to_vec() } else { own };
+    if let Some(k) = list.iter().position(|x| x == id) {
+        if list.iter().filter(|x| all.contains(x)).count() <= 1 {
+            return false;
+        }
+        list.remove(k);
+    } else {
+        list.push(id.to_string());
+        list.sort();
+    }
+    let old = it.clone();
+    match it.as_object_mut() {
+        Some(o) if all.iter().all(|x| list.contains(x)) => {
+            o.remove("people");
+        }
+        Some(o) => {
+            o.insert("people".into(), json!(list));
+        }
+        None => return false,
+    }
+    *it != old
+}
+
+/// The open menu's People widget: which of the offered people it shows.
+fn show_person_choice(ui: &AppWindow, item: Option<&Value>) {
+    let own = item.map(|i| person_list(i.get("people"))).unwrap_or_default();
+    let on: Vec<bool> = PERSONS.with(|p| p.borrow().iter().map(|e| own.is_empty() || own.contains(e)).collect());
+    if !crate::same_rows(&ui.get_home_person_on(), &on) {
+        ui.set_home_person_on(ModelRc::new(VecModel::from(on)));
+    }
 }
 
 /// A sensor's value as the widget shows it: whole numbers from 100 up, else one decimal at most.
@@ -455,6 +593,22 @@ pub fn refresh(ui: &AppWindow, s: &UiState) {
         ui.set_home_sensor_names(ModelRc::new(VecModel::from(names)));
         ui.set_home_sensor_demo(known.first().map(|(_, st)| sensor(Some(*st))).unwrap_or_default());
         CHOICES.with(|c| *c.borrow_mut() = ids);
+    }
+    // the People widgets' heads, and the people their menu offers
+    let groups = GROUPS.with(|g| g.borrow().clone());
+    let heads = crate::pages::people_groups(&s.states, &groups);
+    if !crate::same_rows(&ui.get_home_people(), &heads) {
+        ui.set_home_people(ModelRc::new(VecModel::from(heads)));
+    }
+    let ids = crate::pages::person_ids(&s.states);
+    if PERSONS.with(|p| *p.borrow() != ids) {
+        let names: Vec<SharedString> =
+            ids.iter().map(|e| s.states[e].attrs.get("friendly_name").and_then(Value::as_str).unwrap_or(e.trim_start_matches("person.")).into()).collect();
+        ui.set_home_person_names(ModelRc::new(VecModel::from(names)));
+        PERSONS.with(|p| *p.borrow_mut() = ids);
+        let open = ui.get_home_settings();
+        let item = config_index(s, ui.get_page().max(0) as usize).and_then(|ci| shown_items(s, ci).into_iter().nth(open.max(0) as usize));
+        show_person_choice(ui, item.as_ref().filter(|_| open >= 0));
     }
 }
 
@@ -555,7 +709,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         "home.settings" => {
             let i = value.parse::<i32>().unwrap_or(-1);
             menus_off(ui);
-            show_sensor_choice(ui, page_items(ui).get(i.max(0) as usize));
+            let items = page_items(ui);
+            show_sensor_choice(ui, items.get(i.max(0) as usize));
+            show_person_choice(ui, items.get(i.max(0) as usize));
             ui.set_home_settings(i);
             show_free(ui);
         }
@@ -619,6 +775,14 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             let i = i.parse::<usize>().unwrap_or(usize::MAX);
             let key = key.to_string();
             let v = v.to_string();
+            // a People widget's person ticked or unticked (its place among the offered people)
+            if key == "person" {
+                let all = PERSONS.with(|p| p.borrow().clone());
+                let Some(id) = all.get(v.parse::<usize>().unwrap_or(usize::MAX)).cloned() else { return };
+                change(ui, true, |items| items.get_mut(i).is_some_and(|it| toggle_person(it, &id, &all)));
+                show_person_choice(ui, page_items(ui).get(i));
+                return;
+            }
             let mut entity = None;
             if key == "entity" {
                 entity = CHOICES.with(|c| c.borrow().get(v.parse::<usize>().unwrap_or(usize::MAX)).cloned());
@@ -811,6 +975,59 @@ mod tests {
         assert!(set_field(&mut it, "accent", "#ff7a33", None));
         assert!(set_field(&mut it, "accent", "x", None));
         assert_eq!(it["accent"], json!(""));
+    }
+
+    #[test]
+    fn people_widgets_tick_their_people() {
+        let all: Vec<String> = ["person.anna", "person.ben", "person.cleo"].iter().map(|s| s.to_string()).collect();
+        let mut it = json!({ "kind": 10, "col": 0, "row": 3, "w": 2, "h": 1, "opts": 1 });
+        // everyone at first: unticking one leaves the others
+        assert!(toggle_person(&mut it, "person.ben", &all));
+        assert_eq!(it["people"], json!(["person.anna", "person.cleo"]));
+        assert!(toggle_person(&mut it, "person.anna", &all));
+        assert_eq!(it["people"], json!(["person.cleo"]));
+        // the last one stays
+        assert!(!toggle_person(&mut it, "person.cleo", &all));
+        assert_eq!(it["people"], json!(["person.cleo"]));
+        // everyone ticked again: no list of its own
+        assert!(toggle_person(&mut it, "person.ben", &all));
+        assert_eq!(it["people"], json!(["person.ben", "person.cleo"]));
+        assert!(toggle_person(&mut it, "person.anna", &all));
+        assert!(it.get("people").is_none());
+    }
+
+    #[test]
+    fn people_widgets_have_a_group_each_and_the_panel_follows_their_people() {
+        let c = json!({ "person_entities": ["person.anna", "person.ben", "person.cleo"], "pages": [
+            { "kind": "home", "options": { "items": [
+                { "kind": 10, "col": 0, "row": 0, "w": 2, "h": 1, "opts": 1 },
+                { "kind": 10, "col": 2, "row": 0, "w": 2, "h": 1, "opts": 0, "people": ["person.ben", "person.ben", "zone.home"] },
+                { "kind": 10, "col": 0, "row": 1, "w": 2, "h": 1, "opts": 1 }
+            ] } }
+        ] });
+        people_start(Some(&c));
+        let items = &c["pages"][0]["options"]["items"];
+        // everyone with the ones away is the first group (the picker's preview)
+        assert_eq!(people_slot(&items[0]), 0);
+        assert_eq!(people_slot(&items[1]), 1);
+        assert_eq!(people_slot(&items[2]), 0);
+        assert_eq!(GROUPS.with(|g| g.borrow()[1].clone()), PeopleGroup { away: false, ids: vec!["person.ben".into()] });
+        // a widget shows everyone: the panel follows everyone Home Assistant has
+        let mut follow = people_entities(Some(&c));
+        follow.sort();
+        follow.dedup();
+        assert_eq!(follow, ["person.anna", "person.ben", "person.cleo"]);
+        // only named ones: only those; no People widget: nobody
+        let named = json!({ "person_entities": ["person.anna", "person.ben"], "pages": [{ "kind": "home", "options": { "items": [
+            { "kind": 10, "col": 0, "row": 0, "w": 2, "h": 1, "people": ["person.ben"] }] } }] });
+        assert_eq!(people_entities(Some(&named)), ["person.ben"]);
+        assert!(people_entities(Some(&json!({ "person_entities": ["person.anna"], "pages": [{ "kind": "music" }] }))).is_empty());
+        // the settings' old list: the default of a widget without its own, and the heads at the bottom
+        let old = json!({ "people": ["person.cleo"], "show_people": true, "pages": [{ "kind": "home", "options": { "items": [
+            { "kind": 10, "col": 0, "row": 0, "w": 2, "h": 1, "opts": 1 }] } }] });
+        people_start(Some(&old));
+        assert_eq!(people_slot(&old["pages"][0]["options"]["items"][0]), 1);
+        assert_eq!(people_entities(Some(&old)), ["person.cleo", "person.cleo"]);
     }
 
     #[test]

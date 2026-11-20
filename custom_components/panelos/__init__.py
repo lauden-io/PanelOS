@@ -32,6 +32,7 @@ an administrator.
 from __future__ import annotations
 
 import time
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -44,7 +45,12 @@ from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
-from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.helpers.event import (
+    async_call_later,
+    async_track_state_added_domain,
+    async_track_state_removed_domain,
+    async_track_time_interval,
+)
 from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.start import async_at_started
 
@@ -390,6 +396,25 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             async_dispatcher_send(hass, SIGNAL_LINKS)
 
     async_track_time_interval(hass, check_alive, timedelta(seconds=1), cancel_on_shutdown=True)
+
+    # A person added to or removed from Home Assistant: the panels get their settings again (the People widgets that
+    # show everyone follow the new list); a burst of them (Home Assistant starting) is sent once.
+    people_later: Callable[[], None] | None = None
+
+    @callback
+    def people_sent(_now: Any) -> None:
+        nonlocal people_later
+        people_later = None
+        async_dispatcher_send(hass, SIGNAL_CONFIG_UPDATED, "")
+
+    @callback
+    def people_changed(_event: Any) -> None:
+        nonlocal people_later
+        if people_later is None:
+            people_later = async_call_later(hass, 2, people_sent)
+
+    async_track_state_added_domain(hass, "person", people_changed)
+    async_track_state_removed_domain(hass, "person", people_changed)
     house = House(hass)
     hass.data.setdefault(DOMAIN, {})["house"] = house
     await house.async_load()

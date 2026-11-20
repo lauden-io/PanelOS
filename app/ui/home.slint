@@ -20,6 +20,7 @@ export struct HomeItem {
                     //        4 minimal analog, 5 analog with numerals, 6 split-flap, 7 the time in words,
                     //        8 nixie tubes, 9 LCD quartz watch, 10 twin-bell
                     // sensor: its sensor's place in the page's sensor list (the app sets it; -1 none)
+                    // people: its group in the People list (the app sets it: its people, and whether the ones away show)
     accent: color,  // the app fills in the panel accent when the widget has none of its own
     weight: int,    // font weight (100 .. 900), the app fills in the panel weight
     tap: bool,      // a tap opens the widget's view (fixed per kind, see tap-text in HomeGrid); off: no tap action
@@ -1015,32 +1016,45 @@ component TimerW inherits Rectangle {
 }
 
 // --------------------------------------------------------------------------- people
-// The people's heads: the ones at home in their colour, the ones away (opts 1) faint.
+// The people's heads: the ones at home in their colour, the ones away (or unknown) faint. The widget shows its group
+// of the People list (its `style`, set by the app: its people, the ones away only with its switch on), in as many
+// rows as give the biggest heads, each row centred.
 component PeopleW inherits Rectangle {
     in property <color> ink: #ffffff;
     in property <[Person]> people;
     in property <HomeItem> it;
-    property <bool> away: Math.mod(root.it.opts, 2) == 1;
-    property <length> d: root.it.h >= 2 ? 64px : root.it.w < 2 ? 40px : 46px;
+    property <length> most: root.it.h >= 2 ? 64px : root.it.w < 2 ? 40px : 46px;
     property <length> gap: root.it.h >= 2 ? 10px : 6px;
+    property <length> room-w: root.width - 16px;
+    property <length> room-h: root.height - 12px;
+    // a head's size for n people in rows of c
+    pure function size(n: int, c: int) -> length {
+        min(root.most, (root.room-w - (c - 1) * root.gap) / c, (root.room-h - (Math.ceil(n / c) - 1) * root.gap) / Math.ceil(n / c))
+    }
+    // the row length that gives the biggest heads, of one to four rows (the fewer rows when it makes no difference)
+    pure function cols(n: int) -> int {
+        root.size(n, Math.ceil(n / 4)) > root.size(n, Math.ceil(n / 3)) + 0.5px && root.size(n, Math.ceil(n / 4)) > root.size(n, Math.ceil(n / 2)) + 0.5px
+            && root.size(n, Math.ceil(n / 4)) > root.size(n, n) + 0.5px ? Math.ceil(n / 4)
+            : root.size(n, Math.ceil(n / 3)) > root.size(n, Math.ceil(n / 2)) + 0.5px && root.size(n, Math.ceil(n / 3)) > root.size(n, n) + 0.5px ? Math.ceil(n / 3)
+            : root.size(n, Math.ceil(n / 2)) > root.size(n, n) + 0.5px ? Math.ceil(n / 2) : n
+    }
     clip: true;
-    HorizontalLayout {
-        alignment: center;
-        padding-top: (root.height - root.d) / 2; padding-bottom: (root.height - root.d) / 2;
-        for p in root.people: Rectangle {
-            property <bool> shown: p.home || root.away;
-            width: self.shown ? root.d + root.gap : 0px;
-            visible: self.shown;
-            Rectangle {
-                x: root.gap / 2; width: root.d; height: root.d; border-radius: root.d / 2;
-                background: p.home ? p.tint : root.ink.with-alpha(0.14);
-                border-width: p.home ? 0px : 1.5px; border-color: root.ink.with-alpha(0.35);
-                Text {
-                    text: p.initials; font-size: root.d * 0.38; font-weight: 600;
-                    color: p.home ? #ffffff : root.ink.with-alpha(0.65);
-                    horizontal-alignment: center; vertical-alignment: center;
-                }
-            }
+    for p in root.people: head := Rectangle {
+        visible: p.group == root.it.style && p.n > 0;
+        property <int> c: root.cols(Math.max(1, p.n));
+        property <int> lines: Math.ceil(Math.max(1, p.n) / self.c);
+        property <int> line: Math.floor(p.at / self.c);
+        property <int> in-line: Math.min(self.c, p.n - self.line * self.c);
+        property <length> d: root.size(Math.max(1, p.n), self.c);
+        x: (root.width - (self.in-line * self.d + (self.in-line - 1) * root.gap)) / 2 + Math.mod(p.at, self.c) * (self.d + root.gap);
+        y: (root.height - (self.lines * self.d + (self.lines - 1) * root.gap)) / 2 + self.line * (self.d + root.gap);
+        width: self.d; height: self.d; border-radius: self.d / 2;
+        background: p.home ? p.tint : root.ink.with-alpha(0.14);
+        border-width: p.home ? 0px : 1.5px; border-color: root.ink.with-alpha(0.35);
+        Text {
+            text: p.initials; font-size: head.d * 0.38; font-weight: 600;
+            color: p.home ? #ffffff : root.ink.with-alpha(0.65);
+            horizontal-alignment: center; vertical-alignment: center;
         }
     }
 }
@@ -1194,6 +1208,8 @@ component WidgetMenu inherits Rectangle {
     in property <bool> weather-only;
     in property <[string]> sensor-names;
     in property <int> sensor-sel;
+    in property <[string]> person-names;  // People: the people it may show
+    in property <[bool]> person-on;       // … the ones it shows
     in property <bool> layer-back;        // the widget lies on one added before it (Back puts it under that one)
     in property <bool> layer-fwd;         // … on one added after it
     in property <length> max-h: 400px;
@@ -1338,6 +1354,27 @@ component WidgetMenu inherits Rectangle {
                     Text { width: 40px; text: root.it.weight; font-size: 14px; font-weight: root.it.weight; color: EditInk.text; vertical-alignment: center; horizontal-alignment: right; }
                 }
             }
+            // People: the ones the widget shows (two columns, each a checkbox with the name); all ticked is everyone,
+            // the ones added to Home Assistant later too
+            if root.it.kind == 10 && root.person-names.length > 0: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 2px;
+                MenuLabel { text: "People"; }
+                for r in Math.ceil(root.person-names.length / 2): HorizontalLayout {
+                    spacing: 8px;
+                    for c in 2: pb := Rectangle {
+                        property <int> k: r * 2 + c;
+                        horizontal-stretch: 1;
+                        min-height: 40px;
+                        if pb.k < root.person-names.length: HorizontalLayout {
+                            spacing: 10px;
+                            VerticalLayout { alignment: center;
+                                CheckBox { checked: pb.k < root.person-on.length && root.person-on[pb.k]; tk-knob: EditInk.muted; tk-knob-on: #F5F3EE; } }
+                            Text { text: root.person-names[pb.k]; font-size: 15px; color: EditInk.text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                        if pb.k < root.person-names.length: TouchArea { clicked => { Act.act("home.set", root.index + ":person:" + pb.k + ":1"); } }
+                    }
+                }
+            }
             // Show: what the widget adds (two columns, each a checkbox with its name)
             if root.bit-names.length > 0: VerticalLayout {
                 padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 2px;
@@ -1430,7 +1467,9 @@ export component HomeGrid inherits Rectangle {
     in property <[string]> sensor-names;  // the sensors a sensor widget's menu offers
     in property <int> sensor-sel: -1;     // … the open menu's widget's sensor among them
     in property <[TimerInfo]> timers;     // the running timers, the one ending soonest first
-    in property <[Person]> people;
+    in property <[Person]> people;        // the People widgets' heads (a People widget's style is its group here)
+    in property <[string]> person-names;  // the people a People widget's menu offers
+    in property <[bool]> person-on;       // … the open menu's widget shows them
     property <bool> rising;
     property <duration> rise-t0;
     changed shown => { if root.rise && root.shown { root.rise-t0 = animation-tick(); root.rising = true; } }
@@ -1698,10 +1737,12 @@ export component HomeGrid inherits Rectangle {
     property <HomeItem> pv-people: { kind: 10, w: 2, h: 1, accent: root.accent, weight: 600, opts: 1, neon: true };
     property <HomeItem> pv-sensor: { kind: 8, w: 2, h: 1, style: -1, accent: root.accent, weight: 600, opts: 3, neon: true };
     property <HomeItem> pv-sensor1: { kind: 8, w: 1, h: 1, style: -1, accent: root.accent, weight: 600, opts: 2, neon: true };
-    // without a running timer or anyone in Home Assistant the previews show made-up ones
+    // without a running timer or anyone in Home Assistant the previews show made-up ones (the People preview shows
+    // group 0: everyone, the ones away too)
     property <[TimerInfo]> pv-timers: root.timers.length > 0 ? root.timers : [{ label: "Pasta", text: "7:42", tint: #ffb21e, fr: 0.62, index: 0 }];
     property <[Person]> pv-people-list: root.people.length > 0 ? root.people
-        : [{ initials: "AN", home: true, tint: #3b82f6 }, { initials: "BE", home: true, tint: #22a06b }, { initials: "CS", home: false, tint: #a855f7 }];
+        : [{ initials: "AN", home: true, tint: #3b82f6, group: 0, at: 0, n: 3 }, { initials: "BE", home: true, tint: #22a06b, group: 0, at: 1, n: 3 },
+            { initials: "CS", home: false, tint: #a855f7, group: 0, at: 2, n: 3 }];
     property <bool> has-sensor: root.sensor-demo.name != "";
     property <bool> music-active: root.music.active;
     property <HomeMusic> pv-music-data: root.music.active ? root.music
@@ -1848,6 +1889,7 @@ export component HomeGrid inherits Rectangle {
             it: root.cur; index: root.settings;
             weather-only: root.weather-only;
             sensor-names: root.sensor-names; sensor-sel: root.sensor-sel;
+            person-names: root.person-names; person-on: root.person-on;
             layer-back: root.layer-back; layer-fwd: root.layer-fwd;
         }
     }

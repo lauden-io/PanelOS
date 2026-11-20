@@ -153,6 +153,8 @@ def panel_config(entry: ConfigEntry) -> dict[str, Any]:
         "zoom": max(50, min(150, int(options.get(CONF_ZOOM, 100)))),
         "loading_screen": bool(options.get(CONF_LOADING_SCREEN, True)),
         "pages": _door_speakers(entry, shown_pages(options.get(CONF_PAGES, DEFAULT_PAGES))),
+        # every person in Home Assistant: a People widget without its own choice shows them all
+        "person_entities": _persons(entry),
         # the weather pages' widgets may be edited on the panel too (a long press, then holding the lock)
         "home_edit": bool(options.get(CONF_HOME_EDIT, False)),
         "screensaver": screensaver_config(options.get(CONF_SCREENSAVER)),
@@ -204,6 +206,14 @@ def _door_speakers(entry: ConfigEntry, pages: list[dict[str, Any]]) -> list[dict
         if page["kind"] == "camera" and not isinstance(page["options"].get("speaker"), str):
             page["options"]["speaker"] = door_speaker(panel.hass, page["entities"])
     return pages
+
+
+def _persons(entry: ConfigEntry) -> list[str]:
+    """Every person.* entity of Home Assistant, in entity id order ([] before the panel's entry is set up)."""
+    panel = getattr(entry, "runtime_data", None)
+    if panel is None:
+        return []
+    return sorted(panel.hass.states.async_entity_ids("person"))
 
 
 def _assist_pipeline(entry: ConfigEntry) -> Any:
