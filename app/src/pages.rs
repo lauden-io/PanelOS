@@ -558,20 +558,39 @@ pub fn parse_color(s: &str) -> Option<Color> {
     Some(Color::from_rgb_u8((v >> 16) as u8, (v >> 8) as u8, v as u8))
 }
 
-/// The music widget's data (and the music page's) for a media player.
 thread_local! {
-    /// When each player was last seen to start playing (wall clock, s), and the state it had before.
+    /// When each player was last seen to start playing (wall clock, s), and the state it had at the last look (with
+    /// the time of that look).
     static PLAY_SEEN: std::cell::RefCell<HashMap<String, f64>> = std::cell::RefCell::new(HashMap::new());
-    static LAST_STATE: std::cell::RefCell<HashMap<String, String>> = std::cell::RefCell::new(HashMap::new());
+    static LAST_STATE: std::cell::RefCell<HashMap<String, (String, f64)>> = std::cell::RefCell::new(HashMap::new());
 }
 
+/// Looks at a player further apart than this (s) did not watch it in between: the shown player is looked at every
+/// second, another one only while it is shown.
+const WATCH_GAP: f64 = 5.0;
+
+/// What a look at a player's state says about its start: `Some(true)` a start seen now (it was watched and was not
+/// playing at the last look), `Some(false)` it was not watched in between (a start time noted earlier no longer
+/// holds, and a start that happened meanwhile was not seen), `None` nothing new.
+fn start_seen(before: Option<&(String, f64)>, state: &str, now: f64) -> Option<bool> {
+    match before {
+        Some((b, at)) if now - at <= WATCH_GAP => (state == "playing" && b != "playing").then_some(true),
+        _ => Some(false),
+    }
+}
+
+/// The music widget's data (and the music page's) for a media player.
 pub fn home_music(states: &HashMap<String, EntityState>, player: &str, art: Option<&slint::Image>, accent: Color) -> HomeMusic {
     let Some(p) = states.get(player) else { return HomeMusic { accent, ..Default::default() } };
-    // a start (paused / idle -> playing) noted when it is first seen
-    let before = LAST_STATE.with(|m| m.borrow_mut().insert(player.to_string(), p.state.clone()));
-    if p.state == "playing" && before.as_deref().is_some_and(|b| b != "playing") {
-        PLAY_SEEN.with(|m| m.borrow_mut().insert(player.to_string(), now_f()));
-    }
+    // a start (paused / idle -> playing) noted when it is first seen; back on a player after a while, a start it made
+    // meanwhile was not seen: its reported update time counts then
+    let t = now_f();
+    let before = LAST_STATE.with(|m| m.borrow_mut().insert(player.to_string(), (p.state.clone(), t)));
+    match start_seen(before.as_ref(), &p.state, t) {
+        Some(true) => PLAY_SEEN.with(|m| m.borrow_mut().insert(player.to_string(), t)),
+        Some(false) => PLAY_SEEN.with(|m| m.borrow_mut().remove(player)),
+        None => None,
+    };
     let active = shows_track(p);
     let mut pos = attr_f64(p, "media_position").unwrap_or(0.0);
     if p.state == "playing" {
@@ -816,5 +835,20 @@ mod tests {
         assert_eq!(slots[0].theme, -1);
         assert_eq!(slots[0].layout, -1);
         assert!(home_layouts(Some(&c), Color::from_rgb_u8(0, 0, 0)).is_empty());
+    }
+
+    #[test]
+    fn a_start_counts_only_when_watched() {
+        let paused = ("paused".to_string(), 100.0);
+        // looked at every second: paused -> playing is a start
+        assert_eq!(start_seen(Some(&paused), "playing", 101.0), Some(true));
+        // still paused, or already playing at the last look: nothing new
+        assert_eq!(start_seen(Some(&paused), "paused", 101.0), None);
+        assert_eq!(start_seen(Some(&("playing".to_string(), 100.0)), "playing", 101.0), None);
+        // back on a player after a minute: whatever it did meanwhile was not seen
+        assert_eq!(start_seen(Some(&paused), "playing", 160.0), Some(false));
+        assert_eq!(start_seen(Some(&paused), "paused", 160.0), Some(false));
+        // the first look at a player
+        assert_eq!(start_seen(None, "playing", 100.0), Some(false));
     }
 }
