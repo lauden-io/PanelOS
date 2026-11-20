@@ -269,7 +269,10 @@ def ws_report(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
         vol.Optional("panel_id", default=""): str,
         vol.Required("index"): vol.All(int, vol.Range(min=0, max=63)),
         vol.Optional("variant"): vol.All(int, vol.Range(min=0, max=15)),
-        vol.Optional("options"): {str: vol.Any(None, bool, int, float, vol.All(str, vol.Length(max=200)))},
+        # values: plain ones, or a short list of ids (the calendars hidden on the panel)
+        vol.Optional("options"): {
+            str: vol.Any(None, bool, int, float, vol.All(str, vol.Length(max=200)), vol.All([vol.All(str, vol.Length(max=255))], vol.Length(max=16)))
+        },
     }
 )
 @callback
