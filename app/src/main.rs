@@ -1140,6 +1140,7 @@ fn close_page_sheets(ui: &AppWindow) {
     ui.set_timers_settings(false);
     ui.set_todo_picker(false);
     ui.set_cam_settings(false);
+    ui.set_cam_replies(false);
     ui.set_info_settings(false);
     ui.set_home_bg_sheet(false);
     ui.set_home_settings(-1);
@@ -3355,8 +3356,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         }
         "music.settings-close" => ui.set_music_settings(false),
         "music.look" => page_set(ui, "music", Some(value.parse().unwrap_or(0)), Value::Null),
-        // the camera and notification pages' sheets
-        "cam.fit" => page_set(ui, "camera", None, json!({ "fit": value })),
+        // the notification page's sheet
         "info.look" => page_set(ui, "info", Some(value.parse().unwrap_or(0)), Value::Null),
         "music.holds" => page_set(ui, "music", None, json!({ "holds": value.parse::<i64>().unwrap_or(0) })),
         "music.scroll" => page_set(ui, "music", None, json!({ "scroll": value == "1" })),

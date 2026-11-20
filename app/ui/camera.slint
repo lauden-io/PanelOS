@@ -2,7 +2,7 @@
 // (also the camera picker), and the visitor overlay (doorbell / someone at the door) above any panel.
 // The app scales every frame to the size it is shown at (the software renderer scales images without filtering).
 import { Theme, Act } from "theme.slint";
-import { Icon, GlowText, DragSheet, Segmented } from "widgets.slint";
+import { Icon, GlowText, Segmented, TextButton, MenuHost, PageMenu } from "widgets.slint";
 
 export struct CamItem {
     name: string,
@@ -50,6 +50,28 @@ component Corners inherits Rectangle {
     }
 }
 
+// white text that wraps, with GlowText's soft rim hugging the glyphs (a reply at the door reads over any picture)
+component WrapGlow {
+    in property <string> text;
+    in property <length> font-size: 15px;
+    in property <int> font-weight: 500;
+    property <length> d: max(0.8px, min(2.2px, root.font-size / 46));
+    cache-rendering-hint: true;
+    horizontal-stretch: 1;
+    min-height: t.preferred-height;
+    preferred-height: t.preferred-height;
+    for o in [{ x: -1, y: -0.35 }, { x: 1, y: -0.35 }, { x: -1, y: 1.5 }, { x: 1, y: 1.5 }]: Text {
+        x: o.x * root.d; y: o.y * root.d; width: root.width; height: root.height;
+        text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: #0000002e;
+        wrap: word-wrap; vertical-alignment: center;
+    }
+    t := Text {
+        width: root.width; height: root.height;
+        text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: #ffffff;
+        wrap: word-wrap; vertical-alignment: center;
+    }
+}
+
 // a camera that shows no picture: offline or privacy mode
 component NoPicture inherits Rectangle {
     in property <int> state;
@@ -71,7 +93,8 @@ export component CameraPage inherits Rectangle {
     in property <image> bg;                // the blurred copy of the frame (the app refreshes it now and then)
     in property <[color]> bg-corners;      // the blurred copy's colour at the picture's four corners (read when the copy is refreshed)
     in property <[CamAction]> actions;     // the camera's linked entities (lock, door sensor, light …) from HA
-    in property <bool> settings;           // the page's settings sheet
+    in property <bool> settings;           // the page's settings (the brand card, from the quick shade's page row)
+    in property <bool> on-screen;          // the page is the one on screen
     in property <length> grid-scroll;      // all cameras: how far the grid is scrolled (the app brings the selected camera into view)
     // visitor overlay (doorbell, or what HA is set to treat as one), above any panel
     in property <bool> ring;
@@ -81,11 +104,44 @@ export component CameraPage inherits Rectangle {
     in property <string> ring-sub;         // camera · time
     in property <[CamAction]> ring-state;  // door sensor, lock
     in property <bool> can-open;           // a lock / opener is linked
-    in property <bool> can-talk;           // the camera has a speaker
+    in property <bool> can-talk;           // a speaker at the door is set (and replies to say there)
     in property <float> hold;              // 0 … 1: holding "open"
     in property <float> pulse: 1;
-    in property <bool> replies;            // the reply sheet (tap on talk)
-    in property <[string]> reply-list;
+    in property <bool> replies;            // the replies at the door (a tap on the microphone)
+    in property <[string]> reply-list;     // at most four, each one line
+
+    // the quick shade's page row ("Camera settings · Cameras") opens the settings while the page is on screen
+    property <bool> menu-claim: root.on-screen && !root.ring;
+    property <int> menu-ask: PageMenu.open-request;
+    function claim-page-row() {
+        PageMenu.title = "Camera settings";
+        PageMenu.look = "Cameras";
+        PageMenu.icon = "\u{F07AE}";
+        PageMenu.has-settings = true;
+    }
+    init => {
+        if root.menu-claim {
+            root.claim-page-row();
+        }
+    }
+    changed menu-claim => {
+        if root.menu-claim {
+            root.claim-page-row();
+        } else if PageMenu.title == "Camera settings" {
+            PageMenu.has-settings = false;
+        }
+    }
+    changed menu-ask => {
+        if root.menu-claim {
+            Act.act("cam.settings", "");
+        }
+    }
+    // the settings close when the page leaves the screen (another page, the screensaver)
+    changed on-screen => {
+        if !root.on-screen && root.settings {
+            Act.act("cam.settings-close", "");
+        }
+    }
 
     property <CamItem> c: root.cams[root.sel];
     // filling the screen: a veil at the top and bottom for the status line, chip, badge and buttons, black in dark mode, white in light
@@ -186,20 +242,39 @@ export component CameraPage inherits Rectangle {
         TouchArea { y: -6px; height: parent.height + 12px; clicked => { Act.act("cam.view", root.view == 0 && root.n > 1 ? 1 : 0); } }
     }
 
-    // ---------------------------------------------------------------- settings sheet
-    // the settings: a sheet that follows the finger (DragSheet)
-    property <length> settings-need: 72px + 2 * 62px + 26px;
-    DragSheet {
-        width: parent.width; height: parent.height;
-        open: root.settings; need: root.settings-need;
+    // ---------------------------------------------------------------- settings (spec 38: the brand card of 33.1)
+    // under the status bar, x 16-464; a change shows under the card at once. In: 140 ms, from 0.96 with a fade, from
+    // the top middle; out: a 100 ms fade.
+    settings-menu := MenuHost {
+        open: root.settings && !root.ring;
+        kind: 1;
+        need: 282px;
+        in-ms: 140ms;
+        out-ms: 100ms;
         close => { Act.act("cam.settings-close", ""); }
-        Text { x: 24px; y: 24px; height: 28px; text: "Cameras"; font-size: 18px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Icon { x: 132px; y: 24px; width: 28px; height: 28px; text: "\u{F02FD}"; font-size: 20px; color: Theme.muted; }
-        Text { x: parent.width - 24px - self.preferred-width; y: 24px; height: 28px; text: "Done"; font-size: 16px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Segmented { x: 24px; y: 72px; width: parent.width - 48px; options: ["Whole picture", "Fill the screen"];
-            selected: root.fit == 1 ? 0 : 1; picked(i) => { Act.act("cam.fit", i == 0 ? "whole" : "fill"); } }
-        Segmented { x: 24px; y: 134px; width: parent.width - 48px; options: ["One camera", "All cameras"];
-            selected: root.view; picked(i) => { Act.act("cam.view", i); } }
+        property <float> u-in: 1 - Math.pow(1 - Math.min(1, self.t-in / 140), 3);
+        property <float> u-out: Math.min(1, self.t-out / 100);
+        Rectangle {
+            x: settings-menu.menu-x; y: settings-menu.menu-y; width: settings-menu.menu-w; height: settings-menu.menu-h;
+            transform-origin: { x: self.width / 2, y: 0 };
+            transform-scale: settings-menu.open ? 0.96 + 0.04 * settings-menu.u-in : 1;
+            opacity: settings-menu.open ? settings-menu.u-in : 1 - settings-menu.u-out;
+            border-radius: 14px; background: Theme.surface; border-width: 1px; border-color: Theme.outline;
+            drop-shadow-offset-y: 12px; drop-shadow-blur: 32px; drop-shadow-color: #00000073;
+            TouchArea { }
+            Text { x: 17px; y: 17px; width: parent.width - 34px; height: 28px; text: "Cameras"; font-family: Theme.heading-family; font-size: 20px;
+                font-weight: Theme.heading-weight; color: Theme.text; vertical-alignment: center; }
+            Text { x: 17px; y: 57px; width: parent.width - 34px; height: 20px; text: "Picture"; font-size: 14px; font-weight: 500; color: Theme.muted;
+                vertical-alignment: center; }
+            Segmented { x: 17px; y: 83px; width: parent.width - 34px; options: ["Whole picture", "Fill the screen"];
+                selected: root.fit; picked(i) => { Act.act("cam.fit", i == 0 ? "whole" : "fill"); } }
+            Text { x: 17px; y: 139px; width: parent.width - 34px; height: 20px; text: "Show"; font-size: 14px; font-weight: 500; color: Theme.muted;
+                vertical-alignment: center; }
+            Segmented { x: 17px; y: 165px; width: parent.width - 34px; options: ["One camera", "All cameras"];
+                selected: root.view; picked(i) => { Act.act("cam.view", i); } }
+            TextButton { x: parent.width - 17px - self.width; y: 219px; width: 92px; text: "Done"; primary: true;
+                clicked => { Act.act("cam.settings-close", ""); } }
+        }
     }
 
     // ---------------------------------------------------------------- visitor overlay
@@ -246,7 +321,10 @@ export component CameraPage inherits Rectangle {
     }
     if root.ring: HorizontalLayout {
         x: 0; y: 400px; width: 480px; height: 64px; alignment: center; spacing: 16px;
-        if root.can-talk: Rectangle { width: 64px; height: 64px; border-radius: 32px; background: #ffffff2b; border-width: 1px; border-color: #ffffff3d;
+        // the microphone: a tap opens the replies at the door (spec 38.1)
+        if root.can-talk: Rectangle { width: 64px; height: 64px; border-radius: 32px; background: talk.pressed ? #ffffff4d : #ffffff2b;
+            border-width: 1px; border-color: #ffffff3d;
+            talk := TouchArea { clicked => { Act.act("cam.talk", ""); } }
             GlowText { width: 64px; height: 64px; icon: true; text: "\u{F036C}"; font-size: 28px; color: #ffffff; horizontal-alignment: center; } }
         if root.can-open: Rectangle {
             width: 200px; height: 64px; border-radius: 32px; background: #ffffff2b; border-width: 1px; border-color: #ffffff3d;
@@ -267,19 +345,72 @@ export component CameraPage inherits Rectangle {
             TouchArea { clicked => { Act.act("cam.ring-close", ""); } }
             GlowText { width: 64px; height: 64px; icon: true; text: "\u{F0156}"; font-size: 28px; color: #ffffff; horizontal-alignment: center; } }
     }
-    // replies: tap on talk (holding talk records a voice message for the door instead)
-    if root.ring && root.replies: Rectangle { background: #00000080; }
-    if root.ring && root.replies: Rectangle {
-        property <length> need: 72px + root.reply-list.length * 54px - 10px + 26px;
-        x: 0; y: root.height - self.need; width: root.width; height: self.need + 24px; border-radius: 24px; background: Theme.surface;
-        Rectangle { x: (parent.width - 36px) / 2; y: 8px; width: 36px; height: 4px; border-radius: 2px; background: Theme.faint; }
-        Text { x: 24px; y: 24px; height: 28px; text: "Reply"; font-size: 18px; font-weight: 600; color: Theme.text; vertical-alignment: center; }
-        Icon { x: parent.width - 52px; y: 22px; width: 32px; height: 32px; text: "\u{F0156}"; font-size: 22px; color: Theme.muted; }
-        for r[i] in root.reply-list: Rectangle {
-            x: 16px; y: 66px + i * 54px; width: parent.width - 32px; height: 46px; border-radius: 14px; background: Theme.surface-raised;
-            Icon { x: 14px; y: 0; width: 22px; height: parent.height; text: "\u{F173E}"; font-size: 19px; color: Theme.muted; }
-            Text { x: 46px; y: 0; width: parent.width - 60px; height: parent.height; text: r; font-size: 15px; font-weight: 500; color: Theme.text;
-                vertical-alignment: center; overflow: elide; }
+    // ---------------------------------------------------------------- replies at the door (spec 38, 38.1)
+    // A card grows up out of the microphone (from 0.2 at the button, 180 ms ease-out, no jelly), its bottom edge 8 px
+    // over the buttons (y 392), x 28-452, sized to its lines: the pills' tone made solid (their 17 % white over the
+    // blurred copy) with their 24 % rim, so the lines read over the picture. A tap on a line says it at the door, the
+    // row lights and the card goes back into the microphone (120 ms); a tap beside it (the window dims 30 %) or on the
+    // microphone again closes it. It never reaches above y 104 (a body that would scrolls inside).
+    if root.ring: replies-menu := MenuHost {
+        open: root.replies && root.can-talk;
+        kind: 0;
+        in-ms: 180ms;
+        out-ms: 120ms;
+        close => { Act.act("cam.replies", "0"); }
+        property <float> u-in: 1 - Math.pow(1 - Math.min(1, self.t-in / 180), 3);
+        property <float> u-out: Math.pow(Math.min(1, self.t-out / 120), 3);
+        property <int> lit: -1;
+        changed open => {
+            if self.open {
+                self.lit = -1;
+            }
         }
+        // the microphone's centre: the buttons are centred in their row (microphone, hold to open, close)
+        property <length> mic-x: (480px - (64px + (root.can-open ? 216px : 0px) + 80px)) / 2 + 32px;
+        card := Rectangle {
+            property <length> head-h: 38px;
+            property <length> body-need: rows.preferred-height;
+            property <length> body-h: Math.min(self.body-need, 288px - 22px - self.head-h);
+            x: 28px; y: 392px - self.height; width: 424px; height: 22px + self.head-h + self.body-h;
+            transform-origin: { x: replies-menu.mic-x - 28px, y: self.height + 40px };
+            transform-scale: replies-menu.open ? 0.2 + 0.8 * replies-menu.u-in : 1 - 0.8 * replies-menu.u-out;
+            opacity: replies-menu.open ? Math.min(1, 1.5 * replies-menu.u-in) : 1 - replies-menu.u-out;
+            border-radius: 20px; background: #34373df2; border-width: 1px; border-color: #ffffff3d;
+            drop-shadow-offset-y: 16px; drop-shadow-blur: 34px; drop-shadow-color: #00000073;
+            TouchArea { }
+            Rectangle { x: 15px; y: 13px; width: 28px; height: 28px; border-radius: 14px; background: #ffffff33;
+                Icon { width: parent.width; height: parent.height; text: "\u{F036C}"; font-size: 18px; color: #ffffff; } }
+            GlowText { x: 51px; y: 13px; width: parent.width - 66px; height: 28px; text: "Reply at the door"; font-size: 15px; font-weight: 600;
+                color: #ffffff; }
+            Flickable {
+                x: 11px; y: 11px + card.head-h; width: 402px; height: card.body-h;
+                content-width: 402px; content-height: card.body-need;
+                interactive: card.body-need > card.body-h;
+                rows := VerticalLayout {
+                    x: 0; y: 0; width: 402px;
+                    spacing: 6px;
+                    for r[i] in root.reply-list: Rectangle {
+                        min-height: 48px;
+                        border-radius: 14px; border-width: 1px; border-color: #ffffff29;
+                        background: replies-menu.lit == i || line.pressed ? #ffffff4d : #ffffff17;
+                        HorizontalLayout {
+                            padding-left: 13px; padding-right: 13px; padding-top: 9px; padding-bottom: 9px; spacing: 10px;
+                            GlowText { width: 19px; icon: true; text: "\u{F173E}"; font-size: 19px; color: #ffffffd9; horizontal-alignment: center; }
+                            WrapGlow { text: r; font-size: 15px; font-weight: 500; }
+                        }
+                        line := TouchArea {
+                            clicked => {
+                                if replies-menu.open && replies-menu.lit < 0 {
+                                    replies-menu.lit = i;
+                                    Act.act("cam.reply", i);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        // the lit row shows for a moment, then the card goes back into the microphone
+        Timer { interval: 220ms; running: replies-menu.open && replies-menu.lit >= 0; triggered => { Act.act("cam.replies", "0"); } }
     }
 }
