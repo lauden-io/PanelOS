@@ -4,6 +4,10 @@
 
 **Upgrading from 0.0.6**: put the new UI bundle on the panel (new fonts and pictures) and update the integration, then restart Home Assistant.
 
+### Pages
+- Every page kind can be on the list any number of times, each page with its own settings and data: music pages each on its own player, quick controls pages with their own tiles, a cameras page per door with its own doorbell, calendar and to-do pages with their own calendars and lists, clock, timers and notifications pages each in their own look.
+- A look, an option or a player set on the panel goes to the page it was set on; a request that names a kind (a ring, `show_view`, the doorbell) goes to the page of that kind on screen, else the first.
+
 ### Menus
 - No more bottom sheets: every picker and page settings menu comes out of what opened it, as an object of the look (a record sleeve, a J-card, a recipe card with a magnet, a parchment scroll, an arcade screen, a split-flap board, a pager's LCD menu, a TV's on-screen menu, till paper, embossed tapes, a remote's sliding lid, a wall unit's hinged door …), each with its own motion. A tap beside a menu, its chip again or Done closes it; a look change reopens it as the new look's menu; leaving the page closes it.
 - The quick shade's second step has a page row that opens the settings of the page on screen in its look's menu.
@@ -57,12 +61,14 @@
 - A long press shows a control's details in every look (a card grown from the tile, the desk channel's rack unit, the deck switch's overhead panel), including colour, colour temperature, effect and cover keys.
 - Flight deck: painted group frames, automatic, off or custom, set in the integration; a colour light's lamp lights in its own colour at the throw, also after a restart.
 - Mixing desk / flight deck: long names fit their tape or plate in smaller letters or two lines.
+- Eight tiles a page; more go on another quick controls page (older pages with more are split when the integration starts).
 
 ### Home and weather
 - Editing a custom page on the panel (long press, lock, move, resize, remove, settings, add, background), switched on in the integration ("Allow editing on the panel"); the edit mode's menus are objects of the look.
 - New widgets: Sensor, Timer, People and Details (wind, humidity, chance of rain, sunrise and sunset).
 - The People widget shows Home Assistant's people, in as many rows as make the heads biggest; its people are chosen in its settings, in the integration and in the panel's widget menu (all ticked means everyone, also people added later).
 - Glow Up in the background menu reads widgets without their own neon switch as the page draws them.
+- People widget: each head shows the person's profile picture from Home Assistant ("Profile pictures", on by default); with "The ones away too", the people away are fainter inside a grey ring; its menu on the panel always offers every person.
 - Weather details page: a background and weather widgets on the custom page's grid, edited the same way.
 - Hourly and daily forecasts show as many cards as fit; the chance of rain reads on the light ground.
 - Rain on the glass: drops land on the glass over the photo backgrounds while it rains, merge and run down with a wet streak; the wind bends their path, and they dry up after the rain. A finger stroke up or down wipes them away. Rain on the glass and Lightning are switches of the panel, on by default.
@@ -93,6 +99,7 @@
 
 ### Home Assistant
 - The integration's switches, segmented controls, weekday rows and checkboxes have the panel's jelly motion, with the mouse and with touch.
+- Quick controls tiles are dragged into place by their handle, mouse and touch; the page list names each page's first tiles, cameras or calendars.
 - The widget picker shows each widget with live content (clock, date, weather, forecasts, next event, music, sensors, people).
 - The Voice section follows the satellite's wake words and shows option names instead of ids.
 - The first click after the live screen's pause is no longer lost; the sound sheets' ⓘ bubbles open and close in place.
