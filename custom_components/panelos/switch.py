@@ -1,4 +1,4 @@
-"""Switches of a panel: screen on/off, automatic brightness, wake on approach."""
+"""Switches of a panel: screen on/off, automatic brightness, wake on approach, child lock."""
 
 from __future__ import annotations
 
@@ -27,6 +27,8 @@ DESCRIPTIONS = {
         icon="mdi:motion-sensor",
         entity_category=EntityCategory.CONFIG,
     ),
+    # On: touches do nothing until the lock is held on the panel (it locks again after a minute without a touch).
+    "child_lock": SwitchEntityDescription(key="child_lock", translation_key="child_lock", icon="mdi:account-lock"),
 }
 
 

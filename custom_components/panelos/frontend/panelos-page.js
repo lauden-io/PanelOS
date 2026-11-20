@@ -206,6 +206,9 @@ const DND_DEFAULT_ALLOW = { alarms: true, timers: true, status: true, ring: true
 const DEFAULT_SCREENSAVER = { when: "dark", lux: 3, from: "22:00", to: "06:00", light_entity: "", face: 1, seconds: true, date: true, weather: true, next: true, weight: 600, width: 100, speed: 20, colour: "" };
 const DEFAULT_DND = { mode: "off", from: "22:00", to: "07:00", allow: DND_DEFAULT_ALLOW };
 const DEFAULT_POPUPS = { kind: "card", sound: true, seconds: 10, until: false };
+// what switches the Auto theme: the light in the room, the sun, or set times (dark from - to)
+const DEFAULT_THEME_AUTO = { by: "light", from: "20:00", to: "07:00" };
+const WAKE_DISTANCES = [["near", "Near"], ["medium", "Medium"], ["far", "Far"]];
 
 const SECTIONS = [
   { id: "overview", name: "Overview", icon: "monitor-dashboard" },
@@ -3778,6 +3781,15 @@ class PanelOSPage extends HTMLElement {
       any: "The screensaver starts whenever nobody has used the panel for the time above.",
     }[saver.when];
     const whenRows = [this._row("When", this._select([["dark", "When the room is dark"], ["window", "Between two times"], ["night", "Sunset to sunrise"], ["any", "Any time"]], saver.when, (v) => setSaver({ when: v }), { label: "When the screensaver may start" }), { info: whenInfo, infoKey: `r:when:${saver.when}` })];
+    // Auto: what switches it (without a light sensor the panel goes by the sun)
+    const themeAuto = { ...DEFAULT_THEME_AUTO, ...(this._settings(p).theme_auto || {}) };
+    const setThemeAuto = (patch) => this._options(p, { theme_auto: patch }, { optimistic: (x) => { x.theme_auto = { ...themeAuto, ...patch }; } });
+    const autoBy = !light && themeAuto.by === "light" ? "sun" : themeAuto.by;
+    const themeRows = s.theme !== "Auto" ? [] : [
+      this._row("Switches by", this._select([light ? ["light", "Light in the room"] : null, ["sun", "Sunset and sunrise"], ["times", "Set times"]].filter(Boolean), autoBy, (v) => setThemeAuto({ by: v }), { label: "Auto switches by" })),
+      autoBy === "times" ? this._row("Dark from – to", this._times(themeAuto.from, themeAuto.to, (f, t) => setThemeAuto({ from: f, to: t }))) : null,
+    ];
+    const wake = WAKE_DISTANCES.some(([k]) => k === this._settings(p).wake_distance) ? this._settings(p).wake_distance : "medium";
     if (saver.when === "dark") {
       whenRows.push(this._row("Darker than", this._slider(saver.lux, 1, 60, 1, (v) => setSaver({ lux: v }), (v) => `${v} lx`, { label: "Darker than" }), { sub: h("span", { "data-live": `lux:${p.entry_id}` }, this._liveValue(`lux:${p.entry_id}`)) }));
       if (!light) {
@@ -3790,7 +3802,8 @@ class PanelOSPage extends HTMLElement {
     return [
       this._hero("Display", [h("span", null, this._pname(p)), this._syncLine(p)]),
       this._card("Screen", {},
-        (opts.theme || []).length ? this._row("Theme", this._seg(opts.theme.map((t) => [t, t]), s.theme, (v) => this._command(p, "theme", v), { label: "Theme" }), { info: "Auto switches between dark and light with the light in the room." }) : null,
+        (opts.theme || []).length ? this._row("Theme", this._seg(opts.theme.map((t) => [t, t]), s.theme, (v) => this._command(p, "theme", v), { label: "Theme" }), { info: "Auto switches between dark and light by itself." }) : null,
+        (opts.theme || []).length ? themeRows : null,
         light ? this._row("Automatic brightness", this._toggle(s.auto_brightness, (v) => this._command(p, "auto_brightness", v), { label: "Automatic brightness" }), { sub: s.auto_brightness ? "Follows the light in the room" : null }) : null,
         !s.auto_brightness || !light ? this._row("Brightness", this._slider(typeof s.brightness === "number" ? s.brightness : 70, 1, 100, 1, (v) => this._command(p, "brightness", v), (v) => `${v} %`, { label: "Brightness" })) : null,
         p.connected ? null : h("p", { class: "note", style: { margin: "0 0 14px" } }, "These are the panel's own settings: they change while it is online.")),
@@ -3801,8 +3814,26 @@ class PanelOSPage extends HTMLElement {
         never || (styles.length && s.screensaver_style !== "Clock") ? null : this._saverClock(saver, setSaver, p),
         never || !light || saver.when !== "dark" ? null : this._more(`saver:${p.entry_id}`, this._row("Light from", this._entityButton(saver.light_entity, { title: "Light from", domains: ["sensor"], filter: luxFilter, none: "This panel's sensor", p, onPick: (v) => setSaver({ light_entity: v }) })))),
       this._has(p, "proximity") ? this._card("Waking", {},
-        this._row("Wake when someone comes close", this._toggle(s.proximity_wake, (v) => this._command(p, "proximity_wake", v), { label: "Wake when someone comes close" }))) : null,
+        this._row("Wake when someone comes close", this._toggle(s.proximity_wake, (v) => this._command(p, "proximity_wake", v), { label: "Wake when someone comes close" })),
+        this._row("Distance", this._seg(WAKE_DISTANCES, wake, (v) => this._options(p, { wake_distance: v }, { optimistic: (x) => { x.wake_distance = v; } }), { label: "Wake distance" }),
+          { info: "How close someone comes before the panel wakes: about 30 cm (near), 45 cm (medium) or 55 cm (far). Presence uses the same distance." }),
+        this._row("Calibrate", this._btn("Start", () => this._proxCal(p), { cls: "small", icon: "tune-vertical", disabled: !p.connected }),
+          { info: "The panel measures its sensor with nobody in front of it, then shows how far it wakes. Keep the space in front of the panel clear for about 20 seconds." })) : null,
+      this._has(p, "touch") ? this._card("Touch", {},
+        this._row("Child lock", this._toggle(Boolean(s.child_lock), (v) => this._command(p, "child_lock", v), { label: "Child lock" }),
+          { info: "Touches do nothing until someone holds the lock on the panel for 3 seconds. Voice works as usual. Once unlocked, the panel locks again after a minute without a touch." })) : null,
     ];
+  }
+
+  async _proxCal(p) {
+    try {
+      await this._hass.callWS({ type: "panelos/page/proximity_calibration", entry_id: p.entry_id });
+      this._toast(`Calibrating on ${this._pname(p)}: keep the space in front of it clear`);
+      this._schedulePicture(900);
+      this._previewSheetIfNarrow(p);
+    } catch (err) {
+      this._toast(err.message || String(err), null, true);
+    }
   }
 
   // -- device ------------------------------------------------------------------------------
@@ -3826,8 +3857,10 @@ class PanelOSPage extends HTMLElement {
         this._row("Panel ID", h("span", { class: "muted wrap" }, st.panel_id || "–")),
         this._row("What it can do", null, { stack: true, sub: p.caps_reported ? "As the panel reports it" : "Not reported yet: treated as an NSPanel Pro" }),
         h("div", { class: "below muted" }, this._caps(p).map((c) => CAP_NAMES[c] || c).join(" · "))),
-      this._card("Wi-Fi", { info: "When idle, the panel moves to a clearly stronger access point of the same network." },
-        this._row("Signal", h("span", { style: { display: "inline-flex", gap: "10px", alignItems: "center" } }, bars, h("span", { class: "muted num" }, typeof rssi === "number" ? `${rssi} dBm` : "–")))),
+      this._card("Wi-Fi", {},
+        this._row("Signal", h("span", { style: { display: "inline-flex", gap: "10px", alignItems: "center" } }, bars, h("span", { class: "muted num" }, typeof rssi === "number" ? `${rssi} dBm` : "–"))),
+        this._row("Roaming", this._toggle(st.wifi_roaming !== false, (v) => this._options(p, { wifi_roaming: v }, { optimistic: (x) => { x.wifi_roaming = v; } }), { label: "Roaming" }),
+          { info: "The panel switches by itself to a clearly stronger access point of the same Wi-Fi network." })),
       this._card("Sensors", { info: "Every value the panel sends is a row in the recorder's database. The panel sends a sensor only when it has changed by at least this much since the value it sent last. Lower: finer history, more writes." },
         this._more(`sens:${p.entry_id}`, Object.entries(limits).map(([key, lim]) => {
           const meta = REPORTING[key] || { label: key };
@@ -4581,8 +4614,9 @@ class PanelOSPage extends HTMLElement {
           const ha = this._ents(["sensor"], { p: to, filter: (st) => st.attributes?.device_class === "illuminance" }).find((e) => e.area && e.area === this._pareaId(to));
           out.push(["a", ha ? `Screensaver in the dark: light from ${ha.name}` : "Screensaver: sunset to sunrise instead of in the dark", this._reason(to, "light")]);
         } else out.push(["y", "When the screensaver may start"]);
-        if (!to.connected) out.push(["n", "Theme, brightness, screensaver timing and style, waking", `${tn} is offline; they are the panel's own settings.`]);
-        else out.push(["y", "Theme, brightness, screensaver timing and style, waking"]);
+        out.push(["y", this._has(to, "proximity") ? "What switches the Auto theme, wake distance" : "What switches the Auto theme"]);
+        if (!to.connected) out.push(["n", "Theme, brightness, screensaver timing and style, waking, child lock", `${tn} is offline; they are the panel's own settings.`]);
+        else out.push(["y", "Theme, brightness, screensaver timing and style, waking, child lock"]);
       }
       if (what.voice) out.push(this._has(to, "mic") ? ["y", "Voice look"] : ["n", "Voice look", this._reason(to, "mic")]);
       if (what.dnd) out.push(["y", "Do not disturb"]);
@@ -4617,6 +4651,8 @@ class PanelOSPage extends HTMLElement {
           else s.when = "night";
         }
         changes.screensaver = s;
+        changes.theme_auto = clone({ ...DEFAULT_THEME_AUTO, ...(from.settings.theme_auto || {}) });
+        if (this._has(to, "proximity")) changes.wake_distance = from.settings.wake_distance || "medium";
       }
       if (what.voice && this._has(to, "mic")) {
         changes.voice_look = from.settings.voice_look || 0;
@@ -4640,6 +4676,7 @@ class PanelOSPage extends HTMLElement {
         if (fs[key] != null && (key !== "auto_brightness" || this._has(to, "light"))) await this._command(to, key, fs[key]);
       }
       if (fs.proximity_wake != null && this._has(to, "proximity")) await this._command(to, "proximity_wake", fs.proximity_wake);
+      if (fs.child_lock != null && this._has(to, "touch")) await this._command(to, "child_lock", fs.child_lock);
     }
     return ok;
   }
