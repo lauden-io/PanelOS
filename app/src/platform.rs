@@ -236,11 +236,49 @@ pub struct PanelPlatform {
     touch_retry: std::cell::Cell<u64>,
     wakeup: Wakeup,
     /// Development: FIFO with lines "tap x y" / "down x y" / "move x y" / "up x y"
-    /// / "swipe x1 y1 x2 y2 ms" (moves every 16 ms).
+    /// / "swipe x1 y1 x2 y2 ms" (moves every 16 ms) / "pinch x y d1 d2 ms" (two
+    /// fingers above each other round (x, y), d1 px apart, moving to d2 px apart).
     dev_input: Option<RawFd>,
     dev_buf: RefCell<String>,
     /// Touches of a swipe from the development input, with when they are due (µs).
     gesture: RefCell<VecDeque<(u64, TouchEvent)>>,
+    /// The two-finger gesture under way.
+    pinch: std::cell::Cell<Option<Pinch>>,
+}
+
+/// A two-finger gesture: the spread it is measured from, the scale sent last, the fingers' midpoint, and whether
+/// the pinch has started (the fingers moved 8 px apart or together).
+#[derive(Debug, Clone, Copy)]
+struct Pinch {
+    from: f32,
+    scale: f32,
+    mid: (f32, f32),
+    started: bool,
+}
+
+/// The two fingers' vertical spread (at least 24 px, so fingers side by side do not zoom by leaps).
+fn spread(y1: f32, y2: f32) -> f32 {
+    (y1 - y2).abs().max(24.0)
+}
+
+fn midpoint(x1: f32, y1: f32, x2: f32, y2: f32) -> (f32, f32) {
+    ((x1 + x2) / 2.0, (y1 + y2) / 2.0)
+}
+
+/// The touches of the development input's "pinch x y d1 d2 ms": the first finger goes down, the second one 40 ms
+/// later, they spread from d1 to d2 (moves every 16 ms), then both lift; with when each is due (µs from `start`).
+fn pinch_touches(start: u64, x: f32, y: f32, d1: f32, d2: f32, ms: f32) -> Vec<(u64, TouchEvent)> {
+    let at = |d: f32| (y - d / 2.0, y + d / 2.0);
+    let (a, b) = at(d1);
+    let mut out = vec![(start, TouchEvent::Down(x, a)), (start + 40_000, TouchEvent::TwoDown(x, a, x, b))];
+    let dur = (ms.max(16.0) * 1000.0) as u64;
+    let steps = (dur / 16_000).max(1);
+    for i in 1..=steps {
+        let (a, b) = at(d1 + (d2 - d1) * i as f32 / steps as f32);
+        out.push((start + 40_000 + i * 16_000, TouchEvent::TwoMove(x, a, x, b)));
+    }
+    out.push((start + 40_000 + steps * 16_000 + 1000, TouchEvent::TwoUp));
+    out
 }
 
 impl PanelPlatform {
@@ -265,6 +303,7 @@ impl PanelPlatform {
             dev_input,
             dev_buf: RefCell::new(String::new()),
             gesture: RefCell::new(VecDeque::new()),
+            pinch: std::cell::Cell::new(None),
         }
     }
 
@@ -286,6 +325,15 @@ impl PanelPlatform {
                 let (x, y) = fix(x, y);
                 TouchEvent::Up(x, y)
             }
+            TouchEvent::TwoDown(x1, y1, x2, y2) => {
+                let ((x1, y1), (x2, y2)) = (fix(x1, y1), fix(x2, y2));
+                TouchEvent::TwoDown(x1, y1, x2, y2)
+            }
+            TouchEvent::TwoMove(x1, y1, x2, y2) => {
+                let ((x1, y1), (x2, y2)) = (fix(x1, y1), fix(x2, y2));
+                TouchEvent::TwoMove(x1, y1, x2, y2)
+            }
+            TouchEvent::TwoUp => TouchEvent::TwoUp,
         });
     }
 
@@ -295,7 +343,8 @@ impl PanelPlatform {
         match event {
             TouchEvent::Down(x, y) => crate::home_edit::finger(0, x, y),
             TouchEvent::Move(x, y) => crate::home_edit::finger(1, x, y),
-            TouchEvent::Up(x, y) => crate::home_edit::finger(2, x, y),
+            TouchEvent::Up(x, y) | TouchEvent::TwoDown(x, y, ..) => crate::home_edit::finger(2, x, y),
+            TouchEvent::TwoMove(..) | TouchEvent::TwoUp => {}
         }
         let window_event = match event {
             TouchEvent::Down(x, y) => WindowEvent::PointerPressed {
@@ -307,11 +356,62 @@ impl PanelPlatform {
                 position: LogicalPosition::new(x, y),
                 button: PointerEventButton::Left,
             },
+            TouchEvent::TwoDown(..) | TouchEvent::TwoMove(..) | TouchEvent::TwoUp => {
+                self.dispatch_two(event);
+                return;
+            }
         };
         self.window.dispatch_event(window_event);
         if let TouchEvent::Up(..) = event {
             self.window.dispatch_event(WindowEvent::PointerExited);
         }
+    }
+
+    /// Two fingers: the first finger's press lets go (it taps and drags nothing), and once the fingers have moved
+    /// 8 px apart or together the UI gets a pinch at their midpoint (Slint's `ScaleRotateGestureHandler`). The
+    /// scale follows the fingers' vertical spread: the hour grids zoom vertically, as in phone calendars.
+    fn dispatch_two(&self, event: TouchEvent) {
+        use i_slint_core::input::{BackendMouseEvent, TouchPhase};
+        let pinch = |mid: (f32, f32), delta: f32, phase: TouchPhase| {
+            WindowEvent::internal(BackendMouseEvent::PinchGesture {
+                position: i_slint_core::lengths::LogicalPoint::new(mid.0 as _, mid.1 as _),
+                delta,
+                phase,
+            })
+        };
+        let mut state = self.pinch.get();
+        match event {
+            TouchEvent::TwoDown(x1, y1, x2, y2) => {
+                self.window.dispatch_event(WindowEvent::PointerExited);
+                state = Some(Pinch { from: spread(y1, y2), scale: 1.0, mid: midpoint(x1, y1, x2, y2), started: false });
+            }
+            TouchEvent::TwoMove(x1, y1, x2, y2) => {
+                if let Some(p) = state.as_mut() {
+                    let (d, mid) = (spread(y1, y2), midpoint(x1, y1, x2, y2));
+                    p.mid = mid;
+                    if !p.started {
+                        if (d - p.from).abs() > 8.0 {
+                            p.started = true;
+                            p.from = d;
+                            self.window.dispatch_event(pinch(mid, 0.0, TouchPhase::Started));
+                        }
+                    } else {
+                        let scale = d / p.from;
+                        let delta = scale / p.scale - 1.0;
+                        p.scale = scale;
+                        self.window.dispatch_event(pinch(mid, delta, TouchPhase::Moved));
+                    }
+                }
+            }
+            _ => {
+                if let Some(p) = state.take() {
+                    if p.started {
+                        self.window.dispatch_event(pinch(p.mid, 0.0, TouchPhase::Ended));
+                    }
+                }
+            }
+        }
+        self.pinch.set(state);
     }
 
     /// Pictures of the screen asked for by SIGUSR1 (development) and by `request_screen`.
@@ -441,6 +541,14 @@ impl PanelPlatform {
                     }
                     g.push_back((start + steps * 16_000 + 1000, TouchEvent::Up(n[2], n[3])));
                     crate::webstats::gesture("swipe", start + steps * 16_000);
+                }
+                continue;
+            }
+            if parts.len() == 6 && parts[0] == "pinch" {
+                let n: Vec<f32> = parts[1..].iter().filter_map(|v| v.parse().ok()).collect();
+                if n.len() == 5 {
+                    let touches = pinch_touches(crate::webstats::now_us(), n[0], n[1], n[2], n[3], n[4]);
+                    self.gesture.borrow_mut().extend(touches);
                 }
                 continue;
             }
@@ -615,5 +723,29 @@ impl Platform for PanelPlatform {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dev_pinch_spreads_two_fingers() {
+        let t = pinch_touches(0, 240.0, 300.0, 100.0, 200.0, 160.0);
+        assert_eq!(t[0], (0, TouchEvent::Down(240.0, 250.0)));
+        assert_eq!(t[1], (40_000, TouchEvent::TwoDown(240.0, 250.0, 240.0, 350.0)));
+        // ten moves 16 ms apart, the last one 200 px apart round the same middle
+        assert_eq!(t.len(), 2 + 10 + 1);
+        assert_eq!(t[11], (40_000 + 160_000, TouchEvent::TwoMove(240.0, 200.0, 240.0, 400.0)));
+        assert_eq!(t[12].1, TouchEvent::TwoUp);
+    }
+
+    #[test]
+    fn spread_is_vertical() {
+        assert_eq!(spread(100.0, 300.0), 200.0);
+        assert_eq!(spread(300.0, 100.0), 200.0);
+        assert_eq!(spread(200.0, 205.0), 24.0);
+        assert_eq!(midpoint(0.0, 100.0, 40.0, 300.0), (20.0, 200.0));
     }
 }
