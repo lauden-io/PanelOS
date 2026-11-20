@@ -50,8 +50,13 @@ pub fn tiles(states: &HashMap<String, EntityState>, entities: &[String], accent:
                 "vacuum" => matches!(state, "cleaning" | "returning"),
                 _ => matches!(state, "on" | "playing" | "home"),
             };
+            // an on / off light has no level (no "0 %" while it is on)
+            let dimmable = match attr("supported_color_modes").and_then(Value::as_array) {
+                Some(m) if !m.is_empty() => m.iter().filter_map(Value::as_str).any(|m| m != "onoff"),
+                _ => num("brightness").is_some(),
+            };
             let (dim, value, short) = match domain {
-                "light" if num("brightness").is_some() || on => {
+                "light" if num("brightness").is_some() || (on && dimmable) => {
                     let b = num("brightness").unwrap_or(0.0) / 255.0;
                     (true, b as f32, format!("{:.0} %", b * 100.0))
                 }
@@ -732,6 +737,21 @@ mod tests {
 
     fn frame(row: usize, start: usize, count: usize, name: &str) -> Frame {
         Frame { row, start, count, name: name.into() }
+    }
+
+    #[test]
+    fn an_on_off_light_shows_no_level() {
+        let light = |state: &str, attrs: Value| EntityState { state: state.into(), attrs: attrs.as_object().unwrap().clone() };
+        let mut states = HashMap::new();
+        states.insert("light.a".to_string(), light("on", serde_json::json!({"supported_color_modes": ["onoff"]})));
+        states.insert("light.b".to_string(), light("on", serde_json::json!({"supported_color_modes": ["brightness"], "brightness": 128})));
+        states.insert("light.c".to_string(), light("on", serde_json::json!({"supported_color_modes": ["brightness"]})));
+        let t = tiles(&states, &names(&["light.a", "light.b", "light.c"]), Color::from_rgb_u8(0, 0, 0));
+        assert!(!t[0].dim);
+        assert_eq!(t[0].state.as_str(), "On");
+        assert!(t[1].dim);
+        assert_eq!(t[1].short.as_str(), "50 %");
+        assert!(t[2].dim);
     }
 
     #[test]
