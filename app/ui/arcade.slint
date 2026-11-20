@@ -1,0 +1,144 @@
+// The neon arcade screen (menus spec 33.4): the menus of the neon / synthwave looks are an arcade machine's CRT in
+// the scene's colour. The glass with its scanlines, the tube border with its glow, a chrome title in the pixel font
+// and the "CREDIT 99 · © PANELOS" foot; the choices are arcade blocks. Everything moves in whole frames (no springs,
+// no easing in the choices): the screen switches on as a line that opens to the full picture under a flash and
+// flickers in, and switches off to a line and a dot (its own motion at 30 frames a second).
+
+// The screen. The page's menu host gives its motion clocks (ms since it opened / began to close); the content goes
+// in as children, placed in the body (x from 16 px, y under the title), as high as `body-h`.
+export component ArcadeScreen inherits Rectangle {
+    in property <color> tube: #ff2bd6;      // the scene's colour
+    in property <string> title;             // "SETTINGS", "SELECT ROOM", "BACKGROUND"
+    in property <bool> foot: true;          // "CREDIT 99" / "© PANELOS"
+    in property <length> body-h: 200px;     // the content's height
+    in property <bool> open;                // false: switching off (t-out runs)
+    in property <float> t-in: 1000;         // ms since it opened
+    in property <float> t-out;              // ms since it began to switch off
+    out property <length> head-h: 12px + 34px;
+    out property <length> foot-h: root.foot ? 27px : 10px;
+    out property <length> need: root.head-h + root.body-h + root.foot-h;
+    // the screen's own frames: 30 a second
+    property <float> ti: Math.floor(root.t-in / 33) * 33;
+    property <float> to: Math.floor(root.t-out / 33) * 33;
+    pure function eo(u: float) -> float { 1 - Math.pow(1 - Math.max(0, Math.min(1, u)), 3) }
+    pure function ei(u: float) -> float { Math.pow(Math.max(0, Math.min(1, u)), 3) }
+    property <length> W: root.width;
+    property <length> H: root.height;
+    // the lit part: a line across the middle that opens to the full screen; off: back to a line, then to a dot
+    property <length> cut-x: root.open ? (root.ti < 90 ? root.W / 2 * (1 - root.eo(root.ti / 90)) : 0px)
+        : (root.to < 110 ? 0px : (root.W / 2 - 2px) * root.ei((root.to - 110) / 90));
+    property <length> cut-y: root.open ? (root.ti < 90 ? root.H / 2 - 1px : (root.H / 2 - 1px) * (1 - root.eo((root.ti - 90) / 160)))
+        : (root.to < 110 ? (root.H / 2 - 1px) * root.ei(root.to / 110) : root.H / 2 - 1px);
+    property <float> lit: root.open ? 1 : (root.to < 110 ? 1 : 1 - root.ei((root.to - 110) / 90));
+    // the flash: white for the line, fading from 55 % as the picture opens
+    property <float> flash: !root.open ? 0 : root.ti < 90 ? 1 : 0.55 * (1 - Math.max(0, Math.min(1, (root.ti - 90) / 170)));
+    // the picture: hidden until 170 ms, off again for a frame at 190-210 ms; hidden while switching off
+    property <bool> pic: root.open && root.ti > 170 && (root.ti < 190 || root.ti > 210);
+    background: transparent;
+    // the glow around the tube (outside the lit part it is dark)
+    if root.cut-y < 2px: Rectangle {
+        x: root.cut-x; y: root.cut-y; width: root.W - 2 * root.cut-x; height: root.H - 2 * root.cut-y;
+        border-radius: 16px;
+        drop-shadow-blur: 14px; drop-shadow-color: root.tube.with-alpha(0.7 * root.lit);
+        background: #060210;
+        opacity: root.lit;
+    }
+    Rectangle {
+        x: root.cut-x; y: root.cut-y; width: root.W - 2 * root.cut-x; height: Math.max(2px, root.H - 2 * root.cut-y);
+        clip: true;
+        opacity: root.lit;
+        Rectangle {
+            x: -root.cut-x; y: -root.cut-y; width: root.W; height: root.H;
+            // the glass
+            Rectangle {
+                border-radius: 16px;
+                background: @linear-gradient(180deg, #1a0938ed 0%, #060210f2 100%);
+            }
+            // the inner glow of the tube
+            Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; border-radius: 14px; border-width: 6px; border-color: root.tube.with-alpha(0.10); }
+            Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; border-radius: 14px; border-width: 3px; border-color: root.tube.with-alpha(0.16); }
+            // the picture
+            Rectangle {
+                visible: root.pic;
+                // the chrome title with its glow
+                for o in [{ x: -1, y: 0 }, { x: 1, y: 0 }, { x: 0, y: -1 }, { x: 0, y: 1 }]: Text {
+                    x: o.x * 2px; y: 16px + o.y * 2px; width: parent.width; height: 22px;
+                    text: root.title; font-family: "Press Start 2P"; font-size: 15px; letter-spacing: 1px;
+                    horizontal-alignment: center; vertical-alignment: center; color: root.tube.with-alpha(0.35);
+                }
+                Text {
+                    y: 16px; width: parent.width; height: 22px;
+                    text: root.title; font-family: "Press Start 2P"; font-size: 15px; letter-spacing: 1px;
+                    horizontal-alignment: center; vertical-alignment: center;
+                    color: @linear-gradient(180deg, #ffffff 0%, #c4f1ff 42%, root.tube 54%, #ffe0f6 100%);
+                }
+                Rectangle {
+                    x: 16px; y: root.head-h; width: parent.width - 32px; height: root.body-h;
+                    @children
+                }
+                if root.foot: Text { x: 18px; y: root.height - 21px; text: "CREDIT 99"; font-family: "Press Start 2P"; font-size: 8px; color: #ffffff80; }
+                if root.foot: Text { x: root.width - 18px - self.width; y: root.height - 21px; text: "© PANELOS"; font-family: "Press Start 2P"; font-size: 8px; color: #ffffff80; }
+            }
+            // the scanlines: 1 px of 26 % black every 3 px
+            Image {
+                x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px;
+                source: @image-url("arcade/scanlines.png");
+                horizontal-tiling: repeat; vertical-tiling: repeat;
+            }
+            // the tube: 2 px of the scene's colour with 28 % white
+            Rectangle { border-radius: 16px; border-width: 2px; border-color: root.tube.mix(#ffffff, 0.72); }
+            // the flash
+            if root.flash > 0.001: Rectangle { border-radius: 16px; background: #ffffff; opacity: root.flash; }
+        }
+    }
+    // taps on the screen are not taps beside it
+    TouchArea { }
+}
+
+// A choice on the arcade screen (33.4 "arcade blocks"): the words in the pixel font, the current one an inverse
+// block in the tube colour. A tap moves the block at once and it blinks twice (40 ms frames); the choice is given
+// after the blink. A tap on the current block lights it at 55 % for two frames.
+export component ArcadeBlocks inherits HorizontalLayout {
+    in property <[string]> options;
+    in property <int> selected;
+    in property <color> tube: #ff2bd6;
+    callback picked(int);
+    property <int> cur: root.selected;
+    changed selected => { root.cur = root.selected; }
+    property <bool> blinking;
+    property <duration> t0;
+    property <int> zap: -1;
+    Timer {
+        interval: 200ms; running: root.blinking;
+        triggered => { root.blinking = false; root.picked(root.cur); }
+    }
+    Timer { interval: 80ms; running: root.zap >= 0; triggered => { root.zap = -1; } }
+    property <bool> lit: !root.blinking || Math.mod(Math.floor((animation-tick() - root.t0) / 40ms), 2) == 0;
+    spacing: 2px;
+    alignment: start;
+    for o[i] in root.options: Rectangle {
+        height: 44px;
+        width: Math.max(40px, label.preferred-width + 14px);
+        border-radius: 2px;
+        property <bool> on: i == root.cur && root.lit;
+        background: self.on ? root.tube : i == root.zap ? root.tube.with-alpha(0.55) : transparent;
+        drop-shadow-blur: self.on ? 10px : 0px;
+        drop-shadow-color: root.tube;
+        label := Text {
+            text: o; font-family: "Press Start 2P"; font-size: 9px; letter-spacing: 0.4px;
+            color: parent.on ? #14062a : i == root.zap ? #ffffff : #ffffffbf;
+            horizontal-alignment: center; vertical-alignment: center;
+        }
+        TouchArea {
+            clicked => {
+                if i == root.cur {
+                    root.zap = i;
+                } else {
+                    root.cur = i;
+                    root.t0 = animation-tick();
+                    root.blinking = true;
+                }
+            }
+        }
+    }
+}

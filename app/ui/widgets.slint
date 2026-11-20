@@ -289,6 +289,7 @@ export component GlowText {
     in property <string> family;      // another font (e.g. the to-do terminal look's monospace); empty: the default
     in property <TextHorizontalAlignment> horizontal-alignment: left;
     in property <TextOverflow> overflow: clip;
+    in property <TextWrap> wrap: no-wrap;  // long names wrap (the copies wrap the same way)
     // neon letters (home page, synthwave background): a coloured glow around the letters and a
     // firm dark rim instead of the soft one (as the timers page's synthwave theme)
     in property <bool> neon;
@@ -314,27 +315,27 @@ export component GlowText {
         x: o.x * root.gi; y: o.y * root.gi; width: root.width; height: root.height;
         text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: root.glow.with-alpha(0.24);
         font-family: root.icon ? "Material Design Icons" : root.family;
-        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow;
+        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow; wrap: root.wrap;
     }
     for o in [{ x: -1, y: -1 }, { x: 1, y: -1 }, { x: -1, y: 1 }, { x: 1, y: 1 }, { x: 0, y: -1.4 }, { x: 0, y: 1.4 }, { x: -1.4, y: 0 }, { x: 1.4, y: 0 }]: Text {
         visible: root.neon && root.neon-rim > 0;
         x: o.x * root.nr; y: o.y * root.nr; width: root.width; height: root.height;
         text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: root.glow.mix(#000000, 0.22).with-alpha(0.85 * root.neon-rim);
         font-family: root.icon ? "Material Design Icons" : root.family;
-        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow;
+        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow; wrap: root.wrap;
     }
     for o in [{ x: -1, y: -0.35 }, { x: 1, y: -0.35 }, { x: -1, y: 1.5 }, { x: 1, y: 1.5 }]: Text {
         visible: root.k > 0.01 && !root.neon;
         x: o.x * root.d; y: o.y * root.d; width: root.width; height: root.height;
         text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: root.rim;
         font-family: root.icon ? "Material Design Icons" : root.family;
-        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow;
+        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow; wrap: root.wrap;
     }
     t := Text {
         width: root.width; height: root.height;
         text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: root.color;
         font-family: root.icon ? "Material Design Icons" : root.family;
-        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow;
+        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow; wrap: root.wrap;
     }
     // neon: a hot, whiter core (as a lit tube) — coloured letters turn pastel and stand out from a glow
     // of their own colour on a sky of the same hue; white letters stay white
@@ -342,7 +343,7 @@ export component GlowText {
         width: root.width; height: root.height;
         text: root.text; font-size: root.font-size; font-weight: root.font-weight; color: #ffffff73;
         font-family: root.icon ? "Material Design Icons" : root.family;
-        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow;
+        horizontal-alignment: root.horizontal-alignment; vertical-alignment: center; overflow: root.overflow; wrap: root.wrap;
     }
 }
 

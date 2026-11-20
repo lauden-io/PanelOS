@@ -21,7 +21,7 @@ import { Theme, Act, Clock, Words } from "theme.slint";
 import { Jelly } from "widgets.slint";
 import { PairingScreen, FoundHa, SetupScreen, WifiNet, WifiScreen, WifiPasswordScreen, HiddenNetworkScreen, HaPickScreen, ConnectingScreen, OfflineScreen, Phrases } from "overlays.slint";
 import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData, WeatherPanel } from "panels.slint";
-import { HomeItem, HomeEvent, HomeMusic, HomeGrid, WxIcons } from "home.slint";
+import { HomeItem, HomeEvent, HomeMusic, HomeSensor, HomeGrid, WxIcons } from "home.slint";
 import { PhotoSky, WinRect } from "photo_sky.slint";
 import { FastLane } from "fast_lane.slint";
 import { MusicPlayer, MusicPage } from "music.slint";
@@ -41,7 +41,7 @@ import { AlarmNow } from "clocks.slint";
 
 export { WxIcons }
 export { Theme, Act, Clock, Words, Phrases, FoundHa, WifiNet, Person, TimerInfo, ClockData, WeatherHour, WeatherDay, WeatherData }
-export { HomeItem, HomeEvent, HomeMusic, MusicPlayer, TimerItem, AlarmItem, SwCar, ClimateDev, ClimateRoom, CamItem, CamAction }
+export { HomeItem, HomeEvent, HomeMusic, HomeSensor, MusicPlayer, TimerItem, AlarmItem, SwCar, ClimateDev, ClimateRoom, CamItem, CamAction }
 export { TodoItem, TodoList, CalEvent, CalDay, CalCell, CalBoard, WallCell, InfoNote, StatusScreen, QuickTile, QuickGroup }
 export { SetRow, SetBar, SetSeg, SetSection, WinRect }
 
@@ -402,6 +402,17 @@ export component AppWindow inherits Window {
     in property <string> home-lock-sub: "Hold the lock to start editing.";
     in property <int> home-settings: -1;
     in property <bool> home-info;
+    // the edit mode on the panel: a picked widget waits for its place (the free cells light up), the widget menu's
+    // layer row, the background menu's neon letters, the sensor widgets' values and the sensors the panel knows
+    in property <bool> home-place;
+    in property <[bool]> home-free;
+    in property <bool> home-layer-back;
+    in property <bool> home-layer-fwd;
+    in property <bool> home-neon-on: true;
+    in property <[HomeSensor]> home-sensors;
+    in property <HomeSensor> home-sensor-demo;
+    in property <[string]> home-sensor-names;
+    in property <int> home-sensor-sel: -1;
     // music page
     in property <string> music-title;
     in property <string> music-artist;
@@ -759,7 +770,7 @@ export component AppWindow inherits Window {
     }
     shade-swipe := SwipeGestureHandler {
         // the timer island takes its own drags (29.4)
-        handle-swipe-down: !root.screensaver-on && root.set-view == 0 && self.pressed-position.y < 56px
+        handle-swipe-down: !root.screensaver-on && root.set-view == 0 && self.pressed-position.y < 56px && !root.home-editing && !root.home-lock
             && !(island.shown && self.pressed-position.y >= 44px && Math.abs(self.pressed-position.x / 1px - 240) < island.cap-w / 2px);
         moved => { root.shade-move(self.current-position.y - self.pressed-position.y); }
         swiped => { root.shade-release(self.current-position.y - self.pressed-position.y); }
@@ -856,11 +867,11 @@ export component AppWindow inherits Window {
                         ink: home-slot.home-light ? #101114 : #ffffff;
                         year: root.home-year;
                         week: root.home-week;
-                        editing: root.home-editing;
+                        editing: root.home-editing && root.page == i;
                         ha-mode: root.home-ha;
                         selected: root.home-selected;
                         picker-scroll: root.home-picker-scroll;
-                        lock: root.home-lock;
+                        lock: root.home-lock && root.page == i;
                         lock-p: root.home-lock-p;
                         lock-title: root.home-lock-title;
                         lock-sub: root.home-lock-sub;
@@ -872,6 +883,9 @@ export component AppWindow inherits Window {
                         drop-col: root.home-drop-col;
                         drop-row: root.home-drop-row;
                         picker: root.home-picker;
+                        place: root.home-place; free: root.home-free; layer-back: root.home-layer-back; layer-fwd: root.home-layer-fwd;
+                        neon-on: root.home-neon-on; sensors: root.home-sensors; sensor-demo: root.home-sensor-demo;
+                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.people;
                     }
                 }
                 // the weather picture changes softly: on a new condition the new picture fades in over the old one,
@@ -963,11 +977,11 @@ export component AppWindow inherits Window {
                         ink: home-slot.light-scene ? #101114 : #ffffff;
                         year: root.home-year;
                         week: root.home-week;
-                        editing: root.home-editing;
+                        editing: root.home-editing && root.page == i;
                         ha-mode: root.home-ha;
                         selected: root.home-selected;
                         picker-scroll: root.home-picker-scroll;
-                        lock: root.home-lock;
+                        lock: root.home-lock && root.page == i;
                         lock-p: root.home-lock-p;
                         lock-title: root.home-lock-title;
                         lock-sub: root.home-lock-sub;
@@ -979,6 +993,9 @@ export component AppWindow inherits Window {
                         drop-col: root.home-drop-col;
                         drop-row: root.home-drop-row;
                         picker: root.home-picker;
+                        place: root.home-place; free: root.home-free; layer-back: root.home-layer-back; layer-fwd: root.home-layer-fwd;
+                        neon-on: root.home-neon-on; sensors: root.home-sensors; sensor-demo: root.home-sensor-demo;
+                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.people;
                     }
                 }
                 if slot.kind == "home" && home-slot.home-theme == 8: FastLane {
@@ -1003,11 +1020,11 @@ export component AppWindow inherits Window {
                         accent: root.home-fl-grid;
                         year: root.home-year;
                         week: root.home-week;
-                        editing: root.home-editing;
+                        editing: root.home-editing && root.page == i;
                         ha-mode: root.home-ha;
                         selected: root.home-selected;
                         picker-scroll: root.home-picker-scroll;
-                        lock: root.home-lock;
+                        lock: root.home-lock && root.page == i;
                         lock-p: root.home-lock-p;
                         lock-title: root.home-lock-title;
                         lock-sub: root.home-lock-sub;
@@ -1019,6 +1036,9 @@ export component AppWindow inherits Window {
                         drop-col: root.home-drop-col;
                         drop-row: root.home-drop-row;
                         picker: root.home-picker;
+                        place: root.home-place; free: root.home-free; layer-back: root.home-layer-back; layer-fwd: root.home-layer-fwd;
+                        neon-on: root.home-neon-on; sensors: root.home-sensors; sensor-demo: root.home-sensor-demo;
+                        sensor-names: root.home-sensor-names; sensor-sel: root.home-sensor-sel; timers: root.timers; people: root.people;
                     }
                 }
                 if slot.kind == "weather": WeatherPanel {
@@ -1139,7 +1159,7 @@ export component AppWindow inherits Window {
                     fridge-door: root.info-fridge-door; fridge-empty: root.info-fridge-empty;
                     pager-body: root.info-pager-body; pager-led: root.info-pager-led; pager-first: root.info-pager-first; crit-button: root.info-crit-button;
                 }
-                if root.show-people && root.people.length > 0: People {
+                if root.show-people && root.people.length > 0 && !root.home-editing: People {
                     x: 16px;
                     y: root.height - 40px;
                     people: root.people;
@@ -1199,12 +1219,18 @@ export component AppWindow inherits Window {
         mark-x: 240px + ((root.mic-muted ? 1 : 0) + (root.speaker-muted ? 1 : 0)) * 32px + 16px
             - ((root.mic-muted ? 1 : 0) + (root.speaker-muted ? 1 : 0) + 1 + ((root.info-unread > 0 || root.dnd-on) && !root.screensaver-on ? 1 : 0)) * 16px;
     }
+    // a finger resting on a weather page may open its edit lock (the app also checks the integration's switch): the page
+    // is on screen with nothing over it
+    out property <bool> home-hold-ok: root.pages.length > 0 && root.pages[root.page].kind == "home" && !root.home-editing && !root.home-lock
+        && !root.screensaver-on && !root.voice-on && root.set-view == 0 && root.shade-pos < 0.002 && !root.status-on && !root.timers-ringing
+        && !root.web-shown && !root.sheet-open && !root.dragging && root.paired && !root.connecting && root.offline-cause == 0
+        && !root.info-critical && !root.cam-ring;
     // every page sheet, editor and keyboard view (the dots are never drawn over them)
     property <bool> sheet-open: root.quick-sheet || root.thermo-sheet || root.thermo-picker || root.thermo-settings || root.music-picker
         || root.music-settings || root.cal-detail || root.cal-settings || root.cal-day-sheet || root.cal-edit || root.timers-quick
         || root.timers-sheet >= 0 || root.timers-settings || root.timers-edit || root.timers-edit-keyboard || root.todo-picker
         || root.todo-adding || root.cam-settings || root.info-settings || root.info-card || root.home-bg-sheet || root.home-picker
-        || root.home-settings >= 0;
+        || root.home-settings >= 0 || root.home-editing || root.home-lock;
     // a sheet opening while a page drag runs (the pager stops taking swipes): the drag snaps back, never left halfway
     changed sheet-open => {
         if root.sheet-open && root.dragging {

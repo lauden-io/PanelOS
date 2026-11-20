@@ -3,12 +3,14 @@
 // The layout is edited in Home Assistant; editing on the panel itself is optional (switched on in
 // HA): a long press opens a lock, holding the lock unlocks the edit mode.
 import { Theme, Act, Words, Clock } from "theme.slint";
-import { Icon, Glyph, PlayGlyph, GlowText, Marquee, RollPair, Segmented, Dropdown, Toggle, CheckBox } from "widgets.slint";
-import { WeatherData, ClockData, AnalogDial, FlipClock } from "panels.slint";
+import { Icon, Glyph, PlayGlyph, GlowText, Marquee, RollPair, Segmented, Dropdown, Toggle, CheckBox, MenuHost, TextButton, TouchSlider } from "widgets.slint";
+import { WeatherData, ClockData, AnalogDial, FlipClock, TimerInfo, Person } from "panels.slint";
+import { ArcadeScreen, ArcadeBlocks } from "arcade.slint";
 import { NixieClock, LcdClock, TwinBellClock } from "clocks.slint";
 
 export struct HomeItem {
-    kind: int,      // 0 clock, 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly cards, 6 daily cards, 7 music
+    kind: int,      // 0 clock, 1 date, 2 weather now, 3 next event, 4 forecast curve, 5 hourly cards, 6 daily cards, 7 music,
+                    // 8 a sensor's value, 9 the running timer, 10 the people at home
     col: int,
     row: int,
     w: int,         // cells
@@ -16,8 +18,9 @@ export struct HomeItem {
     style: int,     // clock: 0 digital, 1 big digits + seconds line, 2 round analog, 3 square analog,
                     //        4 minimal analog, 5 analog with numerals, 6 split-flap, 7 the time in words,
                     //        8 nixie tubes, 9 LCD quartz watch, 10 twin-bell
+                    // sensor: its sensor's place in the page's sensor list (the app sets it; -1 none)
     accent: color,  // the app fills in the panel accent when the widget has none of its own
-    weight: int,    // font weight (300 .. 800), the app fills in the panel weight
+    weight: int,    // font weight (100 .. 900), the app fills in the panel weight
     tap: bool,      // a tap opens the widget's view (fixed per kind, see tap-text in HomeGrid); off: no tap action
     neon: bool,     // neon letters on the synthwave background (each widget its own; the scene must be synthwave)
     opts: int,      // switches (bits) per kind:
@@ -25,6 +28,7 @@ export struct HomeItem {
                     //   date: 1 year, 2 week number; weather: 1 condition, 2 high / low, 4 rain chance, 8 feels like
                     //   event: 1 time, 2 calendar colour; curve: 1 rain bars, 2 icons; hourly / daily: 1 rain chance
                     //   music: 1 long titles scroll (style = speed 1..5) instead of being cut off
+                    //   sensor: 1 name, 2 icon; timer: 1 name; people: 1 the ones away too
     card: int,      // the card behind the widget: 0 = the widget's own (as designed), 1..101 = (card - 1) %
                     // opacity of a card in the card colour (the integration's "Background" slider)
 }
@@ -41,6 +45,15 @@ export struct HomeMusic {
     art: image,
     has-art: bool,
     accent: color,
+}
+
+// A sensor widget's sensor: its name, value, unit and icon glyph (ok false: unavailable).
+export struct HomeSensor {
+    name: string,
+    value: string,
+    unit: string,
+    icon: string,
+    ok: bool,
 }
 
 export struct HomeEvent {
@@ -738,6 +751,192 @@ component MusicW inherits Rectangle {
     }
 }
 
+// --------------------------------------------------------------------------- sensor value
+// One sensor: its value large with the unit, its icon in the widget's colour and its name (opts 1 name, 2 icon).
+component SensorW inherits Rectangle {
+    in property <color> ink: #ffffff;
+    in property <HomeSensor> s;
+    in property <HomeItem> it;
+    in property <float> halo;
+    in property <bool> neon;
+    in property <color> glow;
+    pure function on(bit: int) -> bool { Math.mod(Math.floor(root.it.opts / bit), 2) == 1 }
+    property <bool> show-name: root.on(1) && root.s.name != "";
+    property <bool> show-icon: root.on(2);
+    property <string> glyph: root.s.icon != "" ? root.s.icon : "\u{F029A}";
+    property <string> value: root.s.value != "" ? root.s.value : "–";
+    // the colour, unless it would vanish into the background (as the clock's)
+    property <float> acc-l: (root.it.accent.red * 0.299 + root.it.accent.green * 0.587 + root.it.accent.blue * 0.114) / 255;
+    property <bool> paper-bg: root.ink.red < 128;
+    property <color> acc: (root.paper-bg && root.acc-l > 0.78) || (!root.paper-bg && root.acc-l < 0.22) ? root.ink : root.it.accent;
+    property <bool> tall: root.it.h >= 2;
+    property <bool> small: root.it.w < 2 && !root.tall;
+    // the value fits its width (a long value gets smaller instead of being cut)
+    property <length> vmax: root.tall ? 64px : root.small ? 28px : 40px;
+    // a font size between `big` and `least` at which the name fits `room`
+    pure function fit(room: length, big: length, least: length) -> length {
+        Math.max(least, Math.min(big, room / Math.max(1, root.s.name.character-count * 0.55)))
+    }
+    property <length> vfs: Math.min(root.vmax, (root.width - (root.small || root.tall ? 20px : (root.show-icon ? 76px : 24px)))
+        / Math.max(2, (root.value.character-count + root.s.unit.character-count * 0.5) * 0.6));
+    if root.small || root.tall: VerticalLayout {
+        alignment: center;
+        spacing: root.tall ? 4px : 0px;
+        padding-left: 8px; padding-right: 8px;
+        if root.show-icon: GlowText { paper: root.paper-bg; icon: true; horizontal-alignment: center; k: root.halo; neon: root.neon; glow: root.glow;
+            text: root.glyph; font-size: root.tall ? 40px : 22px; color: root.acc; }
+        HorizontalLayout {
+            alignment: center;
+            spacing: 3px;
+            GlowText { paper: root.paper-bg; k: root.halo; neon: root.neon; glow: root.glow; text: root.value; font-size: root.vfs; font-weight: root.it.weight; color: root.ink; }
+            if root.s.unit != "": VerticalLayout {
+                alignment: end;
+                padding-bottom: root.vfs * 0.14;
+                GlowText { paper: root.paper-bg; k: root.halo; neon: root.neon; glow: root.glow; text: root.s.unit; font-size: Math.max(11px, root.vfs * 0.45); color: root.ink.with-alpha(0.80); }
+            }
+        }
+        // a long name gets smaller to fit (cut off only below the smallest size)
+        if root.show-name: GlowText { paper: root.paper-bg; k: root.halo; neon: root.neon; glow: root.glow; text: root.s.name;
+            font-size: root.fit(root.width - 16px, root.tall ? 17px : 12px, root.tall ? 12px : 10px);
+            color: root.ink.with-alpha(0.80); horizontal-alignment: center; overflow: elide; }
+    }
+    if !root.small && !root.tall: HorizontalLayout {
+        alignment: center;
+        spacing: 10px;
+        padding-left: 12px; padding-right: 12px;
+        if root.show-icon: VerticalLayout { alignment: center;
+            GlowText { paper: root.paper-bg; icon: true; horizontal-alignment: center; k: root.halo; neon: root.neon; glow: root.glow; text: root.glyph; font-size: 34px; color: root.acc; } }
+        VerticalLayout {
+            alignment: center;
+            horizontal-stretch: 1;
+            if root.show-name: GlowText { paper: root.paper-bg; k: root.halo; neon: root.neon; glow: root.glow; text: root.s.name;
+                font-size: root.fit(root.width - 24px - (root.show-icon ? 52px : 0px), 13px, 10px); color: root.ink.with-alpha(0.80); overflow: elide; }
+            HorizontalLayout {
+                alignment: start;
+                spacing: 3px;
+                GlowText { paper: root.paper-bg; k: root.halo; neon: root.neon; glow: root.glow; text: root.value; font-size: root.vfs; font-weight: root.it.weight; color: root.ink; }
+                if root.s.unit != "": VerticalLayout {
+                    alignment: end;
+                    padding-bottom: root.vfs * 0.14;
+                    GlowText { paper: root.paper-bg; k: root.halo; neon: root.neon; glow: root.glow; text: root.s.unit; font-size: Math.max(12px, root.vfs * 0.45); color: root.ink.with-alpha(0.80); }
+                }
+            }
+        }
+    }
+}
+
+// --------------------------------------------------------------------------- running timer
+// A ring in the timer's colour that empties as it runs.
+component TimerRing inherits Rectangle {
+    in property <length> size;
+    in property <float> fr;
+    in property <color> tint;
+    in property <color> ink;
+    in property <length> stroke: 5px;
+    width: root.size; height: root.size;
+    property <float> r: (root.size - root.stroke) / 2 / 1px;
+    property <float> c: root.size / 2 / 1px;
+    Rectangle { border-radius: root.size / 2; border-width: root.stroke; border-color: root.ink.with-alpha(0.18); }
+    if root.fr > 0.002: Path {
+        property <float> a: Math.min(0.9999, root.fr) * 360;
+        x: -root.stroke / 2; y: -root.stroke / 2; width: root.size + root.stroke; height: root.size + root.stroke;
+        viewbox-width: root.size / 1px; viewbox-height: root.size / 1px;
+        stroke: root.tint; stroke-width: root.stroke; stroke-line-cap: round;
+        commands: "M " + root.c + " " + (root.c - root.r) + " A " + root.r + " " + root.r + " 0 " + (self.a > 180 ? "1" : "0") + " 1 "
+            + (root.c + root.r * Math.sin(self.a * 1deg)) + " " + (root.c - root.r * Math.cos(self.a * 1deg));
+    }
+    @children
+}
+
+// The timers that end soonest (two side by side from 4 cells wide): the ring, the time left and the name (opts 1).
+// Without a running timer the widget is gone (as the music widget).
+component TimerW inherits Rectangle {
+    in property <color> ink: #ffffff;
+    in property <[TimerInfo]> timers;
+    in property <HomeItem> it;
+    in property <float> halo;
+    in property <bool> neon;
+    in property <color> glow;
+    property <bool> show-name: Math.mod(root.it.opts, 2) == 1;
+    property <int> n: Math.min(root.timers.length, root.it.w >= 4 ? 2 : 1);
+    property <float> k: root.timers.length > 0 ? 1 : 0;
+    animate k { duration: 250ms; easing: ease-in-out; }
+    property <bool> tall: root.it.h >= 2;
+    property <bool> small: root.it.w < 2 && !root.tall;
+    opacity: root.k;
+    for t[i] in root.timers: slot := Rectangle {
+        visible: i < root.n;
+        x: i < root.n ? root.width * i / Math.max(1, root.n) : 0px;
+        width: root.width / Math.max(1, root.n);
+        height: root.height;
+        property <bool> named: root.show-name && t.label != "";
+        property <length> ring: root.tall ? Math.min(self.width, self.height - (self.named ? 44px : 20px)) - 16px : root.small ? 70px : 62px;
+        property <color> tint: t.paused ? root.ink.with-alpha(0.55) : t.tint;
+        // small or tall: the time inside the ring (the name under it when tall)
+        if root.small || root.tall: TimerRing {
+            x: (slot.width - self.width) / 2;
+            y: root.tall ? (slot.height - self.height - (slot.named ? 28px : 0px)) / 2 : (slot.height - self.height) / 2;
+            size: slot.ring; fr: t.fr; tint: slot.tint; ink: root.ink; stroke: root.tall ? 8px : 5px;
+            GlowText { width: parent.width; height: parent.height; paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; live: true;
+                text: t.text; font-size: root.tall ? Math.min(40px, slot.ring / 4.2) : (t.hours ? 13px : 16px); font-weight: root.it.weight; color: root.ink; horizontal-alignment: center; }
+        }
+        if root.tall && slot.named: GlowText { x: 8px; y: slot.height - 34px; width: slot.width - 16px; height: 24px;
+            paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: t.label;
+            font-size: Math.max(11px, Math.min(17px, (slot.width - 16px) / Math.max(1, t.label.character-count * 0.55))); color: root.ink.with-alpha(0.85);
+            horizontal-alignment: center; overflow: elide; }
+        // a cell high and two wide: the ring, the name and the time beside it
+        if !root.small && !root.tall: HorizontalLayout {
+            alignment: start;
+            spacing: 12px;
+            padding-left: 12px; padding-right: 10px;
+            VerticalLayout { alignment: center; TimerRing { size: slot.ring; fr: t.fr; tint: slot.tint; ink: root.ink; } }
+            VerticalLayout {
+                alignment: center;
+                horizontal-stretch: 1;
+                if slot.named: GlowText { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; text: t.label;
+                    font-size: Math.max(10px, Math.min(14px, (slot.width - slot.ring - 34px) / Math.max(1, t.label.character-count * 0.55)));
+                    color: root.ink.with-alpha(0.85); overflow: elide; }
+                GlowText { paper: root.ink.red < 128; k: root.halo; neon: root.neon; glow: root.glow; live: true; text: t.text; font-size: t.hours ? 26px : 32px; font-weight: root.it.weight; color: root.ink; }
+            }
+        }
+        if t.paused: Rectangle {
+            x: slot.width - 30px; y: 8px; width: 22px; height: 22px; border-radius: 11px; background: #000000a0;
+            Icon { width: parent.width; height: parent.height; text: "\u{F03E4}"; font-size: 15px; color: #ffffff; }
+        }
+    }
+}
+
+// --------------------------------------------------------------------------- people
+// The people's heads: the ones at home in their colour, the ones away (opts 1) faint.
+component PeopleW inherits Rectangle {
+    in property <color> ink: #ffffff;
+    in property <[Person]> people;
+    in property <HomeItem> it;
+    property <bool> away: Math.mod(root.it.opts, 2) == 1;
+    property <length> d: root.it.h >= 2 ? 64px : root.it.w < 2 ? 40px : 46px;
+    property <length> gap: root.it.h >= 2 ? 10px : 6px;
+    clip: true;
+    HorizontalLayout {
+        alignment: center;
+        padding-top: (root.height - root.d) / 2; padding-bottom: (root.height - root.d) / 2;
+        for p in root.people: Rectangle {
+            property <bool> shown: p.home || root.away;
+            width: self.shown ? root.d + root.gap : 0px;
+            visible: self.shown;
+            Rectangle {
+                x: root.gap / 2; width: root.d; height: root.d; border-radius: root.d / 2;
+                background: p.home ? p.tint : root.ink.with-alpha(0.14);
+                border-width: p.home ? 0px : 1.5px; border-color: root.ink.with-alpha(0.35);
+                Text {
+                    text: p.initials; font-size: root.d * 0.38; font-weight: 600;
+                    color: p.home ? #ffffff : root.ink.with-alpha(0.65);
+                    horizontal-alignment: center; vertical-alignment: center;
+                }
+            }
+        }
+    }
+}
+
 // Any widget, sized by its parent (grid cell, picker preview, settings preview).
 export component HomeWidget inherits Rectangle {
     in property <color> ink: #ffffff;      // text and lines (Ink on the plain light background)
@@ -756,9 +955,13 @@ export component HomeWidget inherits Rectangle {
     in property <float> seconds;
     in property <float> music-pos;
     in property <bool> live: true;        // on screen (the clock's seconds run only then)
-    // Widgets without per-second changes are drawn once into a layer; the clock and
+    in property <[HomeSensor]> sensors;   // the sensor widgets' values (a sensor widget's style is its place here)
+    in property <HomeSensor> sensor-demo; // a picker's preview without a sensor of its own
+    in property <[TimerInfo]> timers;     // the running timers, the one ending soonest first
+    in property <[Person]> people;
+    // Widgets without per-second changes are drawn once into a layer; the clock, the timer and
     // the music widget keep their moving parts live (their texts are layers of their own).
-    cache-rendering-hint: root.it.kind != 0 && root.it.kind != 7 && !(root.it.kind == 2 && WxIcons.kind > 0);
+    cache-rendering-hint: root.it.kind != 0 && root.it.kind != 7 && root.it.kind != 9 && !(root.it.kind == 2 && WxIcons.kind > 0);
     // a card set in the integration (0 % = none, 100 % = solid), dark under white text, Paper under Ink
     if root.it.card > 0: Rectangle {
         x: 4px; y: 4px; width: parent.width - 8px; height: parent.height - 8px; border-radius: 16px;
@@ -773,6 +976,10 @@ export component HomeWidget inherits Rectangle {
     if root.it.kind == 4: CurveW { width: root.width; height: root.height; ink: root.ink; data: root.data; it: root.it; }
     if root.it.kind == 5: HourlyW { width: root.width; height: root.height; ink: root.ink; data: root.data; it: root.it; }
     if root.it.kind == 6: DailyW { width: root.width; height: root.height; ink: root.ink; data: root.data; it: root.it; }
+    if root.it.kind == 8: SensorW { width: root.width; height: root.height; ink: root.ink; it: root.it; halo: root.halo; neon: root.neon; glow: root.glow;
+        s: root.it.style >= 0 && root.it.style < root.sensors.length ? root.sensors[root.it.style] : root.sensor-demo; }
+    if root.it.kind == 9: TimerW { width: root.width; height: root.height; ink: root.ink; it: root.it; timers: root.timers; halo: root.halo; neon: root.neon; glow: root.glow; }
+    if root.it.kind == 10: PeopleW { width: root.width; height: root.height; ink: root.ink; it: root.it; people: root.people; }
 }
 
 // Edit frame of a widget: the outline with the same rounded corners, a thicker arc on the
@@ -837,6 +1044,251 @@ component InfoPop inherits Rectangle {
     }
 }
 
+// The edit mode's menus are dark glass whatever the panel's theme: the shared controls get these colours (spec 32.0
+// tokens).
+global EditInk {
+    out property <color> glass: #1a1a1df7;
+    out property <color> raised: #2c2c31;
+    out property <color> line: #ffffff1f;
+    out property <color> text: #F5F3EE;
+    out property <color> muted: #ffffffa0;
+    out property <color> on-text: #101114;
+    out property <color> pressed: #3a3a40;
+    out property <color> track: #ffffff24;
+    out property <color> knob: #F5F3EE;
+}
+
+// A label over a control in a widget's menu (14 px, muted), or beside it (15 px, the text colour).
+component MenuLabel inherits Text {
+    font-size: 14px; font-weight: 500; color: EditInk.muted;
+    vertical-alignment: center;
+    wrap: word-wrap;
+}
+
+// A round glass button of the edit mode's menus (the ⓘ and the ×), 40 px.
+component GlassButton inherits Rectangle {
+    in property <string> icon;
+    in property <bool> on;
+    in property <length> size: 40px;
+    callback clicked;
+    width: root.size; height: root.size; border-radius: root.size / 2;
+    background: ta.pressed || root.on ? #ffffff29 : #ffffff14;
+    Icon { width: parent.width; height: parent.height; text: root.icon; font-size: root.size * 0.5; color: #ffffffcc; }
+    ta := TouchArea { clicked => { root.clicked(); } }
+}
+
+// A widget's settings (spec 42.3): the rows its kind has, in the edit mode's glass. Every change goes to the app at
+// once; the widget in its cell above the dimmed page is the live preview.
+component WidgetMenu inherits Rectangle {
+    in property <HomeItem> it;
+    in property <int> index;
+    in property <bool> weather-only;
+    in property <[string]> sensor-names;
+    in property <int> sensor-sel;
+    in property <bool> layer-back;        // the widget lies on one added before it (Back puts it under that one)
+    in property <bool> layer-fwd;         // … on one added after it
+    in property <length> max-h: 400px;
+    out property <length> need: rows.preferred-height;
+    pure function name(kind: int) -> string {
+        kind == 0 ? "Clock" : kind == 1 ? "Date" : kind == 2 ? "Weather now" : kind == 3 ? "Next event" : kind == 4 ? "Forecast curve"
+            : kind == 5 ? "Hourly forecast" : kind == 6 ? "Daily forecast" : kind == 7 ? "Music" : kind == 8 ? "Sensor" : kind == 9 ? "Timer" : "People"
+    }
+    // where a tap leads, per widget kind (decided by the design, not configurable)
+    pure function tap-text(kind: int) -> string {
+        kind == 0 || kind == 9 ? "Opens timers and alarms" : kind == 1 ? "Opens the calendar at today"
+            : kind == 2 ? "Opens the weather details" : kind == 3 ? "Opens the event in the calendar"
+            : kind == 4 ? "Opens the hourly forecast" : kind == 5 ? "Opens the forecast at that hour"
+            : kind == 6 ? "Opens that day's forecast" : "Opens the music player"
+    }
+    // the switches of each kind (bit k = 2^k); a clock style without a place for them has none (in words, the LCD), the
+    // nixie and the twin-bell only the seconds
+    pure function bits(it: HomeItem) -> [string] {
+        it.kind == 0 ? (it.style == 7 || it.style == 9 ? [] : it.style == 8 || it.style == 10 ? ["Seconds"] : ["Seconds", "Date", "Weather", "Event"])
+            : it.kind == 1 ? ["Year", "Week number"] : it.kind == 2 ? ["Condition", "High and low", "Chance of rain", "Feels like"]
+            : it.kind == 3 ? ["Time", "Calendar colour"] : it.kind == 4 ? ["Rain bars", "Icons"] : it.kind == 5 || it.kind == 6 ? ["Chance of rain"]
+            : it.kind == 8 ? ["Name", "Icon"] : it.kind == 9 ? ["Name"] : it.kind == 10 ? ["The ones away too"] : []
+    }
+    pure function on(bit: int) -> bool { Math.mod(Math.floor(root.it.opts / bit), 2) == 1 }
+    property <bool> has-colour: root.it.kind == 0 || root.it.kind == 1 || root.it.kind == 3 || root.it.kind == 4 || root.it.kind == 8;
+    property <bool> has-weight: root.it.kind != 5 && root.it.kind != 6 && root.it.kind != 7 && root.it.kind != 10;
+    property <bool> has-tap: !root.weather-only && root.it.kind != 8 && root.it.kind != 10;
+    property <bool> scroll: root.it.kind == 7 && Math.mod(root.it.opts, 2) == 1;
+    property <bool> tip;
+    property <int> wt-sent: root.it.weight;
+    property <[string]> bit-names: root.bits(root.it);
+    property <[string]> speeds: ["Slow", "Calm", "Medium", "Brisk", "Fast"];
+    property <[color]> colours: [#FF4A1C, #ff7a33, #ffc23d, #3ecf8e, #2ec4d6, #4c8dff, #a66cff, #f2f2f2];
+    border-radius: 16px;
+    background: EditInk.glass;
+    border-width: 1px; border-color: #ffffff14;
+    drop-shadow-blur: 24px; drop-shadow-color: #00000070; drop-shadow-offset-y: 8px;
+    clip: true;
+    TouchArea { }
+    Flickable {
+        viewport-height: rows.preferred-height;
+        viewport-width: root.width;
+        interactive: rows.preferred-height > root.height;
+        rows := VerticalLayout {
+            width: root.width;
+            padding: 6px;
+            padding-bottom: 10px;
+            spacing: 2px;
+            // the head: the widget's name and Done
+            HorizontalLayout {
+                padding-left: 12px; padding-right: 6px; padding-top: 2px; padding-bottom: 6px;
+                spacing: 8px;
+                Text { text: root.name(root.it.kind); font-size: 20px; font-weight: 600; color: #ffffff; vertical-alignment: center; horizontal-stretch: 1; overflow: elide; }
+                TextButton { text: "Done"; primary: true; width: 88px; height: 40px; tk-text: EditInk.text; tk-on-text: EditInk.on-text;
+                    clicked => { Act.act("home.settings-close", ""); } }
+            }
+            // Sensor: one the panel knows (any sensor in Home Assistant)
+            if root.it.kind == 8: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                MenuLabel { text: "Sensor"; }
+                Dropdown { options: root.sensor-names; selected: root.sensor-sel;
+                    tk-raised: EditInk.raised; tk-line: EditInk.line; tk-text: EditInk.text; tk-muted: EditInk.muted; tk-menu: EditInk.raised; tk-pressed: EditInk.pressed;
+                    picked(k) => { Act.act("home.set", root.index + ":entity:" + k + ":1"); } }
+            }
+            // Style: the eleven clock styles
+            if root.it.kind == 0: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                MenuLabel { text: "Style"; }
+                Dropdown {
+                    options: [Words.line("ui.looks.home.6"), Words.line("ui.looks.home.7"), Words.line("ui.looks.home.8"), Words.line("ui.looks.home.9"),
+                        Words.line("ui.looks.home.10"), Words.line("ui.looks.home.11"), Words.line("ui.looks.home.12"), Words.line("ui.looks.home.13"),
+                        "Nixie", "LCD quartz", "Twin-bell"];
+                    selected: root.it.style;
+                    tk-raised: EditInk.raised; tk-line: EditInk.line; tk-text: EditInk.text; tk-muted: EditInk.muted; tk-menu: EditInk.raised; tk-pressed: EditInk.pressed;
+                    picked(k) => { Act.act("home.set", root.index + ":style:" + k + ":1"); }
+                }
+            }
+            // Long titles cut off or scrolling, and how fast (music)
+            if root.it.kind == 7: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                MenuLabel { text: "Long titles"; }
+                Segmented { options: ["Cut off", "Scroll"]; selected: root.scroll ? 1 : 0;
+                    tk-raised: EditInk.raised; tk-text: EditInk.text; tk-on-text: EditInk.on-text;
+                    picked(k) => { Act.act("home.set", root.index + ":scroll:" + k + ":1"); } }
+            }
+            if root.scroll: spd := VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                property <int> sp: root.it.style > 0 ? root.it.style : 3;
+                MenuLabel { text: "Scroll speed"; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    TouchSlider {
+                        horizontal-stretch: 1;
+                        value: (spd.sp - 1) / 4;
+                        bubble-text: root.speeds[Math.round(self.value * 4)];
+                        tk-track: EditInk.track; tk-knob: EditInk.knob; tk-text: EditInk.text; tk-on-text: EditInk.on-text;
+                        changed(v, fin) => {
+                            let k = Math.round(v * 4) + 1;
+                            if fin || k != spd.sp { Act.act("home.set", root.index + ":speed:" + k + ":" + (fin ? "1" : "0")); }
+                        }
+                    }
+                    Text { width: 64px; text: root.speeds[spd.sp - 1]; font-size: 14px; color: EditInk.text; vertical-alignment: center; horizontal-alignment: right; }
+                }
+            }
+            // Colour: eight swatches here, any colour in Home Assistant
+            if root.has-colour: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 8px;
+                MenuLabel { text: "Colour"; }
+                HorizontalLayout {
+                    alignment: start;
+                    spacing: 10px;
+                    for c in root.colours: sw := Rectangle {
+                        width: 34px; height: 34px;
+                        property <bool> chosen: c == root.it.accent;
+                        // the chosen one: a white ring with a gap
+                        if sw.chosen: Rectangle { x: -4px; y: -4px; width: 42px; height: 42px; border-radius: 21px; border-width: 2px; border-color: #ffffff; }
+                        Rectangle { border-radius: 17px; background: c; border-width: 1px; border-color: #ffffff26; }
+                        TouchArea { x: -3px; y: -5px; width: 40px; height: 44px; clicked => { Act.act("home.set", root.index + ":accent:" + (sw.chosen ? "" : "#" + root.hex(c)) + ":1"); } }
+                    }
+                }
+            }
+            // Weight: the letters' weight, 100 … 900 (live on the widget while it moves)
+            if root.has-weight: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                MenuLabel { text: "Weight"; }
+                HorizontalLayout {
+                    spacing: 12px;
+                    TouchSlider {
+                        horizontal-stretch: 1;
+                        value: (root.it.weight - 100) / 800;
+                        bubble-text: (Math.round(self.value * 8) * 100 + 100);
+                        tk-track: EditInk.track; tk-knob: EditInk.knob; tk-text: EditInk.text; tk-on-text: EditInk.on-text;
+                        changed(v, fin) => {
+                            let w = Math.round(v * 8) * 100 + 100;
+                            if fin || w != root.wt-sent {
+                                root.wt-sent = w;
+                                Act.act("home.set", root.index + ":weight:" + w + ":" + (fin ? "1" : "0"));
+                            }
+                        }
+                    }
+                    Text { width: 40px; text: root.it.weight; font-size: 14px; font-weight: root.it.weight; color: EditInk.text; vertical-alignment: center; horizontal-alignment: right; }
+                }
+            }
+            // Show: what the widget adds (two columns, each a checkbox with its name)
+            if root.bit-names.length > 0: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 2px;
+                MenuLabel { text: "Show"; }
+                for r in Math.ceil(root.bit-names.length / 2): HorizontalLayout {
+                    spacing: 8px;
+                    for c in 2: cb := Rectangle {
+                        property <int> k: r * 2 + c;
+                        horizontal-stretch: 1;
+                        min-height: 40px;
+                        if cb.k < root.bit-names.length: HorizontalLayout {
+                            spacing: 10px;
+                            VerticalLayout { alignment: center;
+                                CheckBox { checked: root.on(Math.pow(2, cb.k)); tk-knob: EditInk.muted; tk-knob-on: #F5F3EE; } }
+                            Text { text: root.bit-names[cb.k]; font-size: 15px; color: EditInk.text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
+                        }
+                        if cb.k < root.bit-names.length: TouchArea { clicked => { Act.act("home.set", root.index + ":opt:" + Math.pow(2, cb.k) + ":1"); } }
+                    }
+                }
+            }
+            // Layer: Back / Forward when it lies on another widget (the later one lies on top)
+            if root.layer-back || root.layer-fwd: VerticalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 6px;
+                MenuLabel { text: "Layer"; }
+                HorizontalLayout {
+                    spacing: 8px;
+                    TextButton { text: "Back"; horizontal-stretch: 1; opacity: root.layer-back ? 1 : 0.4; tk-raised: EditInk.raised; tk-pressed: EditInk.pressed; tint: EditInk.text;
+                        clicked => { if root.layer-back { Act.act("home.layer", root.index + ":-1"); } } }
+                    TextButton { text: "Forward"; horizontal-stretch: 1; opacity: root.layer-fwd ? 1 : 0.4; tk-raised: EditInk.raised; tk-pressed: EditInk.pressed; tint: EditInk.text;
+                        clicked => { if root.layer-fwd { Act.act("home.layer", root.index + ":1"); } } }
+                }
+            }
+            // Opens on tap: on / off only; where it leads is fixed per kind (behind the ⓘ)
+            if root.has-tap: HorizontalLayout {
+                padding: 8px; padding-left: 10px; padding-right: 10px; spacing: 8px;
+                min-height: 52px;
+                Text { text: "Opens on tap"; font-size: 15px; color: EditInk.text; vertical-alignment: center; wrap: word-wrap; }
+                VerticalLayout { alignment: center; GlassButton { icon: "\u{F02FD}"; size: 32px; on: root.tip; clicked => { root.tip = !root.tip; } } }
+                Rectangle { horizontal-stretch: 1; }
+                VerticalLayout { alignment: center;
+                    Toggle { on: root.it.tap; tk-raised: EditInk.raised; tk-line: EditInk.line; tk-knob: EditInk.muted;
+                        toggled => { Act.act("home.set", root.index + ":tap:" + (root.it.tap ? "0" : "1") + ":1"); } } }
+            }
+            if root.has-tap && root.tip: Rectangle {
+                height: tip-text.preferred-height + 12px;
+                Rectangle {
+                    x: 10px; width: parent.width - 20px; border-radius: 10px; background: #ffffff14;
+                    tip-text := Text { x: 10px; width: parent.width - 20px; text: root.tap-text(root.it.kind); font-size: 13px; color: #ffffffcc;
+                        vertical-alignment: center; wrap: word-wrap; }
+                }
+            }
+        }
+    }
+    // the colour as "rrggbb"
+    pure function hex2(n: float) -> string {
+        let d = ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "a", "b", "c", "d", "e", "f"];
+        d[Math.floor(n / 16)] + d[Math.mod(Math.round(n), 16)]
+    }
+    pure function hex(c: color) -> string { root.hex2(c.red) + root.hex2(c.green) + root.hex2(c.blue) }
+}
+
 export component HomeGrid inherits Rectangle {
     in property <[HomeItem]> items;
     in property <color> ink: #ffffff;     // the widgets' text and lines (Ink on the plain light background)
@@ -854,13 +1306,21 @@ export component HomeGrid inherits Rectangle {
     in property <float> halo: 1;          // how much glow the background needs behind white text
     in property <bool> neon;              // neon letters (Fast Lane background)
     in property <color> glow;             // … in the scene's colour
-    in property <bool> fast-lane;         // the background is the synthwave scene: the edit mode offers its sheet
-    in property <bool> bg-sheet;          // panel edit mode: the background sheet is open
+    in property <bool> fast-lane;         // the background is the synthwave scene: the edit mode offers its menu
+    in property <bool> bg-sheet;          // panel edit mode: the background menu (the arcade screen) is open
     in property <int> fl-scene;
     in property <bool> fl-cars: true;
+    in property <bool> neon-on: true;     // the background menu's neon letters (on while any widget glows)
     in property <bool> rise;              // 25.H6: the widgets rise into place when the page comes into view (the plain background)
     in property <bool> shown;
     in property <bool> live: true;        // the page is (partly) on screen: clocks run only then
+    in property <bool> weather-only;      // the weather details page: its picker offers the weather widgets only; no taps
+    in property <[HomeSensor]> sensors;   // the sensor widgets' values (a sensor widget's style is its place here)
+    in property <HomeSensor> sensor-demo; // a sensor the panel knows (the picker's preview); no name: none
+    in property <[string]> sensor-names;  // the sensors a sensor widget's menu offers
+    in property <int> sensor-sel: -1;     // … the open menu's widget's sensor among them
+    in property <[TimerInfo]> timers;     // the running timers, the one ending soonest first
+    in property <[Person]> people;
     property <bool> rising;
     property <duration> rise-t0;
     changed shown => { if root.rise && root.shown { root.rise-t0 = animation-tick(); root.rising = true; } }
@@ -869,128 +1329,247 @@ export component HomeGrid inherits Rectangle {
     in property <bool> editing;
     in property <bool> ha-mode;           // the editor inside Home Assistant: same look, its own controls
     in property <int> selected: -1;       // HA: the widget whose settings are shown
-    in property <int> lifted: -1;         // edit mode: the widget being dragged
+    in property <int> lifted: -1;         // a widget shown lifted (previews; on the panel the finger lifts it)
     in property <length> lift-dx;         // ... and how far it is from its cell
     in property <length> lift-dy;
     in property <int> drop-col: -1;       // the cells it would land on
     in property <int> drop-row: -1;
-    in property <bool> picker;            // the "add widget" sheet
+    in property <bool> picker;            // the "add widget" card
     in property <length> picker-scroll;
+    in property <bool> place;             // a picked widget waits for its place: the free cells light up
+    in property <[bool]> free;            // … the cells no widget covers (16, row by row)
     in property <bool> lock;              // long press with panel editing allowed: the lock dialog
-    in property <float> lock-p;           // holding the lock: 0..1, at 1 the edit mode opens
+    in property <float> lock-p;           // the lock's ring shown filled to (0..1; holding the lock fills it too)
     in property <string> lock-title: "Redecorating again?";
     in property <string> lock-sub: "Hold the lock to start editing.";
-    in property <int> settings: -1;       // panel: the widget whose settings sheet is open
+    in property <int> settings: -1;       // panel: the widget whose menu is open
+    in property <bool> layer-back;        // … it lies on a widget added before it
+    in property <bool> layer-fwd;         // … on one added after it
     in property <bool> info;              // panel editor: the info card is open
     // 4 x 4 grid between the status bar and the people / page dots
     property <length> gx: 16px;
     property <length> gy: 44px;
     property <length> cw: (self.width - 32px) / 4;
     property <length> ch: 98px;
+    pure function min-w(it: HomeItem) -> int {
+        it.kind == 0 ? (it.style == 8 ? (Math.mod(it.opts, 2) == 1 ? 4 : 3) : 2) : it.kind == 1 || it.kind == 3 ? 2 : it.kind >= 4 && it.kind <= 6 ? 3 : 1
+    }
+    pure function min-h(it: HomeItem) -> int { it.kind == 0 && it.style == 10 ? 2 : 1 }
 
-    if root.editing: Rectangle { background: root.settings >= 0 ? #00000040 : #00000059; }
-    if root.editing && root.settings < 0: Rectangle {
+    // the finger's work in the edit mode: a widget moved (its offset), a widget resized (its new size)
+    property <int> drag-i: -1;
+    property <length> ddx;
+    property <length> ddy;
+    property <int> size-i: -1;
+    property <int> size-w;
+    property <int> size-h;
+    property <int> up-i: root.drag-i >= 0 ? root.drag-i : root.lifted;
+    property <length> up-dx: root.drag-i >= 0 ? root.ddx : root.lift-dx;
+    property <length> up-dy: root.drag-i >= 0 ? root.ddy : root.lift-dy;
+    property <HomeItem> up-it: root.up-i >= 0 && root.up-i < root.items.length ? root.items[root.up-i] : { w: 1, h: 1 };
+    property <int> to-col: root.drag-i >= 0 ? Math.max(0, Math.min(4 - root.up-it.w, Math.round((root.up-it.col * root.cw + root.ddx) / root.cw))) : root.drop-col;
+    property <int> to-row: root.drag-i >= 0 ? Math.max(0, Math.min(4 - root.up-it.h, Math.round((root.up-it.row * root.ch + root.ddy) / root.ch))) : root.drop-row;
+    property <bool> menu-open: root.picker || root.settings >= 0 || root.bg-sheet;
+    property <bool> edit-free: root.editing && !root.ha-mode && !root.menu-open && !root.place;
+
+    if root.editing: Rectangle { background: #00000059; }
+    if root.editing && !root.menu-open: Rectangle {
         for c in 16: Rectangle {
             x: root.gx + Math.mod(c, 4) * root.cw + 4px; y: root.gy + Math.floor(c / 4) * root.ch + 4px;
             width: root.cw - 8px; height: root.ch - 8px; border-radius: 14px;
             border-width: 1px; border-color: #ffffff2e;
         }
     }
-    if root.editing && root.drop-col >= 0: Rectangle {
-        x: root.gx + root.drop-col * root.cw + 4px; y: root.gy + root.drop-row * root.ch + 4px;
-        width: root.items[root.lifted].w * root.cw - 8px; height: root.items[root.lifted].h * root.ch - 8px;
+    if root.editing && root.up-i >= 0 && root.to-col >= 0: Rectangle {
+        x: root.gx + root.to-col * root.cw + 4px; y: root.gy + root.to-row * root.ch + 4px;
+        width: root.up-it.w * root.cw - 8px; height: root.up-it.h * root.ch - 8px;
+        border-radius: 16px; background: #ffffff1a; border-width: 2px; border-color: root.accent;
+    }
+    // the new size while the thick corner is dragged
+    if root.editing && root.size-i >= 0 && root.size-i < root.items.length: Rectangle {
+        x: root.gx + root.items[root.size-i].col * root.cw + 4px; y: root.gy + root.items[root.size-i].row * root.ch + 4px;
+        width: root.size-w * root.cw - 8px; height: root.size-h * root.ch - 8px;
         border-radius: 16px; background: #ffffff1a; border-width: 2px; border-color: root.accent;
     }
 
     for it[i] in root.items: cell := Rectangle {
-        property <bool> up: root.editing && i == root.lifted;
+        property <bool> up: root.editing && i == root.up-i;
         // 25.H6: on the plain background the widgets rise into place one after another as the page comes into view
         property <float> rise-k: root.rising ? clamp((root.rise-t - i * 30) / 220, 0, 1) : 1;
         opacity: cell.rise-k;
-        visible: root.settings < 0;
         // M11: in edit mode the widgets jiggle by ±1 px, each with its own phase; a dropped widget settles with a 2 px dip
-        property <float> jt: root.editing && !self.up ? (animation-tick() / 1ms + i * 337) / 520 : 0;
+        property <float> jt: root.editing && !self.up && !root.menu-open ? (animation-tick() / 1ms + i * 337) / 520 : 0;
         property <duration> drop-t0;
         property <bool> settling;
         changed up => { if !self.up && root.editing { self.drop-t0 = animation-tick(); self.settling = true; } }
         Timer { interval: 220ms; running: cell.settling; triggered => { cell.settling = false; } }
         property <length> settle: cell.settling ? 2px * Math.sin(180deg * clamp((animation-tick() - cell.drop-t0) / 200ms, 0, 1)) : 0px;
-        x: root.gx + it.col * root.cw + (self.up ? root.lift-dx : 0px) + 1px * Math.sin(360deg * self.jt);
-        y: root.gy + it.row * root.ch + (self.up ? root.lift-dy : 0px) + 1px * Math.cos(360deg * self.jt * 0.83) + self.settle + 6px * (1 - (1 - Math.pow(1 - self.rise-k, 2)));
+        x: root.gx + it.col * root.cw + (self.up ? root.up-dx : 0px) + 1px * Math.sin(360deg * self.jt);
+        y: root.gy + it.row * root.ch + (self.up ? root.up-dy : 0px) + 1px * Math.cos(360deg * self.jt * 0.83) + self.settle + 6px * (1 - (1 - Math.pow(1 - self.rise-k, 2)));
         width: it.w * root.cw; height: it.h * root.ch;
         if cell.up: Rectangle { x: -2px; y: 4px; width: parent.width + 4px; height: parent.height; border-radius: 18px; background: #00000059; }
         // a tap opens the widget's view (the app knows which page that is); it lies under the widget, so a
         // widget's own buttons (the music widget's) take their taps first
-        if !root.editing && it.tap: TouchArea { clicked => { Act.act("home.tap", it.kind); } }
+        if !root.editing && it.tap && !root.weather-only && it.kind != 8 && it.kind != 10: TouchArea { clicked => { Act.act("home.tap", it.kind); } }
         HomeWidget {
             width: parent.width; height: parent.height;
             it: it; data: root.data; clock: root.clock; event: root.event; halo: root.halo; music: root.music; ink: root.ink;
             seconds: root.seconds; music-pos: root.music-pos; live: root.live;
             neon: root.neon && it.neon; glow: root.glow;
             weekday-long: root.weekday-long; day-month: root.day-month; year: root.year; week: root.week;
+            sensors: root.sensors; timers: root.timers; people: root.people;
         }
         if root.editing: EditFrame { width: parent.width; height: parent.height; up: cell.up; selected: i == root.selected; accent: root.accent; }
     }
 
-    // panel edit mode: hint on top, add / done at the bottom
-    if root.editing && !root.ha-mode && !root.picker && root.settings < 0 && !root.bg-sheet: InfoButton { x: root.width - 50px; y: 4px; on: root.info; }
-    if root.editing && !root.ha-mode && !root.picker && root.settings < 0 && !root.bg-sheet: Rectangle {
-        x: 16px; y: root.height - 46px; width: 36px; height: 36px; border-radius: 18px; background: #ffffff26;
-        Icon { text: "\u{F0415}"; font-size: 22px; color: #ffffff; }
-    }
-    // the background's own options (only the synthwave scene has any)
-    if root.editing && !root.ha-mode && !root.picker && root.settings < 0 && !root.bg-sheet && root.fast-lane: Rectangle {
-        x: 62px; y: root.height - 46px; width: 36px; height: 36px; border-radius: 18px; background: #ffffff26;
-        Icon { text: "\u{F03D8}"; font-size: 21px; color: #ffffff; }
-    }
-    if root.editing && !root.ha-mode && !root.picker && root.settings < 0 && !root.bg-sheet: Rectangle {
-        x: root.width - 16px - 96px; y: root.height - 46px; width: 96px; height: 36px; border-radius: 18px; background: #F5F3EE;
-        Text { text: "Done"; font-size: 15px; font-weight: 600; color: #101114; horizontal-alignment: center; vertical-alignment: center; }
+    // edit mode: what a finger does to a widget, on a layer that stays put while the lifted widget follows the finger.
+    // A drag moves it (its landing cells outlined), the thick corner resizes it, the − badge removes it, a tap opens
+    // its menu. The widget added later lies on top and takes the finger first.
+    if root.edit-free: Rectangle {
+        for it[i] in root.items: Rectangle {
+            x: root.gx + it.col * root.cw; y: root.gy + it.row * root.ch; width: it.w * root.cw; height: it.h * root.ch;
+            TouchArea {
+                moved => {
+                    if root.size-i < 0 && (root.drag-i == i || Math.abs((self.mouse-x - self.pressed-x) / 1px) + Math.abs((self.mouse-y - self.pressed-y) / 1px) > 8) {
+                        root.ddx = self.mouse-x - self.pressed-x;
+                        root.ddy = self.mouse-y - self.pressed-y;
+                        root.drag-i = i;
+                    }
+                }
+                clicked => { if root.drag-i != i { Act.act("home.settings", i); } }
+                pointer-event(ev) => {
+                    if ev.kind == PointerEventKind.up && root.drag-i == i {
+                        Act.act("home.move", i + ":" + root.to-col + ":" + root.to-row);
+                        root.drag-i = -1;
+                    }
+                    if ev.kind == PointerEventKind.cancel {
+                        root.drag-i = -1;
+                    }
+                }
+            }
+            // the thick corner
+            TouchArea {
+                x: parent.width - 40px; y: parent.height - 40px; width: 48px; height: 48px;
+                moved => {
+                    root.size-w = Math.max(Math.min(root.min-w(it), 4 - it.col), Math.min(4 - it.col, Math.round((it.w * root.cw + self.mouse-x - self.pressed-x) / root.cw)));
+                    root.size-h = Math.max(Math.min(root.min-h(it), 4 - it.row), Math.min(4 - it.row, Math.round((it.h * root.ch + self.mouse-y - self.pressed-y) / root.ch)));
+                    root.size-i = i;
+                }
+                pointer-event(ev) => {
+                    if ev.kind == PointerEventKind.up && root.size-i == i {
+                        Act.act("home.size", i + ":" + root.size-w + ":" + root.size-h);
+                        root.size-i = -1;
+                    }
+                    if ev.kind == PointerEventKind.cancel {
+                        root.size-i = -1;
+                    }
+                }
+            }
+            // the − badge
+            TouchArea { x: -14px; y: -14px; width: 44px; height: 44px; clicked => { Act.act("home.remove", i); } }
+        }
     }
 
-    if root.editing && root.info && !root.ha-mode && !root.picker && root.settings < 0 && !root.bg-sheet: InfoPop {
+    // edit mode's buttons: the info at the top, add / background / done at the bottom
+    if root.editing && !root.ha-mode && !root.place: InfoButton {
+        x: root.width - 50px; y: 4px; on: root.info;
+        TouchArea { clicked => { Act.act("home.info", ""); } }
+    }
+    if root.editing && !root.ha-mode && !root.place: Rectangle {
+        x: 16px; y: root.height - 46px; width: 36px; height: 36px; border-radius: 18px; background: add-ta.pressed || root.picker ? #ffffff40 : #ffffff26;
+        Icon { text: "\u{F0415}"; font-size: 22px; color: #ffffff; }
+        add-ta := TouchArea { x: -4px; y: -4px; width: 44px; height: 44px; clicked => { Act.act("home.add", ""); } }
+    }
+    // the background's own options (only the synthwave scene has any)
+    if root.editing && !root.ha-mode && !root.place && root.fast-lane: Rectangle {
+        x: 62px; y: root.height - 46px; width: 36px; height: 36px; border-radius: 18px; background: bg-ta.pressed || root.bg-sheet ? #ffffff40 : #ffffff26;
+        Icon { text: "\u{F03D8}"; font-size: 21px; color: #ffffff; }
+        bg-ta := TouchArea { x: -4px; y: -4px; width: 44px; height: 44px; clicked => { Act.act("home.bg", ""); } }
+    }
+    if root.editing && !root.ha-mode && !root.place: Rectangle {
+        x: root.width - 16px - 96px; y: root.height - 46px; width: 96px; height: 36px; border-radius: 18px; background: done-ta.pressed ? #dedad1 : #F5F3EE;
+        Text { text: "Done"; font-size: 15px; font-weight: 600; color: #101114; horizontal-alignment: center; vertical-alignment: center; }
+        done-ta := TouchArea { y: -4px; height: 44px; clicked => { Act.act("home.done", ""); } }
+    }
+    if root.editing && root.info && !root.ha-mode && !root.menu-open && !root.place: InfoPop {
         w: 260px;
         x: root.width - 16px - self.width; y: 46px;
         lines: root.fast-lane ? ["Drag to move", "Drag the thick corner to resize", "Tap for settings", "Palette: the background"]
             : ["Drag to move", "Drag the thick corner to resize", "Tap for settings"];
     }
 
-    // ------------------------------------------------------------------ background sheet (panel, Fast Lane)
-    // the page stays visible above it and follows every change; scenes wrap into two tight rows, the
-    // switches come after a wider gap
-    if root.editing && root.bg-sheet: GlowText { x: 0; y: 12px; width: root.width; height: 30px; horizontal-alignment: center; k: root.halo;
-        text: "Background"; font-size: 20px; font-weight: 600; color: #ffffff; }
-    if root.editing && root.bg-sheet: Rectangle {
-        x: root.width - 16px - 88px; y: 10px; width: 88px; height: 34px; border-radius: 17px; background: #F5F3EE;
-        Text { text: "Done"; font-size: 15px; font-weight: 600; color: #101114; horizontal-alignment: center; vertical-alignment: center; }
-    }
-    if root.editing && root.bg-sheet: bgs := Rectangle {
-        property <length> r0: 26px;
-        property <length> r1: self.r0 + 40px + 18px;    // the switch rows under the scene
-        property <length> r2: self.r1 + 54px;
-        property <length> need: self.r2 + 40px + 24px;
-        x: 0; y: root.height - self.need; width: root.width; height: self.need;
-        border-top-left-radius: 24px; border-top-right-radius: 24px;
-        background: #1a1a1df7;
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: #ffffff40; }
-        Segmented { x: 16px; y: bgs.r0; width: parent.width - 32px;
-            options: [Words.line("ui.looks.home.0"), Words.line("ui.looks.home.1"), Words.line("ui.looks.home.2"), Words.line("ui.looks.home.3")];
-            selected: root.fl-scene; }
-        // the switches: a row each (the name, the switch at the right end)
-        for sr[k] in [{ t: Words.line("ui.looks.home.4"), on: root.neon }, { t: Words.line("ui.looks.home.5"), on: root.fl-cars }]: Rectangle {
-            x: 16px; y: (k == 0 ? bgs.r1 : bgs.r2); width: parent.width - 32px; height: 40px;
-            Text { x: 0; y: 0; width: parent.width - 120px; height: parent.height; text: sr.t; font-size: 16px; color: #ffffff; vertical-alignment: center; overflow: elide; }
-            Toggle { x: parent.width - self.width; y: 4px; on: sr.on; }
-        }
-        InfoButton { x: parent.width - 16px - 56px - 44px; y: bgs.r1 + 2px; on: root.info; }
-        if root.info: InfoPop {
-            w: 250px;
-            x: 16px; y: bgs.r2 - 6px - self.height;
-            lines: ["Glow Up: neon letters", "Joyride: cars on the floor"];
+    // ------------------------------------------------------------------ choosing a new widget's place
+    // the free cells light up; a tap on one puts the widget there, a tap anywhere else lets it go
+    if root.editing && root.place: Rectangle {
+        TouchArea { clicked => { Act.act("home.place-cancel", ""); } }
+        for f[c] in root.free: Rectangle {
+            x: root.gx + Math.mod(c, 4) * root.cw + 4px; y: root.gy + Math.floor(c / 4) * root.ch + 4px;
+            width: root.cw - 8px; height: root.ch - 8px; border-radius: 14px;
+            visible: f;
+            background: place-ta.pressed ? root.accent.with-alpha(0.32) : root.accent.with-alpha(0.16);
+            border-width: 2px; border-color: root.accent;
+            Icon { width: parent.width; height: parent.height; text: "\u{F0415}"; font-size: 26px; color: #ffffff; }
+            place-ta := TouchArea { enabled: f; clicked => { Act.act("home.place", c); } }
         }
     }
 
-    // ------------------------------------------------------------------ widget picker (live previews)
+    // ------------------------------------------------------------------ the background (42.1): the neon arcade screen of 33.4
+    // over the edit mode's buttons (bottom edge y 422), so the scene behind it changes in view
+    property <[color]> tubes: [#ff2bd6, #22d8ff, #ff8a3d, #9a8cff];
+    bg-host := MenuHost {
+        open: root.editing && root.bg-sheet && root.fast-lane;
+        kind: 1;
+        in-ms: 330ms; out-ms: 200ms;
+        close => { Act.act("home.bg-close", ""); }
+        property <bool> tip;
+        property <length> rows-h: bg-rows.preferred-height;
+        ArcadeScreen {
+            property <length> h: self.need;
+            x: 16px; y: Math.max(48px, 422px - self.h); width: 448px; height: self.h;
+            tube: root.tubes[Math.max(0, Math.min(3, root.fl-scene))];
+            title: "BACKGROUND";
+            body-h: bg-host.rows-h;
+            open: bg-host.open;
+            t-in: bg-host.t-in; t-out: bg-host.t-out;
+            bg-rows := VerticalLayout {
+                width: 416px;
+                spacing: 4px;
+                if bg-host.tip: Rectangle {
+                    height: tip-t.preferred-height + 14px;
+                    border-width: 2px; border-color: root.tubes[Math.max(0, Math.min(3, root.fl-scene))];
+                    tip-t := Text { x: 8px; width: parent.width - 16px; text: "GLOW UP: NEON LETTERS · JOYRIDE: CARS ON THE FLOOR"; font-family: "Press Start 2P"; font-size: 9px;
+                        color: #ffffff; wrap: word-wrap; vertical-alignment: center; }
+                }
+                VerticalLayout {
+                    padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                    Text { text: "SCENE"; font-family: "Press Start 2P"; font-size: 9px; color: #ffffffd1; }
+                    ArcadeBlocks { options: ["SUNSET", "CITY", "BEACH", "STARS"]; selected: root.fl-scene; tube: root.tubes[Math.max(0, Math.min(3, root.fl-scene))];
+                        picked(k) => { Act.act("home.scene", k); } }
+                }
+                for row[k] in [{ t: Words.line("ui.looks.home.4"), on: root.neon-on, act: "home.neon" }, { t: Words.line("ui.looks.home.5"), on: root.fl-cars, act: "home.cars" }]: VerticalLayout {
+                    padding-top: 6px; padding-bottom: 6px; spacing: 6px;
+                    HorizontalLayout {
+                        spacing: 8px;
+                        alignment: start;
+                        Text { text: (row.t != "" ? row.t : (k == 0 ? "Neon letters" : "Cars")).to-uppercase(); font-family: "Press Start 2P"; font-size: 9px; color: #ffffffd1; vertical-alignment: center; wrap: word-wrap; }
+                        // the i block explains both names
+                        if k == 0: Rectangle {
+                            width: 22px; height: 22px;
+                            border-width: 2px; border-color: root.tubes[Math.max(0, Math.min(3, root.fl-scene))];
+                            background: bg-host.tip ? root.tubes[Math.max(0, Math.min(3, root.fl-scene))] : transparent;
+                            Text { text: "i"; font-family: "Press Start 2P"; font-size: 10px; color: bg-host.tip ? #14062a : #ffffff; horizontal-alignment: center; vertical-alignment: center; }
+                            TouchArea { x: -11px; y: -11px; width: 44px; height: 44px; clicked => { bg-host.tip = !bg-host.tip; } }
+                        }
+                    }
+                    ArcadeBlocks { options: ["ON", "OFF"]; selected: row.on ? 0 : 1; tube: root.tubes[Math.max(0, Math.min(3, root.fl-scene))];
+                        picked(i) => { Act.act(row.act, i == 0 ? "1" : "0"); } }
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------ add widget (42.2): a card out of the +
+    // live previews (the real widgets with the page's data; a demo where there is nothing to show yet)
     property <HomeItem> pv-analog: { kind: 0, w: 2, h: 2, style: 2, accent: root.accent, weight: 600, opts: 1, neon: true };
     property <HomeItem> pv-digital: { kind: 0, w: 2, h: 1, style: 0, accent: root.accent, weight: 600, opts: 1, neon: true };
     property <HomeItem> pv-flip: { kind: 0, w: 2, h: 1, style: 6, accent: root.accent, weight: 700, opts: 1, neon: true };
@@ -1003,180 +1582,184 @@ export component HomeGrid inherits Rectangle {
     property <HomeItem> pv-music1: { kind: 7, w: 1, h: 1, accent: root.accent, weight: 600, opts: 0, neon: true };
     property <HomeItem> pv-music3: { kind: 7, w: 3, h: 1, accent: root.accent, weight: 600, opts: 0, neon: true };
     property <HomeItem> pv-music4: { kind: 7, w: 4, h: 1, accent: root.accent, weight: 600, opts: 0, neon: true };
-    // the picker fades in (240 ms) and out (200 ms) instead of popping
-    property <float> picker-k: root.picker ? 1 : 0;
-    animate picker-k { duration: root.picker ? 240ms : 200ms; easing: ease-out; }
-    if root.picker-k > 0.001: Rectangle { opacity: root.picker-k; background: #00000080; }
-    if root.picker-k > 0.001: Rectangle { opacity: root.picker-k;
-        x: 0; y: 40px; width: root.width; height: root.height - 40px;
-        border-top-left-radius: 24px; border-top-right-radius: 24px;
-        background: #202024f7;
-        clip: true;
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: #ffffff40; }
-        Text { x: 20px; y: 20px; text: "Add widget"; font-size: 20px; font-weight: 600; color: #ffffff; }
-        InfoButton { x: parent.width - 96px; y: 18px; on: root.info; }
+    property <HomeItem> pv-timer: { kind: 9, w: 2, h: 1, accent: root.accent, weight: 600, opts: 1, neon: true };
+    property <HomeItem> pv-people: { kind: 10, w: 2, h: 1, accent: root.accent, weight: 600, opts: 1, neon: true };
+    property <HomeItem> pv-sensor: { kind: 8, w: 2, h: 1, style: -1, accent: root.accent, weight: 600, opts: 3, neon: true };
+    property <HomeItem> pv-sensor1: { kind: 8, w: 1, h: 1, style: -1, accent: root.accent, weight: 600, opts: 2, neon: true };
+    // without a running timer or anyone in Home Assistant the previews show made-up ones
+    property <[TimerInfo]> pv-timers: root.timers.length > 0 ? root.timers : [{ label: "Pasta", text: "7:42", tint: #ffb21e, fr: 0.62, index: 0 }];
+    property <[Person]> pv-people-list: root.people.length > 0 ? root.people
+        : [{ initials: "AN", home: true, tint: #3b82f6 }, { initials: "BE", home: true, tint: #22a06b }, { initials: "CS", home: false, tint: #a855f7 }];
+    property <bool> has-sensor: root.sensor-demo.name != "";
+    property <bool> music-active: root.music.active;
+    property <HomeMusic> pv-music-data: root.music.active ? root.music
+        : { title: "Summer Lights", artist: "The Night Drive", player: "Living room", active: true, playing: true, pos: 74, dur: 236, accent: root.accent };
+    property <HomeEvent> pv-event-data: root.event.title != "" ? root.event : { title: "Dentist", time: "15:00 – 15:45", rel: "in 33 min", tint: #4c8dff };
+    // the previews' places in the card (it is 448 px wide, the previews are cells of 112 x 98): what a tap adds
+    // ("kind:style:w:h:opts", the sensor widget adds its sensor's place among the choices)
+    property <length> pv-extra-y: 1162px;
+    property <length> pv-end: root.weather-only ? 552px : root.pv-extra-y + 138px + (root.has-sensor ? 138px : 0px);
+    property <[{ it: HomeItem, x: length, y: length, w: length, h: length, pick: string, on: bool }]> picks: root.weather-only ? [
+        { it: root.pv-weather, x: 0px, y: 0px, w: 224px, h: 98px, pick: "2:0:2:1:1", on: true },
+        { it: root.pv-curve, x: 0px, y: 138px, w: 448px, h: 98px, pick: "4:0:4:1:1", on: true },
+        { it: root.pv-hourly, x: 0px, y: 276px, w: 448px, h: 98px, pick: "5:0:4:1:0", on: true },
+        { it: root.pv-daily, x: 0px, y: 414px, w: 448px, h: 98px, pick: "6:0:4:1:0", on: true },
+    ] : [
+        { it: root.pv-analog, x: 0px, y: 0px, w: 224px, h: 196px, pick: "0:2:2:2:1", on: true },
+        { it: root.pv-digital, x: 224px, y: 0px, w: 224px, h: 98px, pick: "0:0:2:1:1", on: true },
+        { it: root.pv-flip, x: 224px, y: 98px, w: 224px, h: 98px, pick: "0:6:2:1:1", on: true },
+        { it: root.pv-weather, x: 0px, y: 236px, w: 224px, h: 98px, pick: "2:0:2:1:1", on: true },
+        { it: root.pv-date, x: 224px, y: 236px, w: 224px, h: 98px, pick: "1:0:2:1:0", on: true },
+        { it: root.pv-event, x: 0px, y: 374px, w: 448px, h: 98px, pick: "3:0:4:1:3", on: true },
+        { it: root.pv-curve, x: 0px, y: 512px, w: 448px, h: 98px, pick: "4:0:4:1:1", on: true },
+        { it: root.pv-hourly, x: 0px, y: 650px, w: 448px, h: 98px, pick: "5:0:4:1:0", on: true },
+        { it: root.pv-daily, x: 0px, y: 788px, w: 448px, h: 98px, pick: "6:0:4:1:0", on: true },
+        { it: root.pv-music1, x: 0px, y: 926px, w: 112px, h: 98px, pick: "7:0:1:1:0", on: true },
+        { it: root.pv-music3, x: 112px, y: 926px, w: 336px, h: 98px, pick: "7:0:3:1:0", on: true },
+        { it: root.pv-music4, x: 0px, y: 1024px, w: 448px, h: 98px, pick: "7:0:4:1:0", on: true },
+        { it: root.pv-timer, x: 0px, y: 1162px, w: 224px, h: 98px, pick: "9:0:2:1:1", on: true },
+        { it: root.pv-people, x: 224px, y: 1162px, w: 224px, h: 98px, pick: "10:0:2:1:1", on: true },
+        { it: root.pv-sensor, x: 0px, y: 1300px, w: 224px, h: 98px, pick: "8:0:2:1:3:0", on: root.has-sensor },
+        { it: root.pv-sensor1, x: 224px, y: 1300px, w: 112px, h: 98px, pick: "8:0:1:1:2:0", on: root.has-sensor },
+    ];
+    property <[{ t: string, x: length, y: length, on: bool }]> pick-titles: root.weather-only ? [
+        { t: "Weather now", x: 4px, y: 104px, on: true }, { t: "Forecast curve", x: 4px, y: 242px, on: true },
+        { t: "Hourly forecast", x: 4px, y: 380px, on: true }, { t: "Daily forecast", x: 4px, y: 518px, on: true },
+    ] : [
+        { t: "Clock", x: 4px, y: 202px, on: true }, { t: "Weather now", x: 4px, y: 340px, on: true }, { t: "Date", x: 228px, y: 340px, on: true },
+        { t: "Next event", x: 4px, y: 478px, on: true }, { t: "Forecast curve", x: 4px, y: 616px, on: true },
+        { t: "Hourly forecast", x: 4px, y: 754px, on: true }, { t: "Daily forecast", x: 4px, y: 892px, on: true },
+        { t: "Music", x: 4px, y: 1128px, on: true }, { t: "Timer", x: 4px, y: 1266px, on: true }, { t: "People", x: 228px, y: 1266px, on: true },
+        { t: "Sensor", x: 4px, y: 1404px, on: root.has-sensor },
+    ];
+    add-host := MenuHost {
+        open: root.editing && root.picker;
+        kind: 1;
+        need: 374px;
+        in-ms: 200ms; out-ms: 140ms;
+        close => { Act.act("home.add-close", ""); }
+        property <bool> tip;
+        // it grows up out of the + (from its centre, 200 ms ease-out) and shrinks back into it (140 ms)
+        property <float> u: self.open ? 1 - Math.pow(1 - Math.min(1, self.t-in / 200), 3) : 1 - Math.pow(Math.min(1, self.t-out / 140), 3);
         Rectangle {
-            x: parent.width - 52px; y: 18px; width: 36px; height: 36px; border-radius: 18px; background: #ffffff14;
-            Icon { text: "\u{F0156}"; font-size: 20px; color: #ffffffcc; }
-        }
-        Rectangle {
-            y: 64px; height: parent.height - 64px;
+            x: 16px; y: 48px; width: 448px; height: 374px;
+            transform-origin: { x: 34px - 16px, y: 452px - 48px };
+            transform-scale-x: 0.15 + 0.85 * add-host.u;
+            transform-scale-y: 0.15 + 0.85 * add-host.u;
+            opacity: add-host.open ? Math.min(1, add-host.u * 1.5) : add-host.u;
+            border-radius: 16px;
+            background: EditInk.glass;
+            border-width: 1px; border-color: #ffffff14;
+            drop-shadow-blur: 24px; drop-shadow-color: #00000070; drop-shadow-offset-y: 8px;
             clip: true;
-            Rectangle {
-                y: -root.picker-scroll;
-                height: 1240px;
-                HomeWidget { x: 16px; y: 0; width: 224px; height: 196px; it: root.pv-analog; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                HomeWidget { x: 240px; y: 0; width: 224px; height: 98px; it: root.pv-digital; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                HomeWidget { x: 240px; y: 98px; width: 224px; height: 98px; it: root.pv-flip; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                Text { x: 20px; y: 202px; text: "Clock"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                HomeWidget { x: 16px; y: 236px; width: 224px; height: 98px; it: root.pv-weather; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                HomeWidget { x: 240px; y: 236px; width: 224px; height: 98px; it: root.pv-date; data: root.data; clock: root.clock; event: root.event; halo: 0;
-                    weekday-long: root.weekday-long; day-month: root.day-month; year: root.year; week: root.week; }
-                Text { x: 20px; y: 340px; text: "Weather now"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                Text { x: 244px; y: 340px; text: "Date"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                HomeWidget { x: 16px; y: 374px; width: 448px; height: 98px; it: root.pv-event; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                Text { x: 20px; y: 478px; text: "Next event"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                HomeWidget { x: 16px; y: 512px; width: 448px; height: 98px; it: root.pv-curve; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                Text { x: 20px; y: 616px; text: "Forecast curve"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                HomeWidget { x: 16px; y: 650px; width: 448px; height: 98px; it: root.pv-hourly; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                Text { x: 20px; y: 754px; text: "Hourly forecast"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                HomeWidget { x: 16px; y: 788px; width: 448px; height: 98px; it: root.pv-daily; data: root.data; clock: root.clock; event: root.event; halo: 0; }
-                Text { x: 20px; y: 892px; text: "Daily forecast"; font-size: 15px; font-weight: 600; color: #ffffff; }
-                HomeWidget { x: 16px; y: 926px; width: 112px; height: 98px; it: root.pv-music1; data: root.data; clock: root.clock; event: root.event; halo: 0; music: root.music; }
-                HomeWidget { x: 128px; y: 926px; width: 336px; height: 98px; it: root.pv-music3; data: root.data; clock: root.clock; event: root.event; halo: 0; music: root.music; }
-                HomeWidget { x: 16px; y: 1024px; width: 448px; height: 98px; it: root.pv-music4; data: root.data; clock: root.clock; event: root.event; halo: 0; music: root.music; }
-                Text { x: 20px; y: 1128px; text: "Music"; font-size: 15px; font-weight: 600; color: #ffffff; }
+            TouchArea { }
+            Text { x: 18px; y: 14px; height: 40px; text: "Add widget"; font-size: 20px; font-weight: 600; color: #ffffff; vertical-alignment: center; }
+            GlassButton { x: parent.width - 98px; y: 14px; icon: "\u{F02FD}"; on: add-host.tip; clicked => { add-host.tip = !add-host.tip; } }
+            GlassButton { x: parent.width - 52px; y: 14px; icon: "\u{F0156}"; clicked => { Act.act("home.add-close", ""); } }
+            property <length> top: add-host.tip ? 100px : 62px;
+            if add-host.tip: Rectangle {
+                x: 12px; y: 60px; width: parent.width - 24px; height: 32px; border-radius: 10px; background: #ffffff14;
+                Text { x: 10px; width: parent.width - 20px; text: "Tap one, then choose its place"; font-size: 13px; color: #ffffffcc; vertical-alignment: center; wrap: word-wrap; }
+            }
+            Flickable {
+                y: parent.top; height: parent.height - parent.top;
+                viewport-height: root.pv-end;
+                viewport-width: self.width;
+                for p in root.picks: Rectangle {
+                    visible: p.on;
+                    x: p.x; y: p.y; width: p.w; height: p.h;
+                    HomeWidget {
+                        width: parent.width; height: parent.height;
+                        it: p.it; data: root.data; clock: root.clock; event: root.pv-event-data; halo: 0; music: root.pv-music-data; ink: #ffffff;
+                        seconds: root.seconds; music-pos: root.music-active ? root.music-pos : 74; live: add-host.open;
+                        weekday-long: root.weekday-long; day-month: root.day-month; year: root.year; week: root.week;
+                        sensor-demo: root.sensor-demo; timers: root.pv-timers; people: root.pv-people-list;
+                    }
+                    TouchArea { enabled: p.on; clicked => { Act.act("home.pick", p.pick); } }
+                }
+                for t in root.pick-titles: Text {
+                    visible: t.on;
+                    x: t.x; y: t.y;
+                    text: t.t; font-size: 15px; font-weight: 600; color: #ffffff;
+                }
             }
         }
-        // more below: a soft fade at the bottom edge
-        Rectangle { y: parent.height - 40px; height: 40px; background: @linear-gradient(180deg, #20202400 0%, #202024f7 100%); }
-        if root.info: InfoPop { w: 250px; x: parent.width - 16px - self.width; y: 60px; lines: ["Tap one, then choose its place"]; }
     }
 
-    // ------------------------------------------------------------------ widget settings (panel)
-    property <HomeItem> cur: root.settings >= 0 ? root.items[root.settings] : root.pv-digital;
-    // where a tap leads, per widget kind (decided by the design, not configurable)
-    pure function tap-text(kind: int) -> string {
-        kind == 0 ? "Opens timers and alarms" : kind == 1 ? "Opens the calendar at today"
-            : kind == 2 ? "Opens the weather details" : kind == 3 ? "Opens the event in the calendar"
-            : kind == 4 ? "Opens the hourly forecast" : kind == 5 ? "Opens the forecast at that hour"
-            : kind == 6 ? "Opens that day's forecast" : "Opens the music player"
-    }
-    property <int> prev-rows: min(2, root.cur.h);
-    property <length> sheet-y: 54px + root.prev-rows * root.ch + 4px;
-    if root.settings >= 0: GlowText { x: 0; y: 12px; width: root.width; height: 30px; horizontal-alignment: center; k: root.halo; text: root.cur.kind == 0 ? "Clock" : root.cur.kind == 1 ? "Date" : root.cur.kind == 2 ? "Weather now"
-        : root.cur.kind == 3 ? "Next event" : root.cur.kind == 4 ? "Forecast curve" : root.cur.kind == 5 ? "Hourly forecast" : root.cur.kind == 6 ? "Daily forecast" : "Music";
-        font-size: 20px; font-weight: 600; color: #ffffff; }
-    if root.settings >= 0: Rectangle {
-        x: root.width - 16px - 88px; y: 10px; width: 88px; height: 34px; border-radius: 17px; background: #F5F3EE;
-        Text { text: "Done"; font-size: 15px; font-weight: 600; color: #101114; horizontal-alignment: center; vertical-alignment: center; }
-    }
-    // live preview: the widget as it will look, updated with every change
-    if root.settings >= 0: HomeWidget {
-        x: (root.width - root.cur.w * root.cw) / 2; y: 54px; width: root.cur.w * root.cw; height: root.prev-rows * root.ch;
-        it: root.cur; data: root.data; clock: root.clock; event: root.event; halo: root.halo; music: root.music;
-        neon: root.neon && root.cur.neon; glow: root.glow;
-        weekday-long: root.weekday-long; day-month: root.day-month; year: root.year; week: root.week;
-    }
-    if root.settings >= 0: sheet := Rectangle {
-        // as tall as its rows need, never over the preview; scrolls when the rows don't fit
-        // (settings 54 px apart: 32 px chips + 22 px)
-        property <length> need: root.cur.kind == 7 ? 26px + (Math.mod(root.cur.opts, 2) == 1 ? 108px : 54px) + 32px + 24px : 26px + 216px + 32px + 24px;
-        x: 0; y: max(root.sheet-y, root.height - self.need); width: root.width; height: root.height - self.y;
-        border-top-left-radius: 24px; border-top-right-radius: 24px;
-        background: #1a1a1df7;
-        clip: true;
-        Flickable {
-            viewport-height: max(sheet.need, sheet.height);
-            Rectangle {
-                height: sheet.need;
-                property <length> r0: 26px;
-            // music: nothing to set but the tap (the colour comes from the cover)
-            property <bool> m-scroll: root.cur.kind == 7 && Math.mod(root.cur.opts, 2) == 1;
-            property <float> m-speed: root.cur.style > 0 ? root.cur.style : 3;
-            property <length> tap-y: root.cur.kind == 7 ? (self.m-scroll ? 108px : 54px) : 216px;
-            // music: long titles cut off or scroll, and how fast
-            if root.cur.kind == 7: HorizontalLayout {
-                x: 16px; y: parent.r0; height: 32px; alignment: start; spacing: 6px;
-                Segmented { width: 240px; options: ["Cut off", "Scroll"]; selected: Math.mod(root.cur.opts, 2) == 1 ? 1 : 0; }
+    // ------------------------------------------------------------------ a widget's settings (42.3)
+    // the widget stays lit in its cell above the dimmed page (the live preview); the card unfolds from its edge:
+    // under it when the widget is in the upper half, over it in the lower half, scrolling inside when its rows need more
+    property <HomeItem> cur: root.settings >= 0 && root.settings < root.items.length ? root.items[root.settings] : root.pv-digital;
+    property <length> cur-y: root.gy + root.cur.row * root.ch;
+    property <length> cur-h: root.cur.h * root.ch;
+    widget-host := MenuHost {
+        open: root.editing && root.settings >= 0;
+        kind: 1;
+        in-ms: 200ms; out-ms: 140ms;
+        close => { Act.act("home.settings-close", ""); }
+        property <length> room-under: 466px - (root.cur-y + root.cur-h + 8px);
+        property <length> room-over: root.cur-y - 8px - 48px;
+        need: wm.need;
+        property <length> least: Math.min(self.need, 160px);
+        // 0 under the widget, 1 over it, 2 over the widget itself (a widget that leaves no room on either side)
+        property <int> side: root.cur-y + root.cur-h / 2 < 240px
+            ? (self.room-under >= self.least ? 0 : self.room-over >= self.least ? 1 : 2)
+            : (self.room-over >= self.least ? 1 : self.room-under >= self.least ? 0 : 2);
+        property <length> card-h: Math.min(self.need, self.side == 0 ? self.room-under : self.side == 1 ? self.room-over : 418px);
+        property <length> card-y: self.side == 0 ? root.cur-y + root.cur-h + 8px : self.side == 1 ? root.cur-y - 8px - self.card-h : 466px - self.card-h;
+        // the card unfolds from the widget's edge (200 ms ease-out) and folds back (140 ms)
+        property <float> u: self.open ? 1 - Math.pow(1 - Math.min(1, self.t-in / 200), 3) : 1 - Math.pow(Math.min(1, self.t-out / 140), 3);
+        // the lit widget in its cell
+        Rectangle {
+            x: root.gx + root.cur.col * root.cw; y: root.cur-y; width: root.cur.w * root.cw; height: root.cur-h;
+            opacity: widget-host.open ? 1 : widget-host.u;
+            Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; border-radius: 16px;
+                drop-shadow-blur: 28px; drop-shadow-offset-y: 10px; drop-shadow-color: #0000008c; background: #00000001; }
+            HomeWidget {
+                width: parent.width; height: parent.height;
+                it: root.cur; data: root.data; clock: root.clock; event: root.event; halo: root.halo; music: root.music; ink: root.ink;
+                seconds: root.seconds; music-pos: root.music-pos; live: root.live;
+                neon: root.neon && root.cur.neon; glow: root.glow;
+                weekday-long: root.weekday-long; day-month: root.day-month; year: root.year; week: root.week;
+                sensors: root.sensors; timers: root.timers; people: root.people;
             }
-            if root.cur.kind == 7 && Math.mod(root.cur.opts, 2) == 1: msl := Rectangle {
-                x: 16px; y: parent.r0 + 54px; width: parent.width - 32px; height: 32px;
-                Icon { x: 0; width: 28px; height: parent.height; text: "\u{F0D3B}"; font-size: 22px; color: #ffffffb3; }
-                Icon { x: parent.width - 28px; width: 28px; height: parent.height; text: "\u{F0907}"; font-size: 22px; color: #ffffffb3; }
-                property <float> sp: root.cur.style > 0 ? root.cur.style : 3;
-                Rectangle {
-                    x: 44px; y: 14px; width: parent.width - 88px; height: 4px; border-radius: 2px; background: #ffffff33;
-                    Rectangle { x: 0; width: parent.width * (msl.sp - 1) / 4; border-radius: 2px; background: root.accent; }
-                    for i in 5: Rectangle { x: parent.width * i / 4 - 2px; y: -3px; width: 4px; height: 10px; border-radius: 2px; background: i <= msl.sp - 1 ? root.accent : #ffffff59; }
-                    Rectangle { x: parent.width * (msl.sp - 1) / 4 - 9px; y: -7px; width: 18px; height: 18px; border-radius: 9px; background: #ffffff; }
-                }
-            }
-            // Style (clock)
-            if root.cur.kind != 7: Rectangle {
-                x: 16px; y: parent.r0; width: parent.width - 16px; height: 32px; clip: true;
-                HorizontalLayout {
-                    alignment: start; spacing: 6px;
-                    Dropdown { width: 300px;
-                        options: [Words.line("ui.looks.home.6"), Words.line("ui.looks.home.7"), Words.line("ui.looks.home.8"), Words.line("ui.looks.home.9"),
-                            Words.line("ui.looks.home.10"), Words.line("ui.looks.home.11"), Words.line("ui.looks.home.12"), Words.line("ui.looks.home.13"),
-                            "Nixie", "LCD quartz", "Twin-bell"];
-                        selected: root.cur.style; }
-                }
-                Rectangle { x: parent.width - 56px; width: 56px; background: @linear-gradient(90deg, #1a1a1d00 0%, #1a1a1dff 85%); }
-            }
-            // Colour: eight swatches here, any colour in Home Assistant
-            for c[i] in (root.cur.kind == 7 ? [] : [#FF4A1C, #ff7a33, #ffc23d, #3ecf8e, #2ec4d6, #4c8dff, #a66cff, #f2f2f2]): Rectangle {
-                x: 16px + i * 42px; y: parent.r0 + 54px; width: 32px; height: 32px; border-radius: 16px;
-                border-width: c == root.cur.accent ? 2px : 0px; border-color: #ffffff;
-                Rectangle { x: 5px; y: 5px; width: 22px; height: 22px; border-radius: 11px; background: c; }
-            }
-            // Weight: each chip in its own weight
-            if root.cur.kind != 7: HorizontalLayout {
-                x: 16px; y: parent.r0 + 108px; height: 32px; width: parent.width - 32px;
-                alignment: start; spacing: 6px;
-                Segmented { options: ["Light", "Regular", "Semibold", "Bold"];
-                    selected: root.cur.weight <= 300 ? 0 : root.cur.weight <= 400 ? 1 : root.cur.weight <= 600 ? 2 : 3; }
-            }
-            // Show: what the widget adds next to the time
-            if root.cur.kind != 7: HorizontalLayout {
-                x: 16px; y: parent.r0 + 162px; height: 32px; width: parent.width - 32px;
-                alignment: start; spacing: 6px;
-                for cb[k] in ["Seconds", "Date", "Weather", "Event"]: HorizontalLayout { spacing: 8px; alignment: start;
-                    VerticalLayout { alignment: center; CheckBox { checked: Math.mod(Math.floor(root.cur.opts / Math.pow(2, k)), 2) == 1; } }
-                    Text { text: cb; font-size: 14px; color: #ffffff; vertical-alignment: center; } }
-            }
-            // Tap: on / off only; where it leads is fixed per widget (named in the info card)
-            Rectangle { x: 16px; y: parent.r0 + parent.tap-y - 4px; width: parent.width - 32px; height: 40px;
-                Text { x: 0; y: 0; width: parent.width - 160px; height: parent.height; text: "Opens on tap"; font-size: 16px; color: #ffffff; vertical-alignment: center; }
-                Toggle { x: parent.width - self.width; y: 4px; on: root.cur.tap; } }
-            InfoButton { x: parent.width - 16px - 56px - 44px; y: parent.r0 + parent.tap-y - 2px; on: root.info; }
-            if root.info: InfoPop {
-                w: 260px;
-                x: 16px; y: parent.r0 + parent.tap-y - 6px - self.height;
-                lines: [root.tap-text(root.cur.kind)];
-            }
-            }
+            Rectangle { x: 2px; y: 2px; width: parent.width - 4px; height: parent.height - 4px; border-radius: 16px; border-width: 2px; border-color: root.accent; }
+            TouchArea { }
         }
-        // grab handle (always): drag the sheet down to look behind it (the live preview / page updates);
-        // while held it can be pulled back up; flicked down it stays down with only this strip showing
-        Rectangle { x: (parent.width - 40px) / 2; y: 8px; width: 40px; height: 4px; border-radius: 2px; background: #ffffff40; }
-        // more below: a soft fade at the bottom edge
-        if sheet.need > sheet.height: Rectangle { y: parent.height - 36px; height: 36px; background: @linear-gradient(180deg, #1a1a1d00 0%, #1a1a1df7 100%); }
+        wm := WidgetMenu {
+            x: 16px; y: widget-host.card-y; width: 448px; height: widget-host.card-h;
+            transform-origin: { x: 224px, y: widget-host.side == 0 ? 0px : widget-host.card-h };
+            transform-scale-y: 0.1 + 0.9 * widget-host.u;
+            opacity: widget-host.open ? Math.min(1, widget-host.u * 2) : widget-host.u;
+            it: root.cur; index: root.settings;
+            weather-only: root.weather-only;
+            sensor-names: root.sensor-names; sensor-sel: root.sensor-sel;
+            layer-back: root.layer-back; layer-fwd: root.layer-fwd;
+        }
     }
 
     // ------------------------------------------------------------------ lock (panel editing allowed in HA)
     // long press -> this dialog; hold the lock until the ring is full -> edit mode.
     // The X or a tap anywhere outside the card closes it.
-    property <float> lp: max(0, min(1, root.lock-p));
-    if root.lock: Rectangle { background: #00000099; }
+    property <bool> holding: lock-ta.pressed && root.lock;
+    property <duration> hold-t0;
+    changed holding => { if root.holding { root.hold-t0 = animation-tick(); } }
+    // the ring fills clockwise in 1 s while the lock is held; let go early, it runs back (200 ms)
+    property <float> ring: root.holding ? Math.min(1, (animation-tick() - root.hold-t0) / 1000ms) : 0;
+    property <float> ring-k: root.ring;
+    animate ring-k { duration: root.holding ? 0ms : 200ms; easing: ease-out; }
+    Timer { interval: 1000ms; running: root.holding; triggered => { Act.act("home.unlock", ""); } }
+    property <float> lp: max(0, min(1, max(root.lock-p, root.ring-k)));
     if root.lock: Rectangle {
+        background: #00000099;
+        TouchArea { clicked => { Act.act("home.lock-close", ""); } }
+    }
+    Rectangle {
+        visible: root.lock;
         x: 40px; y: 122px; width: root.width - 80px; height: 130px + lock-texts.preferred-height + 26px; border-radius: 24px;
         background: #1e1e22f7; border-width: 1px; border-color: #ffffff17;
-        Rectangle {
-            x: parent.width - 50px; y: 14px; width: 36px; height: 36px; border-radius: 18px; background: #ffffff14;
-            Icon { text: "\u{F0156}"; font-size: 20px; color: #ffffffcc; }
-        }
+        TouchArea { }
+        GlassButton { x: parent.width - 50px; y: 14px; size: 36px; icon: "\u{F0156}"; clicked => { Act.act("home.lock-close", ""); } }
         Rectangle {
             x: (parent.width - 88px) / 2; y: 26px; width: 88px; height: 88px;
             Rectangle { border-radius: 44px; background: root.lp > 0 ? root.accent.with-alpha(0.14) : #ffffff10; border-width: 3px; border-color: #ffffff1f; }
@@ -1190,6 +1773,7 @@ export component HomeGrid inherits Rectangle {
                     + (44 + 42.5 * Math.sin(self.a * 1deg)) + " " + (44 - 42.5 * Math.cos(self.a * 1deg));
             }
             Icon { text: root.lp >= 1 ? "\u{F0FC6}" : "\u{F033E}"; font-size: 40px; color: root.lp > 0 ? root.accent.mix(#ffffff, 0.8) : #ffffff; }
+            lock-ta := TouchArea { x: -16px; y: -16px; width: 120px; height: 120px; }
         }
         lock-texts := VerticalLayout {
             x: 24px; y: 130px; width: parent.width - 48px; height: self.preferred-height;
@@ -1199,3 +1783,4 @@ export component HomeGrid inherits Rectangle {
         }
     }
 }
+
