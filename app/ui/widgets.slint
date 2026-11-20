@@ -697,8 +697,15 @@ export component Segmented inherits Rectangle {
     in property <color> tk-text: Theme.text;
     in property <color> tk-on-text: Theme.background;
     in property <color> tk-accent: Theme.accent;
+    in property <color> tk-pill: root.tk-text;              // the chosen pill (its label stays tk-on-text)
+    // the look's shape and letters: corners (-1: the control's own), font, size, weight, capitals
+    in property <length> tk-radius: -1px;
+    in property <string> tk-font;
+    in property <length> tk-font-size: 15px;
+    in property <int> tk-font-weight: 500;
+    in property <bool> tk-caps;
     height: 40px;
-    border-radius: 20px;
+    border-radius: root.tk-radius >= 0px ? root.tk-radius : 20px;
     background: root.tk-raised;
     property <int> n: Math.max(1, root.options.length);
     property <length> pad: 2px;
@@ -734,7 +741,7 @@ export component Segmented inherits Rectangle {
     property <length> pw: root.moving ? Math.max(0.6 * root.seg, root.pr - root.pl) : root.seg;
     property <length> px: root.moving ? (root.pl + root.pr) / 2 - root.pw / 2 : root.l1;
     property <length> phh: root.moving ? Math.max(0.8 * root.ph, Math.min(root.height - 2px, root.ph * Math.sqrt(root.seg / Math.max(1px, root.pw)))) : root.ph;
-    if root.selected >= 0: Rectangle { x: root.px; y: (root.height - root.phh) / 2; width: root.pw; height: root.phh; border-radius: self.height / 2; background: root.tk-text; }
+    if root.selected >= 0: Rectangle { x: root.px; y: (root.height - root.phh) / 2; width: root.pw; height: root.phh; border-radius: root.tk-radius >= 0px ? Math.max(0px, root.tk-radius - root.pad) : self.height / 2; background: root.tk-pill; }
     for o[i] in root.options: seg-item := Rectangle {
         x: root.pad + i * root.seg; y: 0; width: root.seg; height: root.height;
         // the labels change colour 70 ms after the tap, over 160 ms
@@ -744,7 +751,8 @@ export component Segmented inherits Rectangle {
         HorizontalLayout {
             alignment: center; spacing: 6px;
             if i < root.icons.length && root.icons[i] != "": Icon { text: root.icons[i]; font-size: 18px; color: root.tk-text.mix(root.tk-accent, 1 - seg-item.ck); vertical-alignment: center; }
-            Text { text: o; font-size: 15px; font-weight: 500; color: root.tk-text.mix(root.tk-on-text, 1 - seg-item.ck); vertical-alignment: center; overflow: elide; }
+            Text { text: root.tk-caps ? o.to-uppercase() : o; font-family: root.tk-font; font-size: root.tk-font-size; font-weight: root.tk-font-weight;
+                color: root.tk-text.mix(root.tk-on-text, 1 - seg-item.ck); vertical-alignment: center; overflow: elide; }
         }
         TouchArea { clicked => { root.picked(i); } }
     }
@@ -766,8 +774,14 @@ export component Dropdown inherits Rectangle {
     in property <color> tk-menu: Theme.surface-raised;
     in property <color> tk-pressed: Theme.surface-pressed;
     in property <color> tk-accent: Theme.accent;
+    // the look's shape and letters: corners (-1: the control's own), font, size, weight, capitals
+    in property <length> tk-radius: -1px;
+    in property <string> tk-font;
+    in property <length> tk-font-size: 15px;
+    in property <int> tk-font-weight: 500;
+    in property <bool> tk-caps;
     height: 48px;
-    border-radius: 14px;
+    border-radius: root.tk-radius >= 0px ? root.tk-radius : 14px;
     background: root.tk-raised;
     border-width: pop-open ? 1px : 0px;
     border-color: root.tk-accent.with-alpha(0.45);
@@ -775,8 +789,10 @@ export component Dropdown inherits Rectangle {
     // the menu opens upwards by itself when it would not fit under the field on the 480 px screen
     property <length> menu-h: Math.min(8, root.options.length) * 48px + 12px;
     property <bool> opens-up: root.up || root.absolute-position.y + root.height + 6px + root.menu-h > 480px;
-    Text { x: 16px; y: 0; width: parent.width - 52px; height: parent.height; text: root.selected >= 0 && root.selected < root.options.length ? root.options[root.selected] : root.placeholder;
-        font-size: 15px; font-weight: 500; color: root.selected >= 0 ? root.tk-text : root.tk-muted; vertical-alignment: center; overflow: elide; }
+    property <string> shown-text: root.selected >= 0 && root.selected < root.options.length ? root.options[root.selected] : root.placeholder;
+    Text { x: 16px; y: 0; width: parent.width - 52px; height: parent.height; text: root.tk-caps ? root.shown-text.to-uppercase() : root.shown-text;
+        font-family: root.tk-font; font-size: root.tk-font-size; font-weight: root.tk-font-weight; color: root.selected >= 0 ? root.tk-text : root.tk-muted;
+        vertical-alignment: center; overflow: elide; }
     Icon { x: parent.width - 36px; y: 0; width: 24px; height: parent.height; text: root.pop-open ? "\u{F0143}" : "\u{F0140}"; font-size: 22px; color: root.tk-muted; }
     TouchArea { clicked => { root.pop-open = true; menu.show(); } }
     menu := PopupWindow {
@@ -791,16 +807,17 @@ export component Dropdown inherits Rectangle {
             opacity: self.k;
             width: root.width;
             height: Math.min(8, root.options.length) * 48px + 12px;
-            border-radius: 14px; background: root.tk-menu; border-width: 1px; border-color: root.tk-line;
+            border-radius: root.tk-radius >= 0px ? root.tk-radius : 14px; background: root.tk-menu; border-width: 1px; border-color: root.tk-line;
             drop-shadow-blur: 16px; drop-shadow-color: #00000070;
             Flickable {
                 x: 6px; y: 6px; width: parent.width - 12px; height: parent.height - 12px;
                 content-height: root.options.length * 48px;
                 for o[i] in root.options: Rectangle {
-                    y: i * 48px; width: parent.width; height: 48px; border-radius: 10px;
+                    y: i * 48px; width: parent.width; height: 48px; border-radius: root.tk-radius >= 0px ? root.tk-radius : 10px;
                     background: row-ta.pressed ? root.tk-pressed : transparent;
                     if i == root.selected: Icon { x: 10px; y: 0; width: 22px; height: parent.height; text: "\u{F012C}"; font-size: 18px; color: root.tk-accent; }
-                    Text { x: 40px; y: 0; width: parent.width - 50px; height: parent.height; text: o; font-size: 15px; font-weight: i == root.selected ? 600 : 400;
+                    Text { x: 40px; y: 0; width: parent.width - 50px; height: parent.height; text: root.tk-caps ? o.to-uppercase() : o; font-family: root.tk-font;
+                        font-size: root.tk-font-size; font-weight: i == root.selected ? Math.max(600, root.tk-font-weight) : Math.min(400, root.tk-font-weight);
                         color: root.tk-text; vertical-alignment: center; overflow: elide; }
                     row-ta := TouchArea { clicked => { root.pop-open = false; menu.close(); root.picked(i); } }
                 }
@@ -857,17 +874,24 @@ export component TextButton inherits Rectangle {
     in property <color> tk-pressed: Theme.surface-pressed;
     in property <color> tk-text: Theme.text;
     in property <color> tk-on-text: Theme.background;
+    // the look's shape and letters: corners (-1: the control's own), font, size, weight, capitals
+    in property <length> tk-radius: -1px;
+    in property <string> tk-font;
+    in property <length> tk-font-size: 16px;
+    in property <int> tk-font-weight: 600;
+    in property <bool> tk-caps;
     height: 48px;
     property <float> sq: touch.pressed ? 0.96 : 1;
     animate sq { duration: touch.pressed ? 60ms : 180ms; easing: cubic-bezier(0.34, 1.6, 0.64, 1); }
     Rectangle {
         x: root.width * (1 - root.sq) / 2; y: root.height * (1 - root.sq) / 2; width: root.width * root.sq; height: root.height * root.sq;
-        border-radius: self.height / 2;
+        border-radius: root.tk-radius >= 0px ? root.tk-radius : self.height / 2;
         background: root.primary ? (touch.pressed ? root.tk-text.with-alpha(0.8) : root.tk-text) : (touch.pressed ? root.tk-pressed : root.tk-raised);
         Text {
-            text: root.text;
-            font-size: 16px;
-            font-weight: 600;
+            text: root.tk-caps ? root.text.to-uppercase() : root.text;
+            font-family: root.tk-font;
+            font-size: root.tk-font-size;
+            font-weight: root.tk-font-weight;
             color: root.primary ? root.tk-on-text : root.danger ? (Theme.dark ? #FF6A4D : #C7361B) : root.tint;
             horizontal-alignment: center;
             vertical-alignment: center;
