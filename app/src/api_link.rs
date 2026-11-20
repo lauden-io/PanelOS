@@ -180,12 +180,16 @@ fn noise_err(e: snow::Error) -> io::Error {
 impl Conn {
     /// Sets up a new connection: plaintext (only while the panel has no key)
     /// or the Noise handshake with the panel's key (all zeros while it has none).
-    pub fn accept(mut stream: TcpStream, name: &str, mac: &str) -> io::Result<Conn> {
+    pub fn accept(stream: TcpStream, name: &str, mac: &str) -> io::Result<Conn> {
+        Self::accept_with(stream, name, mac, load_key())
+    }
+
+    /// `accept` with a given key instead of the stored one.
+    fn accept_with(mut stream: TcpStream, name: &str, mac: &str, key: Option<Key>) -> io::Result<Conn> {
         stream.set_nodelay(true)?;
         stream.set_read_timeout(Some(IO_TIMEOUT))?;
         stream.set_write_timeout(Some(IO_TIMEOUT))?;
         let generation = key_generation();
-        let key = load_key();
         let mut first = [0u8; 1];
         if stream.peek(&mut first)? == 0 {
             return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "closed before the first frame"));
@@ -455,29 +459,29 @@ mod tests {
         assert_eq!(take_plain(&mut partial).unwrap(), None);
     }
 
-    #[test]
-    fn noise_handshake_matches_esphome() {
-        // Client side as aioesphomeapi does it, against Conn::accept.
+    /// A client as aioesphomeapi does it, with `client_key`, against the panel's side holding `server_key`: `None`
+    /// when the panel refused the handshake, otherwise whether the session counts as keyed.
+    fn noise_session(server_key: Option<Key>, client_key: Key) -> Option<bool> {
         use std::net::TcpListener;
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = listener.local_addr().unwrap();
         let server = std::thread::spawn(move || {
             let (s, _) = listener.accept().unwrap();
-            let mut conn = Conn::accept(s, "panel", "aabbccddeeff").unwrap();
+            let mut conn = Conn::accept_with(s, "panel", "aabbccddeeff", server_key).ok()?;
             conn.set_read_timeout(Duration::from_secs(5)).unwrap();
             loop {
                 if let Some((kind, payload)) = conn.take_frame().unwrap() {
                     assert_eq!(kind, 7);
                     assert_eq!(payload, Vec::<u8>::new());
                     conn.send(8, &()).unwrap();
-                    return conn.keyed;
+                    return Some(conn.keyed);
                 }
                 conn.read_some().unwrap();
             }
         });
         let mut c = TcpStream::connect(addr).unwrap();
         let mut hs = snow::Builder::new(NOISE_PARAMS.parse().unwrap())
-            .psk(0, &[0u8; 32])
+            .psk(0, &client_key)
             .prologue(b"NoiseAPIInit\x00\x00")
             .build_initiator()
             .unwrap();
@@ -491,7 +495,12 @@ mod tests {
         let hello = read_noise_frame(&mut c).unwrap();
         assert_eq!(hello, b"\x01panel\0aabbccddeeff\0");
         let reply = read_noise_frame(&mut c).unwrap();
-        assert_eq!(reply[0], 0);
+        if reply[0] != 0 {
+            // refused the way ESPHome does it (the client shows "invalid encryption key")
+            assert_eq!(&reply[1..], b"Handshake MAC failure");
+            assert_eq!(server.join().unwrap(), None);
+            return None;
+        }
         hs.read_message(&reply[1..], &mut msg).unwrap();
         let mut t = hs.into_transport_mode().unwrap();
         let mut cipher = [0u8; 64];
@@ -500,6 +509,16 @@ mod tests {
         let frame = read_noise_frame(&mut c).unwrap();
         let n = t.read_message(&frame, &mut cipher).unwrap();
         assert_eq!(&cipher[..n], &[0, 8, 0, 0]);
-        assert!(!server.join().unwrap());
+        server.join().unwrap()
+    }
+
+    #[test]
+    fn noise_handshake_matches_esphome() {
+        // without a key: the all-zero provisioning key
+        assert_eq!(noise_session(None, [0u8; 32]), Some(false));
+        // with a key: that key only
+        assert_eq!(noise_session(Some([7u8; 32]), [7u8; 32]), Some(true));
+        assert_eq!(noise_session(Some([7u8; 32]), [0u8; 32]), None);
+        assert_eq!(noise_session(Some([7u8; 32]), [8u8; 32]), None);
     }
 }
