@@ -3,7 +3,9 @@
 // notification window's card, grown out of its row). Its settings come from the quick shade's page row, in the look's
 // own menu (39): a brand card, a magnetic whiteboard, the pager's LCD menu, the TV's on-screen menu. Critical alerts
 // (smoke, CO, water) always take the whole screen in plain red, whatever the look, and keep sounding until someone holds
-// the button: the funky looks are for info and warnings only.
+// the button: the funky looks are for info and warnings only. The active status screens (and the critical alert once
+// it is held) stand above the notifications in every look, in their own colour: a tap opens the status screen again;
+// "Clear all" and Dismiss leave them (they go when their state ends).
 import { Theme, Act, Words, Clock } from "theme.slint";
 import { Icon, GlowText, Crawl, Dropdown, Segmented, TextButton, MenuHost, PageMenu } from "widgets.slint";
 
@@ -19,6 +21,21 @@ export struct InfoNote {
     actions: [string],     // up to three buttons, set in HA
     unread: bool,
     paper: image,          // fridge look: the note as the app draws it (post-it, handwriting, magnet, tilt)
+}
+
+// An active status screen (or the critical alert) on the notifications page, with the status's own words, picture and
+// colour.
+export struct InfoStatus {
+    id: string,            // the act's value for a tap ("info.status")
+    title: string,
+    message: string,       // its line
+    icon: string,          // MDI glyph, when no own pictogram is used
+    picto: image,          // own pictogram, 144 px, white
+    picto-small: image,    // the same at 24 px
+    has-picto: bool,
+    tint: color,
+    when: string,          // "since 18:27", "until 18:45"; a critical alert's place before it
+    critical: bool,        // the critical alert (red, held): shown, not opened
 }
 
 component LevelIcon inherits Rectangle {
@@ -41,6 +58,32 @@ component NoteRow inherits Rectangle {
     Text { x: 64px; y: 52px; width: parent.width - 80px; height: 14px; text: root.n.source; font-size: 11px; color: Theme.faint; vertical-alignment: center; overflow: elide; }
     Text { x: parent.width - 106px; y: 12px; width: 80px; height: 22px; text: root.n.when; font-size: 12px; color: Theme.faint; horizontal-alignment: right; vertical-alignment: center; }
     if root.n.unread: Rectangle { x: parent.width - 18px; y: 19px; width: 8px; height: 8px; border-radius: 4px; background: Theme.accent; }
+}
+
+// the list: an active status screen in its own colour, like its strip (the critical alert in red); the texts wrap and the
+// row grows with them. A tap opens the status screen again; the critical alert's row only shows it.
+component StatusRow inherits Rectangle {
+    in property <InfoStatus> s;
+    property <length> tw: root.width - 64px - (root.s.critical ? 16px : 48px);
+    property <bool> has-msg: root.s.message != "";
+    property <length> content-h: tt.preferred-height + (root.has-msg ? 2px + mt.preferred-height : 0px) + 2px + wt.preferred-height;
+    property <length> top: (root.height - root.content-h) / 2;
+    height: max(72px, root.content-h + 24px);
+    border-radius: 14px;
+    background: root.s.critical ? #8e0d14 : root.s.tint;
+    if ta.pressed && !root.s.critical: Rectangle { border-radius: parent.border-radius; background: #00000029; }
+    Rectangle { x: 12px; y: (parent.height - 40px) / 2; width: 40px; height: 40px; border-radius: 20px; background: #ffffff26;
+        if root.s.has-picto: Image { x: 8px; y: 8px; width: 24px; height: 24px; source: root.s.picto-small; }
+        if !root.s.has-picto: Icon { text: root.s.icon; font-size: 22px; color: #ffffff; } }
+    tt := Text { x: 64px; y: root.top; width: root.tw; height: self.preferred-height; text: root.s.title; font-size: 16px; font-weight: 700;
+        color: #ffffff; wrap: word-wrap; }
+    mt := Text { x: 64px; y: tt.y + tt.height + 2px; width: root.tw; height: root.has-msg ? self.preferred-height : 0px; visible: root.has-msg;
+        text: root.s.message; font-size: 13px; color: #ffffffe0; wrap: word-wrap; }
+    wt := Text { x: 64px; y: root.has-msg ? mt.y + mt.height + 2px : tt.y + tt.height + 2px; width: root.tw; height: self.preferred-height;
+        text: root.s.when; font-size: 11px; color: #ffffffb3; wrap: word-wrap; }
+    if !root.s.critical: Icon { x: parent.width - 40px; y: (parent.height - 28px) / 2; width: 28px; height: 28px; text: "\u{F0142}"; font-size: 24px;
+        color: #ffffffcc; }
+    ta := TouchArea { enabled: !root.s.critical; clicked => { Act.act("info.status", root.s.id); } }
 }
 
 // A clock time (minutes of the day; below 0: not known yet) in the panel's time format (32.3). Style 0 "6:45 PM",
@@ -119,6 +162,7 @@ component LcdText inherits Rectangle {
 
 component PagerLook inherits Rectangle {
     in property <[InfoNote]> notes;
+    in property <[InfoStatus]> statuses;   // the active status screens: the list's first rows ("■"); OK on one opens it
     in property <bool> open;               // one message on the screen (else the message list)
     in property <InfoNote> n;
     in property <int> index;
@@ -139,6 +183,8 @@ component PagerLook inherits Rectangle {
     callback menu-line(int);               // a tap on a menu line
     property <color> ink: #1e2a17;
     property <bool> lcd-free: !root.menu && !root.menu-blank;
+    property <int> ns: root.statuses.length;
+    property <int> rows: root.ns + root.notes.length;
     Image { x: 0; y: 0; width: 480px; height: 480px; source: root.body; }
     for k[i] in [{ x: 78px, a: "info.up" }, { x: 190px, a: "info.ok" }, { x: 302px, a: "info.down" }]: TouchArea {
         x: k.x; y: 332px; width: 100px; height: 56px;
@@ -146,7 +192,7 @@ component PagerLook inherits Rectangle {
             if root.menu { root.menu-key(i); } else if root.lcd-free { Act.act(k.a, ""); }
         }
     }
-    if root.notes.length > 0: Image { x: 390px; y: 64px; width: 44px; height: 44px; source: root.led; }
+    if root.rows > 0: Image { x: 390px; y: 64px; width: 44px; height: 44px; source: root.led; }
     if root.backlight: Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; background: #c8ff9a59; }
     if root.menu: Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; clip: true;
         if root.menu-t >= 20: LcdText { x: 12px; y: 6px; width: parent.width - 24px; height: 22px; text: "MENU"; }
@@ -178,11 +224,17 @@ component PagerLook inherits Rectangle {
         if root.open: LcdText { x: 12px; y: 66px; width: parent.width - 24px; height: 112px; text: root.n.message.to-uppercase(); weight: 400;
             valign: TextVerticalAlignment.top; wrap: TextWrap.word-wrap; }
         if !root.open: Rectangle {
-            for m[i] in root.notes: LcdText { x: 12px; y: 38px + (i - root.first-row) * 24px; width: parent.width - 40px; height: 22px;
-                visible: i >= root.first-row && i < root.first-row + 6; text: (i + 1) + (m.unread ? "*" : " ") + m.title.to-uppercase(); weight: m.unread ? 700 : 400; } }
-        if !root.open && root.notes.length > root.first-row + 6: LcdText { x: parent.width - 26px; y: 38px + 5 * 24px; width: 14px; height: 22px; text: "▼"; }
+            // a status screen's row: its words after "■" (the critical alert's after "!"; a long one in smaller letters, so it
+            // is never cut)
+            for st[i] in root.statuses: LcdText { x: 12px; y: 38px + (i - root.first-row) * 24px; width: parent.width - 40px; height: 22px;
+                visible: i >= root.first-row && i < root.first-row + 6; text: (st.critical ? "! " : "■ ") + st.title.to-uppercase();
+                size: st.title.character-count > 35 ? 12px : 14px; }
+            for m[i] in root.notes: LcdText { x: 12px; y: 38px + (i + root.ns - root.first-row) * 24px; width: parent.width - 40px; height: 22px;
+                visible: i + root.ns >= root.first-row && i + root.ns < root.first-row + 6; text: (i + 1) + (m.unread ? "*" : " ") + m.title.to-uppercase();
+                weight: m.unread ? 700 : 400; } }
+        if !root.open && root.rows > root.first-row + 6: LcdText { x: parent.width - 26px; y: 38px + 5 * 24px; width: 14px; height: 22px; text: "▼"; }
         if !root.open && root.first-row > 0: LcdText { x: parent.width - 26px; y: 38px; width: 14px; height: 22px; text: "▲"; }
-        if root.notes.length == 0: LcdText { x: 12px; y: 40px; width: parent.width - 24px; height: 130px; text: root.empty; size: 16px;
+        if root.rows == 0: LcdText { x: 12px; y: 40px; width: parent.width - 24px; height: 130px; text: root.empty; size: 16px;
             align: TextHorizontalAlignment.center; wrap: TextWrap.word-wrap; }
     }
 }
@@ -191,6 +243,7 @@ component PagerLook inherits Rectangle {
 component NewsLook inherits Rectangle {
     in property <bool> live: true;
     in property <[InfoNote]> notes;
+    in property <[InfoStatus]> statuses;   // the active status screens: "NOW" in their colour, above the headlines
     in property <bool> open;
     in property <InfoNote> n;
     in property <string> clock;
@@ -219,6 +272,21 @@ component NewsLook inherits Rectangle {
             Text { x: 14px; y: 0; width: parent.width - 28px; height: parent.height; text: root.n.message; font-size: 15px; font-weight: 500; color: #1d2a44;
                 vertical-alignment: center; wrap: word-wrap; overflow: elide; } } }
     if !root.open: VerticalLayout { x: 16px; y: 90px; width: 448px; spacing: 6px; alignment: start;
+        // a status screen: its picture and NOW in its own colour (the critical alert: ALERT in red), its words as the
+        // headline (two lines when long); a tap opens it
+        for st[i] in root.statuses: HorizontalLayout { height: max(36px, st-t.preferred-height + 8px); spacing: 0px;
+            Rectangle { width: 92px; background: st.critical ? #d8202a : st.tint;
+                if st.has-picto: Image { x: 8px; y: (parent.height - 18px) / 2; width: 18px; height: 18px; source: st.picto-small; }
+                if !st.has-picto: Icon { x: 6px; y: (parent.height - 22px) / 2; width: 22px; height: 22px; text: st.icon; font-size: 17px; color: #ffffff; }
+                Text { x: 32px; y: 0; height: parent.height; text: st.critical ? "ALERT" : "NOW"; font-size: 11px; font-weight: 900; color: #ffffff;
+                    vertical-alignment: center; }
+                TouchArea { enabled: !st.critical; clicked => { Act.act("info.status", st.id); } } }
+            Rectangle { horizontal-stretch: 1; background: #ffffff;
+                st-t := Text { x: 10px; y: (parent.height - self.height) / 2; width: parent.width - 92px; height: self.preferred-height; text: st.title.to-uppercase();
+                    font-size: 13px; font-weight: 800; color: #0b1f4d; wrap: word-wrap; }
+                Text { x: parent.width - 82px; y: 0; width: 74px; height: parent.height; text: st.when; font-size: 11px; color: #5b6680;
+                    horizontal-alignment: right; vertical-alignment: center; wrap: word-wrap; }
+                TouchArea { enabled: !st.critical; clicked => { Act.act("info.status", st.id); } } } }
         for m[i] in root.notes: nr := HorizontalLayout { height: 36px; spacing: 0px;
             property <bool> breaking: i == 0 && m.level == 1 && root.arrive-t < 1000;
             Rectangle { width: 92px; background: m.level == 1 ? #d8202a : #f2a51a; clip: true;
@@ -234,7 +302,7 @@ component NewsLook inherits Rectangle {
                 // the title types itself in: a white cover drawn back from the left
                 if nr.breaking: Rectangle { x: 10px + (parent.width - 102px) * root.typed; y: 0; width: (parent.width - 102px) * (1 - root.typed); height: parent.height;
                     background: #ffffff; } } }
-        if root.notes.length == 0: Rectangle { height: 120px;
+        if root.notes.length == 0 && root.statuses.length == 0: Rectangle { height: 120px;
             Text { width: parent.width; height: parent.height; text: root.empty; font-size: 22px; font-weight: 900; color: #ffffff; horizontal-alignment: center;
                 vertical-alignment: center; wrap: word-wrap; } } }
     // clock and ticker
@@ -247,8 +315,33 @@ component NewsLook inherits Rectangle {
 
 // ---------------------------------------------------------------- fridge look: notes on a fridge door
 // The app draws every note (a sticky note with handwriting, a magnet or tape, a small tilt); the page lays them out.
+// An active status screen hangs among them as a magnetic sign in its own colour (the critical alert in red).
+component FridgeSign inherits Rectangle {
+    in property <InfoStatus> s;
+    width: 200px; height: 168px;
+    Rectangle { x: 0; y: 8px; width: parent.width; height: parent.height - 12px; border-radius: 12px;
+        background: root.s.critical ? #b3141c : root.s.tint; border-width: 1px; border-color: #ffffff2e;
+        drop-shadow-blur: 10px; drop-shadow-offset-y: 5px; drop-shadow-color: #00000066;
+        if root.s.has-picto: Image { x: 14px; y: 18px; width: 36px; height: 36px; source: root.s.picto; }
+        if !root.s.has-picto: Icon { x: 14px; y: 18px; width: 36px; height: 36px; text: root.s.icon; font-size: 30px; color: #ffffff; }
+        Text { x: 58px; y: 18px; width: parent.width - 58px - 12px; height: 36px; text: root.s.when; font-size: 12px; color: #ffffffcc;
+            vertical-alignment: center; wrap: word-wrap; }
+        st := Text { x: 14px; y: 62px; width: parent.width - 28px; height: self.preferred-height; text: root.s.title; font-size: 17px; font-weight: 800;
+            color: #ffffff; wrap: word-wrap; }
+        // its line under it when it fits whole
+        sm := Text { x: 14px; y: st.y + st.height + 4px; width: parent.width - 28px; height: self.preferred-height; text: root.s.message; font-size: 13px;
+            color: #ffffffe0; wrap: word-wrap; visible: root.s.message != "" && self.y + self.height <= parent.height - 10px; }
+    }
+    // its magnet on the top edge (white, with the notes' highlight and shadow)
+    Rectangle { x: (parent.width - 22px) / 2 + 1px; y: 2px; width: 22px; height: 22px; border-radius: 11px; background: #00000046; }
+    Rectangle { x: (parent.width - 22px) / 2; y: 0; width: 22px; height: 22px; border-radius: 11px; background: #f4f4f2;
+        Rectangle { x: 5px; y: 3px; width: 6px; height: 6px; border-radius: 3px; background: #ffffff; } }
+    TouchArea { enabled: !root.s.critical; clicked => { Act.act("info.status", root.s.id); } }
+}
+
 component FridgeLook inherits Rectangle {
     in property <[InfoNote]> notes;
+    in property <[InfoStatus]> statuses;   // the active status screens: the first places on the door
     in property <bool> open;
     in property <InfoNote> n;
     in property <image> door;              // the fridge door, light or dark
@@ -258,14 +351,20 @@ component FridgeLook inherits Rectangle {
     property <float> slap-k: clamp(root.arrive-t / 200, 0, 1);
     property <float> slap: root.arrive-t < 200 ? 1 + 0.08 * (1 - root.slap-k) * Math.cos(root.slap-k * 540deg) : 1;
     Image { x: 0; y: 0; width: 480px; height: 480px; source: root.door; }
+    property <int> ns: root.statuses.length;
     if !root.open: Flickable { x: 0; y: 44px; width: root.width; height: root.height - 44px;
-        content-width: root.width; content-height: max(self.height, 12px + Math.ceil(root.notes.length / 2) * 196px + 30px); content-y: -root.scroll;
-        for m[i] in root.notes: Rectangle { x: (Math.mod(i, 2) == 0 ? 14px : 246px) + Math.mod(i * 13, 9) * 1px; y: 10px + Math.floor(i / 2) * 196px + Math.mod(i * 7, 11) * 1px;
+        content-width: root.width; content-height: max(self.height, 12px + Math.ceil((root.ns + root.notes.length) / 2) * 196px + 30px); content-y: -root.scroll;
+        for st[i] in root.statuses: FridgeSign { x: (Math.mod(i, 2) == 0 ? 14px : 246px) + Math.mod(i * 13, 9) * 1px; y: 10px + Math.floor(i / 2) * 196px + Math.mod(i * 7, 11) * 1px;
+            s: st; }
+        for m[i] in root.notes: Rectangle {
+            property <int> k: i + root.ns;
+            x: (Math.mod(self.k, 2) == 0 ? 14px : 246px) + Math.mod(self.k * 13, 9) * 1px; y: 10px + Math.floor(self.k / 2) * 196px + Math.mod(self.k * 7, 11) * 1px;
             width: m.paper.width * 1px; height: m.paper.height * 1px;
             transform-scale-x: i == 0 ? root.slap : 1; transform-scale-y: i == 0 ? root.slap : 1; transform-origin: { x: self.width / 2, y: self.height / 2 };
             Image { width: parent.width; height: parent.height; source: m.paper; }
             TouchArea { clicked => { Act.act("info.read", i); } } }
-        if root.notes.length == 0: Image { x: (root.width - root.empty.width * 1px) / 2; y: 80px; width: root.empty.width * 1px; height: root.empty.height * 1px; source: root.empty; } }
+        if root.notes.length == 0 && root.ns == 0: Image { x: (root.width - root.empty.width * 1px) / 2; y: 80px; width: root.empty.width * 1px;
+            height: root.empty.height * 1px; source: root.empty; } }
     if root.open: Rectangle { background: #00000059; TouchArea { clicked => { Act.act("info.close", ""); } } }
     if root.open: Image { x: (root.width - root.n.paper.width * 1px) / 2; y: 50px; width: root.n.paper.width * 1px; height: root.n.paper.height * 1px; source: root.n.paper;
         TouchArea { clicked => { Act.act("info.action", root.n.actions.length - 1); } } }
@@ -283,6 +382,7 @@ export component InfoPage inherits Rectangle {
     in property <bool> current;            // the page shown (no screensaver over it): its menus close when it goes
     in property <int> look;                // 0 plain, 1 fridge, 2 pager, 3 news
     in property <[InfoNote]> notes;
+    in property <[InfoStatus]> statuses;   // the active status screens (and the critical alert), above the notifications
     in property <length> scroll;
     in property <string> empty-title;      // the app picks these texts
     in property <string> empty-sub;
@@ -368,10 +468,11 @@ export component InfoPage inherits Rectangle {
         content-width: root.width; content-height: max(self.height, nl.preferred-height); content-y: -root.scroll;
         nl := VerticalLayout { x: 0; y: root.arrive-t < 220 ? -84px * Math.pow(1 - root.arrive-t / 220, 3) : 0px;
             width: root.width; padding-left: 16px; padding-right: 16px; padding-bottom: 40px; spacing: 8px; alignment: start;
+            for st[i] in root.statuses: StatusRow { s: st; }
             for m[i] in root.notes: NoteRow { n: m; opacity: i == 0 && root.arrive-t < 220 ? root.arrive-t / 220 : 1;
                 // the window grows out of this row (and shrinks back into it)
                 TouchArea { clicked => { root.read-y = parent.absolute-position.y - root.absolute-position.y; Act.act("info.read", i); } } }
-            if root.notes.length == 0: Rectangle { height: 230px;
+            if root.notes.length == 0 && root.statuses.length == 0: Rectangle { height: 230px;
                 Icon { x: 0; y: 30px; width: parent.width; height: 72px; text: "\u{F0A91}"; font-size: 64px; color: Theme.faint; }
                 Text { x: 0; y: 112px; width: parent.width; height: 30px; text: root.empty-title; font-size: 22px; font-weight: 600; color: Theme.text;
                     horizontal-alignment: center; overflow: elide; }
@@ -379,9 +480,10 @@ export component InfoPage inherits Rectangle {
                     horizontal-alignment: center; wrap: word-wrap; overflow: elide; } } } }
 
     // ---------------------------------------------------------------- looks
-    if root.look == 1: FridgeLook { notes: root.notes; open: root.card; n: root.card-note; door: root.fridge-door; empty: root.fridge-empty; scroll: root.scroll;
-        arrive-t: root.arrive-t; }
-    if root.look == 2: PagerLook { x: root.buzz; notes: root.notes; open: root.card; n: root.card-note; index: root.card-index; clock: NoteTime.text(root.minute, 1);
+    if root.look == 1: FridgeLook { notes: root.notes; statuses: root.statuses; open: root.card; n: root.card-note; door: root.fridge-door; empty: root.fridge-empty;
+        scroll: root.scroll; arrive-t: root.arrive-t; }
+    if root.look == 2: PagerLook { x: root.buzz; notes: root.notes; statuses: root.statuses; open: root.card; n: root.card-note; index: root.card-index;
+        clock: NoteTime.text(root.minute, 1);
         empty: root.pager-empty; body: root.pager-body; led: root.pager-led; first-row: root.pager-first; backlight: root.arrive-t < 1100;
         menu: root.lcd-want && !root.lcd-leaving; menu-blank: root.lcd-want && root.lcd-leaving; menu-t: root.lcd-t; menu-cur: root.lcd-cur;
         menu-values: [Words.line("ui.looks.info." + (root.lcd-pend >= 0 ? root.lcd-pend : root.look)).to-uppercase(), root.finish-names[root.finish],
@@ -392,7 +494,8 @@ export component InfoPage inherits Rectangle {
             else { root.lcd-ok(); }
         }
         menu-line(i) => { root.lcd-cur = i; root.lcd-ok(); } }
-    if root.look == 3: NewsLook { live: root.live; notes: root.notes; open: root.card; n: root.card-note; clock: NoteTime.text(root.minute, 2); ticker: root.news-ticker;
+    if root.look == 3: NewsLook { live: root.live; notes: root.notes; statuses: root.statuses; open: root.card; n: root.card-note; clock: NoteTime.text(root.minute, 2);
+        ticker: root.news-ticker;
         ticker-epoch: root.news-epoch; empty: root.news-empty; arrive-t: root.arrive-t; }
 
     // ---------------------------------------------------------------- 39 plain: a tapped row opens the notification window

@@ -6,6 +6,9 @@
 //! pager's buttons scroll and open. New ones pop up in the window (spec 30),
 //! several in one window ("i of n"). The page's settings menu (39) sets the
 //! look, the time format and the pager's finish (the integration's page option).
+//! The active status screens and the critical alert stand above the
+//! notifications in every look (`alerts.rs` keeps their rows); "Clear all" and
+//! Dismiss leave them, a tap on a status screen opens it again.
 
 use std::collections::HashMap;
 
@@ -506,7 +509,8 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
             ui.set_info_card(false);
         }
     }
-    let first = FIRST.with(|f| f.get()).min(list.len().saturating_sub(6));
+    // the pager's list: the status screens' rows, then the notifications
+    let first = FIRST.with(|f| f.get()).min(pager_rows(slint::Model::row_count(&ui.get_info_statuses()), list.len()).saturating_sub(6));
     FIRST.with(|f| f.set(first));
     ui.set_info_pager_first(first as i32);
     if look == 1 {
@@ -556,6 +560,40 @@ pub fn refresh(ui: &AppWindow, _s: &mut crate::UiState) {
     }
     if let Some(m) = crate::pages::update_rows(&ui.get_info_notes(), rows) {
         ui.set_info_notes(m);
+    }
+}
+
+/// The pager's rows: the active status screens' first, then the notifications.
+fn pager_rows(statuses: usize, notes: usize) -> usize {
+    statuses + notes
+}
+
+/// What the pager's OK opens from its list (its first row shown): a status screen (its index in the active ones) or a
+/// notification (its index in the list).
+#[derive(Debug, PartialEq)]
+enum PagerRow {
+    Status(usize),
+    Note(usize),
+    None,
+}
+
+fn pager_row(first: usize, statuses: usize, notes: usize) -> PagerRow {
+    if first < statuses {
+        PagerRow::Status(first)
+    } else if first - statuses < notes {
+        PagerRow::Note(first - statuses)
+    } else {
+        PagerRow::None
+    }
+}
+
+/// The active status screens' rows came or went (`alerts.rs`): the pager's first row stays within its list.
+pub fn rows_changed(ui: &AppWindow, statuses: usize) {
+    let notes = NOTES.with(|n| n.borrow().len());
+    let first = FIRST.with(|f| f.get()).min(pager_rows(statuses, notes).saturating_sub(6));
+    FIRST.with(|f| f.set(first));
+    if ui.get_info_pager_first() != first as i32 {
+        ui.set_info_pager_first(first as i32);
     }
 }
 
@@ -636,8 +674,24 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         },
         "info.ok" => match open {
             Some(_) => open_note(None),
-            None => open_note(list.get(FIRST.with(|f| f.get())).map(|(id, _)| id.clone())),
+            // the top row: a status screen opens again, a notification opens
+            None => {
+                let active = crate::alerts::listed_ids();
+                match pager_row(FIRST.with(|f| f.get()), active.len(), list.len()) {
+                    PagerRow::Status(k) => {
+                        crate::alerts::open(ui, &active[k]);
+                        return;
+                    }
+                    PagerRow::Note(k) => open_note(list.get(k).map(|(id, _)| id.clone())),
+                    PagerRow::None => {}
+                }
+            }
         },
+        // an active status screen on the list: it opens again (a critical alert's row is only shown)
+        "info.status" => {
+            crate::alerts::open(ui, value);
+            return;
+        }
         // the shade's rows (29.5): a swipe dismisses one, a tap opens it in its window
         "info.dismiss" => {
             if let Some((id, note)) = list.get(n) {
@@ -680,6 +734,18 @@ mod tests {
         assert_eq!(finish_index("purple"), 1);
         assert_eq!(finish_index("offwhite"), 3);
         assert_eq!(finish_index("gold"), 0);
+    }
+
+    #[test]
+    fn pager_rows_start_with_the_status_screens() {
+        assert_eq!(pager_rows(2, 3), 5);
+        assert_eq!(pager_row(0, 2, 3), PagerRow::Status(0));
+        assert_eq!(pager_row(1, 2, 3), PagerRow::Status(1));
+        assert_eq!(pager_row(2, 2, 3), PagerRow::Note(0));
+        assert_eq!(pager_row(4, 2, 3), PagerRow::Note(2));
+        assert_eq!(pager_row(5, 2, 3), PagerRow::None);
+        assert_eq!(pager_row(0, 0, 0), PagerRow::None);
+        assert_eq!(pager_row(0, 0, 1), PagerRow::Note(0));
     }
 
     #[test]
