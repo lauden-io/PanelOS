@@ -49,6 +49,8 @@ struct Shared {
     skip: Vec<String>,
     /// Page size, percent.
     zoom: u32,
+    /// The time zone rule the running helper started with.
+    tz: String,
 }
 
 pub struct WebView {
@@ -194,6 +196,17 @@ impl WebView {
         }
     }
 
+    /// The helper takes the time zone when it starts: after a change it is started again (the page loads again).
+    pub fn follow_time_zone(&self) {
+        let s = self.shared.lock().unwrap();
+        if s.tz != crate::timezone::rule() {
+            if let Some(stream) = s.stream.as_ref() {
+                eprintln!("nspanel-app: web view: starting again in the new time zone");
+                let _ = stream.shutdown(std::net::Shutdown::Both);
+            }
+        }
+    }
+
     /// Development: a raw line for the helper (LOAD, SCROLLFIND, SCROLLTEST).
     pub fn dev(&self, line: &str) {
         self.send(line);
@@ -210,6 +223,8 @@ impl WebView {
         let _ = std::fs::copy("/etc/resolv.conf", format!("{BUNDLE_ROOT}/tmp/resolv.conf"));
         let (ours, theirs) = UnixStream::pair()?;
         let child_fd = theirs.as_raw_fd();
+        let tz = crate::timezone::rule();
+        self.shared.lock().unwrap().tz = tz.clone();
         let mut cmd = Command::new("/usr/sbin/chroot");
         cmd.args([BUNDLE_ROOT, HELPER, "--fd", "3", "--size", &format!("{WIDTH}x{HEIGHT}"), "--data", "/data"])
             .env_clear()
@@ -217,7 +232,7 @@ impl WebView {
             .env("HOME", "/data")
             .env("XDG_RUNTIME_DIR", "/tmp")
             .env("XDG_CACHE_HOME", "/data/cache")
-            .env("TZ", std::env::var("TZ").unwrap_or_default())
+            .env("TZ", tz)
             .stdin(Stdio::null());
         // Development aid: WebKit's own switches (WEBKIT_*) from the app's environment.
         for (key, value) in std::env::vars().filter(|(k, _)| k.starts_with("WEBKIT_")) {
@@ -280,6 +295,10 @@ impl WebView {
             writeln!(writer, "VISIBLE {}", s.visible as i32)?;
             writeln!(writer, "DIRECT {}", s.direct as i32)?;
             s.stream = Some(writer);
+            // the time zone changed while the helper started: it starts again in the new one
+            if s.tz != crate::timezone::rule() {
+                return Err(std::io::Error::other("the time zone changed"));
+            }
         }
 
         let mut reader = BufReader::new(stream);

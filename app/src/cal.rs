@@ -124,6 +124,13 @@ static STARTED: AtomicBool = AtomicBool::new(false);
 /// Read again at once (after an edit or a delete).
 static REFETCH: AtomicBool = AtomicBool::new(false);
 
+/// A new time zone: the events read again (the six weeks asked for and the all-day events' days are local dates) and
+/// every view made again.
+pub fn time_zone_changed() {
+    REFETCH.store(true, Ordering::SeqCst);
+    LAST.with(|l| l.borrow_mut().clear());
+}
+
 /// Local midnight of the day of `t` (epoch seconds).
 fn midnight(t: i64) -> i64 {
     // SAFETY: localtime_r / mktime on local values.
