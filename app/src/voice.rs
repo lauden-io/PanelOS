@@ -1357,8 +1357,9 @@ pub fn spawn(
                                     }
                                     if ringing && crate::stt::is_only_stop(&text) {
                                         // A timer rang up during the run and the run's whole sentence is a stop
-                                        // phrase: it stops the ring and the run (nothing for the assistant). Any
-                                        // other sentence, however short, is a command and goes on to the assistant.
+                                        // phrase (the stop words of the check over the ring, a few small words): it
+                                        // stops the ring and the run (nothing for the assistant). Any other
+                                        // sentence, however short, goes on to the assistant.
                                         eprintln!("nspanel-app: voice: '{text}' while the timer rings -> stop");
                                         control.ringing.store(false, Ordering::SeqCst);
                                         let _ = to_api.send(ToApi::Stop);

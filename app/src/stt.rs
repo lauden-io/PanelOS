@@ -67,11 +67,17 @@ const STOP_PAIRS: &[(&str, &str)] = &[
     ("turn", "off"),
     ("shut", "up"),
 ];
-/// Small words that may stand around a stop word in a voice run's stop phrase ("állj már", "stop the timer").
+/// Small words that may stand around a stop word in a voice run's stop phrase ("állj már", "állj meg", "elég legyen",
+/// "stop the timer", "that's enough").
 const STOP_FILLERS: &[&str] = &[
-    "már", "most", "kérlek", "légyszi", "a", "az", "időzítő", "időzítőt", "ébresztő", "ébresztőt", "please", "now", "it", "the", "timer",
-    "alarm",
+    "már", "most", "kérlek", "légyszi", "meg", "le", "legyen", "oké", "ok", "okay", "a", "az", "időzítő", "időzítőt", "ébresztő", "ébresztőt",
+    "please", "now", "it", "that", "s", "the", "timer", "alarm",
 ];
+
+/// A stop word as `stops_ring` takes it: a listed one, or a word starting with "állj", "stop" or "sztop".
+fn stop_word(w: &str) -> bool {
+    STOP_WORDS.contains(&w) || w.starts_with("állj") || w.starts_with("stop") || w.starts_with("sztop")
+}
 
 fn words_of(text: &str) -> Vec<String> {
     let clean: String = text.to_lowercase().chars().map(|c| if c.is_alphanumeric() { c } else { ' ' }).collect();
@@ -88,9 +94,10 @@ pub fn is_stop(text: &str) -> bool {
     words.iter().any(|w| STOP_WORDS.contains(&w.as_str())) || words.windows(2).any(|p| STOP_PAIRS.contains(&(p[0].as_str(), p[1].as_str())))
 }
 
-/// A voice run's whole transcript is a stop phrase: stop words or a stop pair, with at most a few small words around
-/// them, nothing else (at most five words). A command that only contains one ("kapcsold ki a lámpát", "turn off the
-/// light") is not: it goes to the assistant even while a timer rings.
+/// A voice run's whole transcript is a stop phrase: the stop words of `stops_ring` (the listed ones and the words
+/// starting with "állj", "stop" or "sztop") or a stop pair, with at most a few small words around them, nothing else
+/// (at most five words). A command that only contains one ("kapcsold ki a lámpát", "turn off the light") is not: it
+/// goes to the assistant even while a timer rings, and so does any other short text ("nem", "köszönöm").
 pub fn is_only_stop(text: &str) -> bool {
     let words = words_of(text);
     if words.is_empty() || words.len() > 5 {
@@ -98,7 +105,7 @@ pub fn is_only_stop(text: &str) -> bool {
     }
     let mut stop = vec![false; words.len()];
     for (i, w) in words.iter().enumerate() {
-        stop[i] = STOP_WORDS.contains(&w.as_str());
+        stop[i] = stop_word(w);
     }
     for i in 1..words.len() {
         if STOP_PAIRS.contains(&(words[i - 1].as_str(), words[i].as_str())) {
@@ -133,6 +140,31 @@ mod tests {
         assert!(!is_only_stop("Stop the music."));
         assert!(!is_only_stop("Indíts egy öt perces időzítőt."));
         assert!(!is_only_stop("A"));
+    }
+
+    #[test]
+    fn run_end_takes_the_ring_words() {
+        // a stop phrase that stops the ring over it stops it at the end of a voice run too
+        for t in ["Állj meg!", "Állj le!", "Elég legyen!", "Csend legyen!", "Oké, stop.", "Stopp!", "Álljuk meg.", "Sztop!", "That's enough."] {
+            assert!(stops_ring(t), "{t}");
+            assert!(is_only_stop(t), "{t}");
+        }
+        // anything else goes to the assistant: a short answer, a command with a stop pair or a stop word in it
+        for t in [
+            "Nem.",
+            "Igen.",
+            "Szia.",
+            "Köszönöm.",
+            "Elég jó.",
+            "Kapcsold ki a lámpát.",
+            "Állítsd le a zenét.",
+            "Turn off the light.",
+            "Indítsd el a stoppert.",
+            "Állj meg a kapuban.",
+            "Mennyi az idő?",
+        ] {
+            assert!(!is_only_stop(t), "{t}");
+        }
     }
 
     #[test]
