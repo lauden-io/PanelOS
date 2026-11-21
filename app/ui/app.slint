@@ -1575,7 +1575,7 @@ export component AppWindow inherits Window {
         root.p-from = from; root.p-to = to; root.p-t0 = animation-tick(); root.p-anim = true;
         if to == 0 { root.act("shade.close", ""); } else { root.shade-step = to; if root.set-view == 0 { root.act("shade.open", ""); } }
     }
-    property <float> shade-pos: root.shade-pulling ? root.p-of-pull(root.shade-pull)
+    out property <float> shade-pos: root.shade-pulling ? root.p-of-pull(root.shade-pull)
         : root.shade-moving ? root.p-of-move(root.shade-from, root.shade-d)
         : root.p-anim ? root.p-from + (root.p-to - root.p-from) * Jelly.edge((animation-tick() - root.p-t0) / 1ms, 60, 320)
         : root.p-rest;
@@ -1584,29 +1584,30 @@ export component AppWindow inherits Window {
         height: 56px;
         enabled: root.web-shown;
         handle-swipe-down: !root.screensaver-on && root.set-view == 0;
-        moved => {
-            if !root.shade-pulling {
-                root.act("shade.peek", "");
-                root.pull-t = animation-tick();
-                root.pull-last = 0px;
-                root.pull-v = 0;
-            }
-            root.shade-pulling = true;
-            root.shade-pull = self.current-position.y - self.pressed-position.y;
-            let dt = (animation-tick() - root.pull-t) / 1ms;
-            if dt >= 16 {
-                root.pull-v = root.pull-v * 0.4 + 0.6 * ((root.shade-pull - root.pull-last) / 1px) / dt;
-                root.pull-last = root.shade-pull;
-                root.pull-t = animation-tick();
-            }
-        }
-        swiped => {
-            let p = root.p-of-pull(self.current-position.y - self.pressed-position.y);
+        moved => { root.shade-move(self.current-position.y - self.pressed-position.y); }
+        swiped => { root.shade-release(self.current-position.y - self.pressed-position.y); }
+        cancelled => { root.shade-pulling = false; root.p-go(root.p-of-pull(root.shade-pull), 0); }
+    }
+    // a pull or a drag of the shade whose release never reached it (a switch between the dashboard and the pages took
+    // its handler away, the touch went to the other side, a second finger called it off): it settles as if let go, at
+    // once on the switch, else a moment after the last finger lifted; while it hung on, it covered everything
+    in property <bool> finger-down;          // a one-finger press under way (the platform tells after every touch)
+    function shade-settle() {
+        if root.shade-pulling {
             root.shade-pulling = false;
-            // past 1.5 straight to the second step; from 40 % (or a flick down) the first; else it closes
-            root.p-go(p, p >= 1.5 ? 2 : (p >= 0.4 || root.pull-v > 0.5) ? 1 : 0);
+            root.p-go(root.p-of-pull(root.shade-pull), 0);
         }
-        cancelled => { root.shade-pulling = false; }
+        if root.shade-moving {
+            root.shade-moving = false;
+            root.p-go(root.p-of-move(root.shade-from, root.shade-d), root.shade-from);
+            root.shade-d = 0px;
+        }
+    }
+    changed web-shown => { root.shade-settle(); }
+    Timer {
+        interval: 250ms;
+        running: (root.shade-pulling || root.shade-moving) && !root.finger-down;
+        triggered => { root.shade-settle(); }
     }
 
     // the theme switch: every colour of the palette eases between light and dark

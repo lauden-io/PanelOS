@@ -11,6 +11,8 @@ const EV_SYN: u16 = 0x00;
 const EV_KEY: u16 = 0x01;
 const EV_ABS: u16 = 0x03;
 const SYN_REPORT: u16 = 0x00;
+/// The kernel's event buffer overflowed: everything up to the next SYN_REPORT is incomplete.
+const SYN_DROPPED: u16 = 0x03;
 const BTN_TOUCH: u16 = 0x14a;
 const ABS_X: u16 = 0x00;
 const ABS_Y: u16 = 0x01;
@@ -119,7 +121,20 @@ pub struct Touch {
     slots: [Slot; SLOTS],
     slot: usize,
     mt_moved: bool,
+    /// Events were dropped: skip to the next SYN_REPORT, then take the touch state again from the device.
+    dropping: bool,
     frames: Frames,
+}
+
+/// The contacts down in slot order. With no finger on the glass (BTN_TOUCH 0) every slot is empty, whatever a lost
+/// "lifted" left in it: one stale contact would make every later one-finger touch a two-finger gesture.
+fn live_contacts(slots: &mut [Slot], down: bool) -> Vec<(i32, f32, f32)> {
+    if !down {
+        for s in slots.iter_mut() {
+            s.id = -1;
+        }
+    }
+    slots.iter().filter(|s| s.id >= 0).map(|s| (s.id, s.x as f32, s.y as f32)).collect()
 }
 
 impl Touch {
@@ -155,6 +170,7 @@ impl Touch {
                 slots: [Slot { id: -1, x: 0, y: 0 }; SLOTS],
                 slot: 0,
                 mt_moved: false,
+                dropping: false,
                 frames: Frames::default(),
             });
         }
@@ -163,6 +179,20 @@ impl Touch {
 
     pub fn fd(&self) -> RawFd {
         self.fd
+    }
+
+    /// Whether a finger is on the glass now, asked from the device (EVIOCGKEY); None if the ioctl fails.
+    fn touching_now(&self) -> Option<bool> {
+        let mut keys = [0u8; 96]; // KEY_MAX 0x2ff
+        // _IOC(_IOC_READ, 'E', 0x18, len)
+        let req = (2u32 << 30) | ((keys.len() as u32) << 16) | (0x45 << 8) | 0x18;
+        // SAFETY: the kernel writes at most `keys.len()` bytes into the buffer.
+        let r = unsafe { libc::ioctl(self.fd, req as _, keys.as_mut_ptr()) };
+        if r < 0 {
+            return None;
+        }
+        let bit = BTN_TOUCH as usize;
+        Some(keys[bit / 8] & (1 << (bit % 8)) != 0)
     }
 }
 
@@ -189,6 +219,24 @@ impl Touch {
             for chunk in buf[..n as usize].chunks_exact(size) {
                 // SAFETY: the kernel writes whole input_event structs.
                 let ev = unsafe { std::ptr::read_unaligned(chunk.as_ptr().cast::<InputEvent>()) };
+                if self.dropping {
+                    // the report the overflow cut is incomplete: no contact is trusted after it (a finger still down
+                    // stays out of the gesture count until it lifts), the touch state comes from the device
+                    if (ev.kind, ev.code) == (EV_SYN, SYN_REPORT) {
+                        self.dropping = false;
+                        for s in self.slots.iter_mut() {
+                            s.id = -1;
+                        }
+                        if let Some(t) = self.touching_now() {
+                            self.down = t;
+                        }
+                        let contacts = live_contacts(&mut self.slots, self.down);
+                        out.extend(self.frames.report(self.down, self.x as f32, self.y as f32, false, &contacts, true));
+                        self.moved = false;
+                        self.mt_moved = false;
+                    }
+                    continue;
+                }
                 match (ev.kind, ev.code) {
                     (EV_ABS, ABS_X) => {
                         self.x = ev.value;
@@ -212,9 +260,12 @@ impl Touch {
                         self.mt_moved = true;
                     }
                     (EV_KEY, BTN_TOUCH) => self.down = ev.value != 0,
+                    (EV_SYN, SYN_DROPPED) => {
+                        eprintln!("nspanel-app: touch: events dropped by the kernel, state read again");
+                        self.dropping = true;
+                    }
                     (EV_SYN, SYN_REPORT) => {
-                        let contacts: Vec<(i32, f32, f32)> =
-                            self.slots.iter().filter(|s| s.id >= 0).map(|s| (s.id, s.x as f32, s.y as f32)).collect();
+                        let contacts = live_contacts(&mut self.slots, self.down);
                         out.extend(self.frames.report(self.down, self.x as f32, self.y as f32, self.moved, &contacts, self.mt_moved));
                         self.moved = false;
                         self.mt_moved = false;
@@ -271,6 +322,21 @@ mod tests {
         // both lift in one report
         assert_eq!(f.report(false, 10.0, 10.0, false, &[], true), vec![TouchEvent::TwoUp]);
         assert_eq!(f.report(true, 30.0, 30.0, true, &[(3, 30.0, 30.0)], true), vec![TouchEvent::Down(30.0, 30.0)]);
+    }
+
+    #[test]
+    fn a_lost_lift_does_not_stick() {
+        // slot 1 never got its "lifted" (dropped by the kernel); the finger of slot 0 lifts
+        let mut slots = [Slot { id: -1, x: 0, y: 0 }; SLOTS];
+        slots[1] = Slot { id: 7, x: 5, y: 5 };
+        let mut f = Frames::default();
+        assert_eq!(live_contacts(&mut slots, false), vec![]);
+        f.report(false, 0.0, 0.0, false, &[], true);
+        // the next touch has one contact again: a plain tap, not a gesture
+        slots[0] = Slot { id: 8, x: 40, y: 50 };
+        let c = live_contacts(&mut slots, true);
+        assert_eq!(c, vec![(8, 40.0, 50.0)]);
+        assert_eq!(f.report(true, 40.0, 50.0, true, &c, true), vec![TouchEvent::Down(40.0, 50.0)]);
     }
 
     #[test]

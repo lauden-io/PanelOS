@@ -55,6 +55,15 @@ thread_local! {
     static WEB_DIRECT: std::cell::RefCell<Option<(WebDirect, bool)>> = const { std::cell::RefCell::new(None) };
     /// Waiting for a picture of the screen (width, height, RGB).
     static SCREEN_REQUESTS: std::cell::RefCell<Vec<ScreenSink>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// Told after every touch whether a one-finger press is under way (see `on_press`).
+    static PRESS: std::cell::RefCell<Option<Box<dyn Fn(bool)>>> = const { std::cell::RefCell::new(None) };
+}
+
+/// UI thread: `f` is told after every touch whether a one-finger press is under way in the UI (false after a lift and
+/// once a second finger turns the touch into a gesture), so the UI can settle what a release that never reached it
+/// left half done.
+pub fn on_press(f: Box<dyn Fn(bool)>) {
+    PRESS.with(|p| *p.borrow_mut() = Some(f));
 }
 
 /// Web helper (any thread): shared buffer `i` holds a new frame. A frame
@@ -358,6 +367,7 @@ impl PanelPlatform {
             },
             TouchEvent::TwoDown(..) | TouchEvent::TwoMove(..) | TouchEvent::TwoUp => {
                 self.dispatch_two(event);
+                PRESS.with(|p| p.borrow().as_ref().map(|f| f(false)));
                 return;
             }
         };
@@ -365,6 +375,8 @@ impl PanelPlatform {
         if let TouchEvent::Up(..) = event {
             self.window.dispatch_event(WindowEvent::PointerExited);
         }
+        let pressed = matches!(event, TouchEvent::Down(..) | TouchEvent::Move(..));
+        PRESS.with(|p| p.borrow().as_ref().map(|f| f(pressed)));
     }
 
     /// Two fingers: the first finger's press lets go (it taps and drags nothing), and once the fingers have moved

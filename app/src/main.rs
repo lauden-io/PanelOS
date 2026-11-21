@@ -2949,6 +2949,9 @@ fn cover_web(ui: &AppWindow) {
 
 /// The dashboard on screen or not; coming on screen, the loading screen covers it first (see `cover_web`).
 fn set_dashboard(ui: &AppWindow, on: bool) {
+    if on != ui.get_dashboard_mode() {
+        eprintln!("nspanel-app: display: {}", if on { "dashboard" } else { "pages" });
+    }
     if on && !ui.get_dashboard_mode() && ui.get_web_active() {
         cover_web(ui);
     }
@@ -4355,6 +4358,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = AppWindow::new()?;
     UI.with(|u| *u.borrow_mut() = Some(ui.as_weak()));
+    {
+        let weak = ui.as_weak();
+        platform::on_press(Box::new(move |pressed| {
+            if let Some(ui) = weak.upgrade() {
+                ui.set_finger_down(pressed);
+            }
+        }));
+    }
     // the packed word lists the UI files ask for (before anything is drawn)
     ui.global::<Words>().on_list(|place| {
         ModelRc::new(VecModel::from(texts::list(&place).iter().map(|l| slint::SharedString::from(l.as_str())).collect::<Vec<_>>()))
@@ -5029,6 +5040,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     && ui.get_web_ready()
                     && !(ui.get_web_overlay()
                         || ui.get_web_pull() > 0.0
+                        || ui.get_shade_pos() > 0.002
                         || ui.get_touch_test()
                         || ui.get_set_view() > 0
                         || ui.get_screensaver_on()
