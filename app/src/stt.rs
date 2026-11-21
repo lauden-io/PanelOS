@@ -51,13 +51,13 @@ pub fn recognize(samples: &[i16]) -> Result<String, String> {
 /// Any other text never stops it, however short: a one-word fragment of a conversation in the room is not a stop.
 pub fn stops_ring(text: &str) -> bool {
     let words: Vec<String> = text.split(|c: char| !c.is_alphanumeric()).filter(|w| w.chars().count() >= 2).map(str::to_lowercase).collect();
-    let stem = words.len() <= 6 && words.iter().any(|w| w.starts_with("állj") || w.starts_with("stop") || w.starts_with("sztop"));
+    let stem = words.len() <= 6 && words.iter().any(|w| stop_stem(w));
     is_stop(text) || stem
 }
 
 /// Stop words and two-word stop phrases (Hungarian and English).
 const STOP_WORDS: &[&str] = &[
-    "állj", "álljál", "álljon", "stop", "stopp", "sztop", "elég", "csend", "csendet", "hallgass", "kuss", "enough", "quiet", "silence", "cancel",
+    "állj", "álljál", "álljon", "stop", "stopp", "sztop", "sztáp", "sztap", "elég", "csend", "csendet", "hallgass", "kuss", "enough", "quiet", "silence", "cancel",
 ];
 const STOP_PAIRS: &[(&str, &str)] = &[
     ("kapcsold", "ki"),
@@ -74,9 +74,15 @@ const STOP_FILLERS: &[&str] = &[
     "please", "now", "it", "that", "s", "the", "timer", "alarm",
 ];
 
-/// A stop word as `stops_ring` takes it: a listed one, or a word starting with "állj", "stop" or "sztop".
+/// A word starting with "állj", "stop", or "sztop" / "sztáp" / "sztap" (an English "stop" heard by a Hungarian speech
+/// recognition).
+fn stop_stem(w: &str) -> bool {
+    w.starts_with("állj") || w.starts_with("stop") || w.starts_with("sztop") || w.starts_with("sztáp") || w.starts_with("sztap")
+}
+
+/// A stop word as `stops_ring` takes it: a listed one, or one of `stop_stem`.
 fn stop_word(w: &str) -> bool {
-    STOP_WORDS.contains(&w) || w.starts_with("állj") || w.starts_with("stop") || w.starts_with("sztop")
+    STOP_WORDS.contains(&w) || stop_stem(w)
 }
 
 fn words_of(text: &str) -> Vec<String> {
@@ -119,6 +125,18 @@ pub fn is_only_stop(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::{is_only_stop, is_stop, stops_ring};
+
+    #[test]
+    fn an_english_stop_stops_the_ring() {
+        // an English speech recognition, and an English "stop" heard by a Hungarian one
+        for t in ["Stop.", "Stop!", "Stop, stop!", "Stop it.", "Stop the timer.", "Sztop!", "Sztáp.", "Sztap!", "Sztáp, sztáp!"] {
+            assert!(stops_ring(t), "{t}");
+            assert!(is_only_stop(t), "{t}");
+        }
+        // a word that only looks alike is not a stop
+        assert!(!stops_ring("Stáb."));
+        assert!(!is_only_stop("Stop the music and play the news."));
+    }
 
     #[test]
     fn run_transcripts_that_only_stop() {
