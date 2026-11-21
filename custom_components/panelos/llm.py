@@ -16,6 +16,7 @@ from homeassistant.components.intent.const import TIMER_DATA
 from homeassistant.components.llm import LLMTools
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import area_registry as ar, config_validation as cv, device_registry as dr
+from homeassistant.helpers.dispatcher import async_dispatcher_send
 from homeassistant.helpers.llm import LLM_API_ASSIST, LLMContext, Tool, ToolAnnotations, ToolInput, ToolResult
 
 try:  # Home Assistant's schema library since 2026.x
