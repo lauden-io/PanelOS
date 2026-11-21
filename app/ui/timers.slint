@@ -148,7 +148,8 @@ component NixieTube inherits Rectangle {
     property <float> since: root.fading ? (animation-tick() - root.t0) / 1ms : 1000;
     property <float> new-k: max(0.5, clamp(root.since / 60, 0, 1));
     property <float> old-k: root.old >= 0 && root.old <= 9 && root.old != root.cur ? 1 - clamp(root.since / 120, 0, 1) : 0;
-    Rectangle { x: 0; y: 0; width: 54px; height: 132px; border-radius: 26px; border-width: 1px; border-color: #ffffff29; clip: true;
+    // (no clip: everything inside lies within the glass outline, and a rounded clip would be applied to every drawing in it)
+    Rectangle { x: 0; y: 0; width: 54px; height: 132px; border-radius: 26px; border-width: 1px; border-color: #ffffff29;
         background: @linear-gradient(90deg, #ffffff05 0%, #ffffff0f 22%, #ffffff04 50%, #ffffff0b 100%);
         Rectangle { x: 6px; y: 20px; width: 42px; height: 96px; background: @radial-gradient(circle, #ff6e14.with-alpha(0.22 * root.f) 0%, #ff6e1400 70%); }
         // the ten faint cathodes: drawn once into their own layer (the lit digit covers its own)
