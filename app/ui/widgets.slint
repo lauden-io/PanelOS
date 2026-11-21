@@ -2,6 +2,33 @@
 
 import { Theme, Clock, Act } from "theme.slint";
 
+// A touch area for taps only: `tapped` comes on release when the finger stayed within 8 px of where it went down
+// (on both axes, all the way), the distance after which a list or the pager takes a move as a drag. A drag that
+// starts on it never fires, wherever it ends. Every control that switches, ticks or picks something uses it instead
+// of `clicked`; `pressed` and the rest of the touch area stay as they are (the press feedback does not change).
+export component TapArea inherits TouchArea {
+    callback tapped;
+    out property <bool> dragged;              // the finger has moved more than 8 px since it went down
+    pure function far() -> bool {
+        Math.abs(self.mouse-x - self.pressed-x) > 8px || Math.abs(self.mouse-y - self.pressed-y) > 8px
+    }
+    pointer-event(ev) => {
+        if ev.kind == PointerEventKind.down {
+            self.dragged = false;
+        }
+    }
+    moved => {
+        if !self.dragged && self.far() {
+            self.dragged = true;
+        }
+    }
+    clicked => {
+        if !self.dragged && !self.far() {
+            self.tapped();
+        }
+    }
+}
+
 // A bottom sheet that follows the finger (spec 26): its scrim, the handle and the sheet; the content goes in as
 // children (drawn from the sheet's top, `need` high). It opens with a small spring, follows a drag on the handle
 // strip and the header (top 64 px) 1:1, stretches at most 24 px above its height (rubber band), and on release
@@ -758,7 +785,7 @@ export component Segmented inherits Rectangle {
             Text { text: root.tk-caps ? o.to-uppercase() : o; font-family: root.tk-font; font-size: root.tk-font-size; font-weight: root.tk-font-weight;
                 color: root.tk-text.mix(root.tk-on-text, 1 - seg-item.ck); vertical-alignment: center; overflow: elide; }
         }
-        TouchArea { clicked => { root.picked(i); } }
+        TapArea { tapped => { root.picked(i); } }
     }
 }
 
@@ -836,7 +863,7 @@ export component Dropdown inherits Rectangle {
                         font-size: root.tk-font-size; font-weight: i == root.selected ? Math.max(600, root.tk-font-weight) : Math.min(400, root.tk-font-weight);
                         color: root.tk-text; vertical-alignment: center; overflow: elide; }
                     // the pick goes out before the popup closes (closing ends the popup, and with it this handler)
-                    row-ta := TouchArea { clicked => { root.picked(i); root.pop-open = false; menu.close(); } }
+                    row-ta := TapArea { tapped => { root.picked(i); root.pop-open = false; menu.close(); } }
                 }
             }
         }
@@ -996,8 +1023,8 @@ export component Toggle inherits Rectangle {
     property <length> kh: Math.max(0.7 * root.kn, Math.min(root.height - 8px, root.kn * root.kn / root.kw));
     Rectangle { x: root.kx; y: (root.height - root.kh) / 2; width: root.kw; height: root.kh; border-radius: Math.min(self.width, self.height) / 2;
         background: root.tk-knob.mix(root.tk-knob-on, 1 - root.ck); }
-    ta := TouchArea {
-        clicked => { root.toggled(); }
+    ta := TapArea {
+        tapped => { root.toggled(); }
     }
 }
 
@@ -1031,7 +1058,7 @@ export component CheckBox inherits Rectangle {
             LineTo { x: 5.5 + 4 * Math.min(1, root.tick * 2.2); y: 11.5 + 4 * Math.min(1, root.tick * 2.2); }
             LineTo { x: 9.5 + 7 * Math.max(0, root.tick * 1.8 - 0.8); y: 15.5 - 8 * Math.max(0, root.tick * 1.8 - 0.8); } }
     }
-    TouchArea { clicked => { root.toggled(); } }
+    TapArea { tapped => { root.toggled(); } }
 }
 
 export global Brand {
@@ -1213,8 +1240,8 @@ export component WeekdayRow inherits Rectangle {
         }
         Text { text: d; font-family: root.family; font-size: 13px; font-weight: root.weight; color: day.lit ? root.tk-on-text : root.tk-muted;
             horizontal-alignment: center; vertical-alignment: center; }
-        dta := TouchArea {
-            clicked => {
+        dta := TapArea {
+            tapped => {
                 root.ci = i;
                 root.cv = !day.on;
                 root.t0 = animation-tick();

@@ -2,7 +2,7 @@
 // microphone, theme, do not disturb, screen off); the PanelOS mark in it opens the full settings after a hold (so children
 // do not wander in). Editors for the pages stay in Home Assistant. Every text here is fixed: one line per place, the same
 // every time.
-import { Icon, MarkButton, CheckBox, Brand, TouchSlider, PageMenu, Segmented, Dropdown, Toggle, ThemeSwitch } from "widgets.slint";
+import { Icon, MarkButton, CheckBox, Brand, TouchSlider, PageMenu, Segmented, Dropdown, Toggle, ThemeSwitch, TapArea } from "widgets.slint";
 export { Brand }
 import { TimerItem } from "timers.slint";
 import { InfoNote } from "info.slint";
@@ -86,7 +86,7 @@ component ShadeTile inherits Rectangle {
         if root.label-k > 0.01: Text { x: 6px; y: parent.height - 26px; width: parent.width - 12px; height: 16px; text: root.label; font-size: 12px; font-weight: 600;
             color: Brand.text; horizontal-alignment: center; vertical-alignment: center; overflow: elide; opacity: root.label-k; }
     }
-    touch := TouchArea { clicked => { root.clicked(); } }
+    touch := TapArea { tapped => { root.clicked(); } }
 }
 
 // holding the mark in the popup writes P in Morse (spec 27.5): unit 100 ms, 1.1 s in all — the first dot lights and
@@ -309,7 +309,7 @@ export component SettingsLayer inherits Rectangle {
                             changed(v, final) => { Act.act(final ? "set.brightness.done" : "set.brightness", Math.max(0.01, v)); } }
                         CheckBox { x: 394px; y: 11px; checked: root.auto-bright; toggled => { Act.act("set.auto", ""); } }
                         Text { x: 422px; y: 0; width: 44px; height: 44px; text: "Auto"; font-size: 13px; font-weight: 600; color: Brand.muted; vertical-alignment: center; }
-                        TouchArea { x: 388px; y: 0; width: 80px; height: 44px; clicked => { Act.act("set.auto", ""); } }
+                        TapArea { x: 388px; y: 0; width: 80px; height: 44px; tapped => { Act.act("set.auto", ""); } }
                     }
                     // the second step: volume (0 = the speaker off; its mark appears)
                     if root.e > 0.01: Rectangle { x: 0; y: 114px; width: parent.width; height: 44px; opacity: root.e2;
@@ -404,7 +404,7 @@ export component SettingsLayer inherits Rectangle {
                                 TouchArea { clicked => { Act.act("timers.add", i); } } }
                             Rectangle { x: 358px; y: 8px; width: 36px; height: 36px; border-radius: 18px; background: Brand.surface;
                                 Icon { width: parent.width; height: parent.height; text: t.running ? "\u{F03E4}" : "\u{F040A}"; font-size: 20px; color: Brand.text; }
-                                TouchArea { clicked => { Act.act("timers.toggle", i); } } }
+                                TapArea { tapped => { Act.act("timers.toggle", i); } } }
                             Rectangle { x: 402px; y: 8px; width: 36px; height: 36px; border-radius: 18px; background: Brand.surface;
                                 Icon { width: parent.width; height: parent.height; text: "\u{F04DB}"; font-size: 20px; color: Brand.text; }
                                 TouchArea { clicked => { Act.act("timers.cancel", i); } } }
@@ -477,7 +477,7 @@ export component SettingsLayer inherits Rectangle {
                 for r[i] in root.rows: Rectangle {
                     x: 14px; y: i * 52px; width: parent.width - 28px; height: 52px;
                     background: row-touch.pressed ? Brand.raised : transparent;
-                    row-touch := TouchArea { clicked => { Act.act("set.row", i); } }
+                    row-touch := TapArea { tapped => { Act.act("set.row", i); } }
                     if i > 0: Rectangle { x: 0; y: 0; width: parent.width; height: 1px; background: Brand.line; }
                     Rectangle { x: 0; y: 10px; width: 32px; height: 32px; border-radius: 10px; background: Brand.raised;
                         Icon { text: r.icon; font-size: 19px; color: r.danger ? Brand.bad : Brand.muted; } }
@@ -561,7 +561,7 @@ export component SettingsLayer inherits Rectangle {
                             changed(v, final) => { Act.act(final ? "set.brightness.done" : "set.brightness", Math.max(0.01, v)); } }
                         CheckBox { x: parent.width - 14px - 70px; y: 19px; checked: root.auto-bright; toggled => { Act.act("set.auto", ""); } }
                         Text { x: parent.width - 14px - 42px; y: 0; width: 42px; height: parent.height; text: "Auto"; font-size: 13px; font-weight: 600; color: Brand.muted; vertical-alignment: center; }
-                        TouchArea { x: parent.width - 14px - 76px; y: 8px; width: 80px; height: 44px; clicked => { Act.act("set.auto", ""); } } }
+                        TapArea { x: parent.width - 14px - 76px; y: 8px; width: 80px; height: 44px; tapped => { Act.act("set.auto", ""); } } }
                     PageRow { label: "Time format"; control-w: 220px;
                         Segmented { x: parent.width - 14px - 220px; y: 10px; width: 220px; options: ["24-hour", "12-hour"]; selected: Clock.h24 ? 0 : 1;
                             picked(i) => { Act.act("set.timefmt", i); } } }
@@ -636,7 +636,7 @@ export component SettingsLayer inherits Rectangle {
                         for l[i] in root.about-links: Rectangle {
                             x: 144px; y: 4px + i * 64px; width: parent.width - 144px - 8px; height: 64px; border-radius: 12px;
                             background: lta.pressed ? Brand.raised : transparent;
-                            lta := TouchArea { clicked => { Act.act("set.link", i); } }
+                            lta := TapArea { tapped => { Act.act("set.link", i); } }
                             if i == root.about-link: Rectangle { x: 0; y: 23px; width: 4px; height: 18px; border-radius: 2px; background: Brand.signal; }
                             VerticalLayout { x: 14px; width: parent.width - 20px; alignment: center; spacing: 2px;
                                 Text { text: l.label; font-size: 15px; font-weight: i == root.about-link ? 600 : 500; color: Brand.text; wrap: word-wrap; }

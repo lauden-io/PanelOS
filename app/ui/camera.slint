@@ -2,7 +2,7 @@
 // (also the camera picker), and the visitor overlay (doorbell / someone at the door) above any panel.
 // The app scales every frame to the size it is shown at (the software renderer scales images without filtering).
 import { Theme, Act } from "theme.slint";
-import { Icon, GlowText, Segmented, TextButton, MenuHost, PageMenu } from "widgets.slint";
+import { Icon, GlowText, Segmented, TextButton, MenuHost, PageMenu, TapArea } from "widgets.slint";
 
 export struct CamItem {
     name: string,
@@ -200,7 +200,7 @@ export component CameraPage inherits Rectangle {
     if root.view == 0 && root.c.state == 0: HorizontalLayout {
         x: 16px; y: root.fit == 0 ? 391px : 400px; width: 448px; height: 36px; alignment: center; spacing: 8px;
         for a[i] in root.actions: GlassPill { icon: a.icon; text: a.text; light: root.light-veil;
-            TouchArea { enabled: a.tap; clicked => { Act.act("cam.action", i); } } }
+            TapArea { enabled: a.tap; tapped => { Act.act("cam.action", i); } } }
     }
 
     // ---------------------------------------------------------------- all cameras
@@ -398,8 +398,8 @@ export component CameraPage inherits Rectangle {
                             GlowText { width: 19px; icon: true; text: "\u{F173E}"; font-size: 19px; color: #ffffffd9; horizontal-alignment: center; }
                             WrapGlow { text: r; font-size: 15px; font-weight: 500; }
                         }
-                        line := TouchArea {
-                            clicked => {
+                        line := TapArea {
+                            tapped => {
                                 if replies-menu.open && replies-menu.lit < 0 {
                                     replies-menu.lit = i;
                                     Act.act("cam.reply", i);

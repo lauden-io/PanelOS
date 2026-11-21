@@ -9,7 +9,7 @@
 // A tap on a room shows its first device, a tap on one of its device lines that device; the chip follows and the menu
 // closes. A room without a climate device only shows its temperature and stays open.
 import { Theme, Act } from "theme.slint";
-import { Icon, MenuHost, Jelly, Dropdown, Segmented, TextButton } from "widgets.slint";
+import { Icon, MenuHost, Jelly, Dropdown, Segmented, TextButton, TapArea } from "widgets.slint";
 import { ArcadeScreen, ArcadeBlocks, ArcadeBlock, ArcadeText, Arcade, RoundedGlass } from "arcade.slint";
 import { ClimateDev, ClimateRoom, TK, Seg7 } from "thermo_common.slint";
 
@@ -79,7 +79,7 @@ component DevLine inherits Rectangle {
         Text { text: root.text; font-size: 12px; font-weight: root.cur ? 600 : 400; color: root.cur ? root.ink : root.muted;
             wrap: word-wrap; vertical-alignment: center; }
     }
-    TouchArea { clicked => { root.tapped(); } }
+    TapArea { tapped => { root.tapped(); } }
 }
 
 // ==================================================================== 33.1 dial: the brand card
@@ -94,7 +94,7 @@ component BrandCell inherits Rectangle {
     property <bool> on: root.room.sel >= 0;
     background: root.on ? #FF4A1C29 : root.marked && root.marked-line < 0 ? Theme.surface-pressed : Theme.surface;
     border-radius: 10px;
-    TouchArea { clicked => { root.tapped(-1); } }
+    TapArea { tapped => { root.tapped(-1); } }
     VerticalLayout {
         padding-left: 12px; padding-right: 12px; padding-top: 7px; padding-bottom: 8px; spacing: 0; alignment: start;
         HorizontalLayout {
@@ -297,7 +297,7 @@ component LcdZone inherits Rectangle {
     min-height: 80px;
     border-radius: 5px;
     background: root.marked ? #1d1a1414 : transparent;
-    TouchArea { clicked => { root.tapped(-1); } }
+    TapArea { tapped => { root.tapped(-1); } }
     Rectangle { border-radius: 5px; border-width: 2px; border-color: root.on || root.test ? root.ink : root.ghost; }
     VerticalLayout {
         padding-left: 8px; padding-right: 8px; padding-top: 6px; padding-bottom: 7px; spacing: 2px; alignment: start;
@@ -329,7 +329,7 @@ component LcdZone inherits Rectangle {
                     Text { text: c; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; color: root.ink; vertical-alignment: center; }
                 }
                 Rectangle { y: parent.height - 2px; height: 2px; background: root.room.sel == j ? root.ink : transparent; }
-                TouchArea { clicked => { root.tapped(j); } }
+                TapArea { tapped => { root.tapped(j); } }
             }
             if root.room.dev-caps.length == 0: HorizontalLayout {
                 spacing: 3px; height: 18px;
@@ -469,7 +469,7 @@ component PlateZone inherits Rectangle {
     property <color> muted: Theme.dark ? #b3a794 : #7a6d5c;
     property <color> line: Theme.dark ? #ffecd21f : #503c2829;
     background: root.marked && root.marked-line < 0 ? (Theme.dark ? #1a1512 : #d8cfbc) : transparent;
-    TouchArea { clicked => { root.tapped(-1); } }
+    TapArea { tapped => { root.tapped(-1); } }
     if !root.last-row: Rectangle { y: parent.height - 1px; height: 1px; background: root.line; }
     HorizontalLayout {
         padding-left: 2px; padding-right: 2px; padding-top: 9px; padding-bottom: 9px; spacing: 9px;
@@ -610,7 +610,7 @@ component CrtRow inherits Rectangle {
     property <bool> on: root.room.sel >= 0;
     border-radius: 6px;
     background: root.flash ? root.tube.with-alpha(0.55) : transparent;
-    TouchArea { clicked => { root.tapped(-1); } }
+    TapArea { tapped => { root.tapped(-1); } }
     VerticalLayout {
         padding: 6px; spacing: 0;
         HorizontalLayout {
