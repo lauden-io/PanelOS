@@ -168,10 +168,10 @@ function widgetMin(wd) {
   }
   return (WIDGETS[wd.kind] || WIDGETS[0]).min;
 }
-// The screensaver's clock faces (the panel's ClockFace styles 0..7).
 // The letter weights the panel draws (clocks, widgets, the screensaver): one slider over these four
 // everywhere, live on the panel while it moves.
 const WEIGHTS = [[300, "Light"], [400, "Regular"], [600, "Semibold"], [800, "Bold"]];
+// The screensaver's clock faces (the panel's ClockFace styles 0..10; the clock page's looks are the same faces).
 const SAVER_FACES = ["Big clock", "Huge digits", "Round", "Square", "Minimal", "Numerals", "Wandering", "Split-flap", "Nixie", "LCD quartz", "Twin-bell"];
 // The panel's own layout when a weather page has none (as the panel draws it).
 const DEFAULT_ITEMS = [

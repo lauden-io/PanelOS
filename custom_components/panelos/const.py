@@ -62,7 +62,7 @@ MAX_PAGES = 12
 PAGE_KINDS = {
     "home": (1, ("weather", "calendar", "media_player"), 10),
     "weather": (2, ("weather",), 1),
-    "clock": (8, (), 0),
+    "clock": (11, (), 0),
     "music": (5, ("media_player",), 1),
     "timers": (5, (), 0),
     "thermostat": (4, ("climate",), 8),

@@ -95,7 +95,8 @@ fn enabled() -> bool {
 #[derive(Debug, Clone, PartialEq)]
 struct Link {
     bssid: String,
-    ssid: String,
+    /// The network name's own bytes (wpa_cli's escapes decoded).
+    ssid: Vec<u8>,
 }
 
 /// One access point from the scan results.
@@ -104,7 +105,8 @@ struct Ap {
     bssid: String,
     freq: u32,
     signal: i32,
-    ssid: String,
+    /// The network name's own bytes (wpa_cli's escapes decoded; empty or zeros for a hidden name).
+    ssid: Vec<u8>,
 }
 
 #[derive(Debug, PartialEq)]
@@ -130,23 +132,24 @@ fn parse_status(text: &str) -> Option<Link> {
     if get("wpa_state")? != "COMPLETED" {
         return None;
     }
-    Some(Link { bssid: get("bssid")?.to_ascii_lowercase(), ssid: get("ssid")?.to_string() })
+    Some(Link { bssid: get("bssid")?.to_ascii_lowercase(), ssid: unescape_ssid(get("ssid")?) })
 }
 
-/// An SSID as wpa_cli prints it (printf-escaped: `\xNN`, `\\`, `\"`, `\e`, `\n`, `\r`, `\t`) back to its bytes.
+/// An SSID as wpa_cli prints it (wpa_supplicant's `printf_encode`: `\xNN` for bytes outside printable ASCII, `\\`,
+/// `\"`, `\e`, `\n`, `\r`, `\t`) back to its bytes. `wpa_cli status` and `wpa_cli scan_results` both print it so.
 fn unescape_ssid(s: &str) -> Vec<u8> {
     let b = s.as_bytes();
+    let digit = |i: usize| b.get(i).and_then(|&c| (c as char).to_digit(16)).map(|d| d as u8);
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'\\' && i + 1 < b.len() {
-            let hex = (b[i + 1] == b'x' && i + 3 < b.len())
-                .then(|| std::str::from_utf8(&b[i + 2..i + 4]).ok().and_then(|h| u8::from_str_radix(h, 16).ok()))
-                .flatten();
-            if let Some(v) = hex {
-                out.push(v);
-                i += 4;
-                continue;
+            if b[i + 1] == b'x' {
+                if let (Some(hi), Some(lo)) = (digit(i + 2), digit(i + 3)) {
+                    out.push((hi << 4) | lo);
+                    i += 4;
+                    continue;
+                }
             }
             out.push(match b[i + 1] {
                 b'e' => 0x1b,
@@ -164,13 +167,18 @@ fn unescape_ssid(s: &str) -> Vec<u8> {
     out
 }
 
+/// A network name as `wpa_cli scan ssid` takes it: its bytes in hex.
+fn ssid_hex(ssid: &[u8]) -> String {
+    ssid.iter().map(|b| format!("{b:02x}")).collect()
+}
+
 /// `wpa_cli signal_poll`: the link's signal in dBm.
 fn parse_signal(text: &str) -> Option<i32> {
     text.lines().find_map(|l| l.strip_prefix("RSSI="))?.trim().parse().ok()
 }
 
 /// `wpa_cli scan_results`: a header line, then bssid, frequency, signal
-/// level, flags and SSID, separated by tabs.
+/// level, flags and SSID (escaped, so a tab in it never splits it), separated by tabs.
 fn parse_scan(text: &str) -> Vec<Ap> {
     text.lines()
         .skip_while(|l| !l.starts_with("bssid"))
@@ -181,7 +189,7 @@ fn parse_scan(text: &str) -> Vec<Ap> {
             let freq = f.next()?.parse().ok()?;
             let signal = f.next()?.parse().ok()?;
             let _flags = f.next()?;
-            let ssid = f.next().unwrap_or_default().to_string();
+            let ssid = unescape_ssid(f.next().unwrap_or_default());
             Some(Ap { bssid, freq, signal, ssid })
         })
         .collect()
@@ -273,8 +281,7 @@ fn check(idle: &dyn Fn() -> bool, leaving: bool) -> bool {
     // A scan for the network's own name: an access point that does not broadcast it (a hidden SSID) answers only a
     // probe that names it, and a plain scan lists it without a name. FAIL-BUSY while wpa_supplicant scans or connects
     // by itself.
-    let hex: String = unescape_ssid(&link.ssid).iter().map(|b| format!("{b:02x}")).collect();
-    if !ok(wpa_cli(&["scan", "ssid", &hex])) && !ok(wpa_cli(&["scan"])) {
+    if !ok(wpa_cli(&["scan", "ssid", &ssid_hex(&link.ssid)])) && !ok(wpa_cli(&["scan"])) {
         return false;
     }
     std::thread::sleep(SCAN_WAIT);
@@ -577,13 +584,44 @@ mod tests {
     const STATUS: &str = "bssid=AA:00:00:00:00:01\nfreq=2462\nssid=Home\nid=0\nmode=station\nkey_mgmt=WPA2-PSK\nwpa_state=COMPLETED\nip_address=10.0.0.5\n";
 
     fn ap(bssid: &str, signal: i32, ssid: &str) -> Ap {
-        Ap { bssid: bssid.into(), freq: 2437, signal, ssid: ssid.into() }
+        Ap { bssid: bssid.into(), freq: 2437, signal, ssid: ssid.as_bytes().to_vec() }
     }
+
+    /// wpa_supplicant's `printf_encode` (src/utils/common.c), the way `wpa_cli` prints an SSID.
+    fn printf_encode(data: &[u8]) -> String {
+        let mut out = String::new();
+        for &c in data {
+            match c {
+                b'"' => out.push_str("\\\""),
+                b'\\' => out.push_str("\\\\"),
+                0x1b => out.push_str("\\e"),
+                b'\n' => out.push_str("\\n"),
+                b'\r' => out.push_str("\\r"),
+                b'\t' => out.push_str("\\t"),
+                32..=126 => out.push(c as char),
+                _ => out.push_str(&format!("\\x{c:02x}")),
+            }
+        }
+        out
+    }
+
+    /// Network names with non-ASCII letters, an emoji, quotes, backslashes, control characters and spaces.
+    const NAMES: [&str; 9] = [
+        "Home",
+        "Kávé ☕",
+        "say \"hi\"",
+        r"back\slash\\",
+        " lead and trail ",
+        "tab\there",
+        "esc\u{1b}[0m\r\n",
+        r#"\x41 is not A"#,
+        "Über 🎄 \"Wi-Fi\" \\ 5G",
+    ];
 
     #[test]
     fn status_only_when_connected() {
         let link = parse_status(STATUS).unwrap();
-        assert_eq!(link, Link { bssid: "aa:00:00:00:00:01".into(), ssid: "Home".into() });
+        assert_eq!(link, Link { bssid: "aa:00:00:00:00:01".into(), ssid: b"Home".to_vec() });
         assert_eq!(parse_status(&STATUS.replace("COMPLETED", "SCANNING")), None);
     }
 
@@ -592,6 +630,67 @@ mod tests {
         assert_eq!(unescape_ssid("Home"), b"Home".to_vec());
         assert_eq!(unescape_ssid(r#"Caf\xc3\xa9 \"x\""#), "Café \"x\"".as_bytes().to_vec());
         assert_eq!(unescape_ssid(r"a\\b"), b"a\\b".to_vec());
+        assert_eq!(unescape_ssid(r"K\xc3\xa1v\xc3\xa9 \xe2\x98\x95"), "Kávé ☕".as_bytes().to_vec());
+        assert_eq!(unescape_ssid(r"\e\n\r\t"), b"\x1b\n\r\t".to_vec());
+        // upper-case hex digits are the same bytes
+        assert_eq!(unescape_ssid(r"\xC3\xA1"), "á".as_bytes().to_vec());
+        // an escaped backslash before an "x" is a backslash and an "x", not a hex escape
+        assert_eq!(unescape_ssid(r"\\x41"), br"\x41".to_vec());
+        // not an escape wpa_cli makes: the text stays
+        assert_eq!(unescape_ssid(r"\xZZ"), b"xZZ".to_vec());
+        assert_eq!(unescape_ssid("end\\"), b"end\\".to_vec());
+    }
+
+    #[test]
+    fn ssid_escapes_round_trip() {
+        for name in NAMES {
+            assert_eq!(unescape_ssid(&printf_encode(name.as_bytes())), name.as_bytes(), "{name:?}");
+        }
+        // every byte, also the ones that are not UTF-8 on their own
+        let all: Vec<u8> = (0..=255).collect();
+        for chunk in all.chunks(32) {
+            assert_eq!(unescape_ssid(&printf_encode(chunk)), chunk);
+        }
+    }
+
+    #[test]
+    fn directed_scan_asks_for_the_real_name() {
+        for name in NAMES {
+            let status = STATUS.replace("ssid=Home", &format!("ssid={}", printf_encode(name.as_bytes())));
+            let link = parse_status(&status).unwrap();
+            assert_eq!(link.ssid, name.as_bytes(), "{name:?}");
+            let hex: String = name.bytes().map(|b| format!("{b:02x}")).collect();
+            assert_eq!(ssid_hex(&link.ssid), hex);
+        }
+        let link = parse_status(&STATUS.replace("ssid=Home", r"ssid=K\xc3\xa1v\xc3\xa9 \xe2\x98\x95")).unwrap();
+        assert_eq!(ssid_hex(&link.ssid), "4bc3a176c3a920e29895");
+    }
+
+    #[test]
+    fn scan_results_match_the_real_name() {
+        for name in NAMES {
+            let escaped = printf_encode(name.as_bytes());
+            let link = parse_status(&STATUS.replace("ssid=Home", &format!("ssid={escaped}"))).unwrap();
+            let text = format!(
+                "bssid / frequency / signal level / flags / ssid\n\
+                 aa:00:00:00:00:01\t2462\t-70\t[WPA2-PSK-CCMP][ESS]\t{escaped}\n\
+                 aa:00:00:00:00:02\t2437\t-55\t[WPA2-PSK-CCMP][ESS]\t{escaped}\n\
+                 aa:00:00:00:00:03\t2412\t-30\t[WPA2-PSK-CCMP][ESS]\t{escaped}x\n\
+                 aa:00:00:00:00:04\t5180\t-35\t[WPA2-PSK-CCMP][ESS]\t\\x00\\x00\\x00\\x00\n"
+            );
+            let aps = parse_scan(&text);
+            assert_eq!(aps.len(), 4, "{name:?}");
+            assert_eq!(aps[1].ssid, name.as_bytes(), "{name:?}");
+            // the other network (a name one letter longer) and the hidden one do not count
+            assert!(
+                matches!(decide(&link, -70, &aps, &[], false), Decision::Move { current: -70, to } if to.bssid == "aa:00:00:00:00:02"),
+                "{name:?}"
+            );
+        }
+        // the same bytes written with other hex digits are the same network
+        let link = parse_status(&STATUS.replace("ssid=Home", r"ssid=K\xc3\xa1v\xc3\xa9")).unwrap();
+        let aps = parse_scan("bssid / frequency / signal level / flags / ssid\naa:00:00:00:00:02\t2437\t-40\t[ESS]\tK\\xC3\\xA1v\\xC3\\xA9\n");
+        assert!(matches!(decide(&link, -70, &aps, &[], false), Decision::Move { to, .. } if to.bssid == "aa:00:00:00:00:02"));
     }
 
     #[test]
@@ -622,8 +721,8 @@ mod tests {
                     aa:00:00:00:00:03\t5180\t-80\t[ESS]\t\n";
         let aps = parse_scan(text);
         assert_eq!(aps.len(), 3);
-        assert_eq!(aps[1], Ap { bssid: "aa:00:00:00:00:02".into(), freq: 2437, signal: -45, ssid: "Home".into() });
-        assert_eq!(aps[2].ssid, "");
+        assert_eq!(aps[1], Ap { bssid: "aa:00:00:00:00:02".into(), freq: 2437, signal: -45, ssid: b"Home".to_vec() });
+        assert!(aps[2].ssid.is_empty());
     }
 
     #[test]

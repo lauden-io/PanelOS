@@ -193,12 +193,16 @@ def _home_items(items: Any, kinds: tuple[int, ...] = _WIDGET_KINDS) -> list[dict
     return items
 
 
+# the most looks a page kind has (each kind's own number is checked after the schema)
+_MOST_LOOKS = max(looks for looks, _domains, _most in PAGE_KINDS.values())
+
+
 def _page(value: Any) -> dict[str, Any]:
     """One page of the panel: its kind, look, entities (of the kind's domains) and options."""
     page = vol.Schema(
         {
             vol.Required("kind"): vol.In(list(PAGE_KINDS)),
-            vol.Optional("variant", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=9)),
+            vol.Optional("variant", default=0): vol.All(vol.Coerce(int), vol.Range(min=0, max=_MOST_LOOKS - 1)),
             vol.Optional("entities", default=list): [cv.entity_id],
             vol.Optional("options", default=dict): _page_options,
             # kept here with its settings, not sent to the panel
