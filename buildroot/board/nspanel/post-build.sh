@@ -22,3 +22,6 @@ sed -i 's/^root:[^:]*:/root:*:/' "$TARGET/etc/shadow"
 if [ -d "$TARGET/usr/share/fonts/dejavu" ]; then
 	find "$TARGET/usr/share/fonts/dejavu" -type f ! -name DejaVuSans.ttf -delete
 fi
+
+# FlatBuffers' compiler comes with the library TensorFlow Lite needs; the panel never runs it.
+rm -f "$TARGET/usr/bin/flatc"
