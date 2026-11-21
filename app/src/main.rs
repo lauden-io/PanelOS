@@ -173,8 +173,10 @@ pub struct UiState {
     laps: Vec<f32>,
     lap_at: f32,
     ringing: Option<Instant>,
-    /// A snoozed alarm: when it rings again, its time, label and sound.
-    snooze: Option<(Instant, String, String, String)>,
+    /// A snoozed alarm: when it rings again, which alarm it is, its label and sound.
+    snooze: Option<alarms::Snooze>,
+    /// The alarm ringing now (its snooze belongs to it); None while a timer rings.
+    ringing_alarm: Option<alarms::AlarmKey>,
     /// The ringing timer's or alarm's sound (`<value>|<default>`, as the integration names sounds).
     ring_tone: String,
     /// The sound looping now (`ring:…` or `crit:…`), to start and stop it once.
@@ -1006,19 +1008,19 @@ fn update_clock(ui: &AppWindow) {
             let first = s.alarm_minute == 0;
             s.alarm_minute = minute;
             if !first {
-                if let Some((time, label, tone, hour)) = alarms::due(s) {
+                if let Some(r) = alarms::due(s) {
                     s.snooze = None;
-                    ring_alarm(ui, s, time, label, tone, hour);
+                    ring_alarm(ui, s, r.alarm, r.time, r.label, r.tone, r.hour);
                 }
             }
             alarms::refresh(ui, s);
         }
         // a snoozed alarm rings again
-        if s.snooze.as_ref().is_some_and(|(at, ..)| Instant::now() >= *at) {
-            if let Some((_, _, label, tone)) = s.snooze.take() {
+        if s.snooze.as_ref().is_some_and(|sn| Instant::now() >= sn.at) {
+            if let Some(sn) = s.snooze.take() {
                 // the big time shows the time now (the alarm's own time has passed)
                 let (time, hour) = alarms::now_hm();
-                ring_alarm(ui, s, time, label, tone, hour);
+                ring_alarm(ui, s, sn.alarm, time, sn.label, sn.tone, hour);
                 alarms::refresh(ui, s);
             }
         }
@@ -1927,6 +1929,7 @@ fn ring_timer(ui: &AppWindow, s: &mut UiState, name: String, tint: slint::Color)
     s.ringing = Some(Instant::now());
     s.ringing_flag.store(true, Ordering::SeqCst);
     ui.set_timers_ring_alarm(false);
+    s.ringing_alarm = None;
     ui.set_timers_ring_label(name.into());
     ui.set_timers_ringing(true);
 }
@@ -2153,8 +2156,9 @@ fn timers_act(ui: &AppWindow, what: &str, value: &str) {
 }
 
 /// An alarm rings: its screen and its sound (looping until stopped, at most a minute).
-fn ring_alarm(ui: &AppWindow, s: &mut UiState, time: String, label: String, tone: String, hour: f32) {
+fn ring_alarm(ui: &AppWindow, s: &mut UiState, alarm: alarms::AlarmKey, time: String, label: String, tone: String, hour: f32) {
     s.ring_tone = format!("{tone}|birds");
+    s.ringing_alarm = Some(alarm);
     ui.set_timers_ring_tint(accent(s));
     s.ringing = Some(Instant::now());
     s.ringing_flag.store(true, Ordering::SeqCst);
@@ -2171,12 +2175,13 @@ fn ring_alarm(ui: &AppWindow, s: &mut UiState, time: String, label: String, tone
 fn ring_more(ui: &AppWindow) {
     let alarm = ui.get_timers_ring_alarm();
     let label = ui.get_timers_ring_label().to_string();
-    let time = ui.get_timers_ring_time().to_string();
     let tone = with_state(|s| s.ring_tone.rsplit_once('|').map(|(v, _)| v.to_string()).unwrap_or_default());
     stop_ringing(ui, "more time");
     if alarm {
         with_state(|s| {
-            s.snooze = Some((Instant::now() + Duration::from_secs(9 * 60), time, label, tone));
+            if let Some(key) = s.ringing_alarm.take() {
+                s.snooze = Some(alarms::snooze(&s.settings.alarms, key, label, tone));
+            }
             // the next-alarm lines show the snoozed ring
             alarms::refresh(ui, s);
         });
@@ -2781,7 +2786,7 @@ fn handle_show(ui: &AppWindow, v: &Value) {
     // the alarms as edited in the integration (the panel keeps and rings them)
     if v["type"].as_str() == Some("alarms") {
         eprintln!("nspanel-app: alarms from Home Assistant ({})", v["list"].as_array().map_or(0, Vec::len));
-        alarms::set_all(ui, &v["list"]);
+        alarms::set_all(ui, &v["list"], &v["cancelled"]);
         return;
     }
     // PanelOS's own notifications (the integration's list for this panel): new ones pop up
@@ -4560,6 +4565,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             lap_at: 0.0,
             ringing: None,
             snooze: None,
+            ringing_alarm: None,
             ringing_flag: ringing_flag.clone(),
             ring_tone: String::new(),
             looping: None,

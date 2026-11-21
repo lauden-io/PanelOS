@@ -614,21 +614,28 @@ class Panel:
         self.pending_alarms = alarms if isinstance(alarms, list) else None
 
     @callback
-    def set_pending_alarms(self, alarms: list[dict[str, Any]]) -> bool:
-        """Keeps the alarms until the panel reports them; sends them now if it is connected (True)."""
+    def set_pending_alarms(self, alarms: list[dict[str, Any]], cancelled: list[dict[str, Any]] | None = None) -> bool:
+        """Keeps the alarms until the panel reports them; sends them now if it is connected (True).
+
+        `cancelled`: the alarms this change switched off or deleted (h, m, days, label), sent with this first send
+        only; the panel ends their snooze too, also for an alarm that was off already (a once alarm that rang).
+        """
         self.pending_alarms = alarms
         self._pending_store.async_delay_save(lambda: {"alarms": alarms}, 1)
-        return self._send_pending(force=True)
+        return self._send_pending(force=True, cancelled=cancelled)
 
     @callback
-    def _send_pending(self, force: bool = False) -> bool:
+    def _send_pending(self, force: bool = False, cancelled: list[dict[str, Any]] | None = None) -> bool:
         if self.pending_alarms is None or not self.connected:
             return False
         now = time.monotonic()
         if not force and now - self._pending_sent < 20:
             return False
         self._pending_sent = now
-        async_dispatcher_send(self.hass, SIGNAL_SHOW, self.panel_id, {"type": "alarms", "list": self.pending_alarms})
+        request: dict[str, Any] = {"type": "alarms", "list": self.pending_alarms}
+        if cancelled:
+            request["cancelled"] = cancelled
+        async_dispatcher_send(self.hass, SIGNAL_SHOW, self.panel_id, request)
         return True
 
     @callback

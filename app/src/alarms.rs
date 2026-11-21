@@ -2,6 +2,8 @@
 //! page's editor (drums, days, sound, label), ringing on the panel at their
 //! minute like a finished timer.
 
+use std::time::{Duration, Instant};
+
 use serde::{Deserialize, Serialize};
 use slint::{Color, ModelRc, SharedString, VecModel};
 
@@ -32,7 +34,73 @@ impl Default for Alarm {
     }
 }
 
+/// Which alarm a ring or a snooze belongs to: its time, days and name (alarms have no ids; the integration tells
+/// them apart the same way).
+#[derive(Debug, Clone, PartialEq)]
+pub struct AlarmKey {
+    h: i32,
+    m: i32,
+    days: [bool; 7],
+    label: String,
+}
+
+impl AlarmKey {
+    /// From an alarm as the integration names it (`h`, `m`, `days`, `label`).
+    fn from_integration(v: &serde_json::Value) -> Option<Self> {
+        Alarm::from_integration(v).map(|a| a.key())
+    }
+}
+
+/// A snoozed alarm: when it rings again, which alarm it is, its label and sound.
+#[derive(Debug, Clone)]
+pub struct Snooze {
+    pub at: Instant,
+    pub alarm: AlarmKey,
+    /// The alarm has been on since it rang: switching it off ends the snooze. A once alarm switches itself off as it
+    /// rings, which alone does not end it.
+    pub armed: bool,
+    pub label: String,
+    pub tone: String,
+}
+
+/// The snooze of a ringing alarm: it rings again in 9 minutes.
+pub fn snooze(list: &[Alarm], alarm: AlarmKey, label: String, tone: String) -> Snooze {
+    let armed = list.iter().any(|a| a.on && a.key() == alarm);
+    Snooze { at: Instant::now() + Duration::from_secs(9 * 60), alarm, armed, label, tone }
+}
+
+/// Whether a snooze still holds after the alarm list changed: its alarm is still there (same time, days and name) and
+/// has not been switched off since it rang.
+fn snooze_holds(sn: &mut Snooze, list: &[Alarm]) -> bool {
+    let mut same = list.iter().filter(|a| a.key() == sn.alarm).peekable();
+    if same.peek().is_none() {
+        return false;
+    }
+    if same.any(|a| a.on) {
+        sn.armed = true;
+        return true;
+    }
+    !sn.armed
+}
+
+/// Ends the snooze when its alarm was switched off or deleted.
+fn check_snooze(s: &mut crate::UiState) {
+    let Some(sn) = s.snooze.as_mut() else { return };
+    if !snooze_holds(sn, &s.settings.alarms) {
+        eprintln!("nspanel-app: alarm snooze cancelled (its alarm was switched off or deleted)");
+        s.snooze = None;
+    }
+}
+
+fn is_snoozed(s: &crate::UiState, a: &Alarm) -> bool {
+    s.snooze.as_ref().is_some_and(|sn| sn.alarm == a.key())
+}
+
 impl Alarm {
+    pub fn key(&self) -> AlarmKey {
+        AlarmKey { h: self.h, m: self.m, days: self.days, label: self.label.clone() }
+    }
+
     /// The sound it rings with, as the integration names sounds.
     pub fn ring_tone(&self) -> String {
         if self.tone.is_empty() || self.tone == "auto" {
@@ -68,15 +136,23 @@ impl Alarm {
     }
 }
 
-/// The alarms as the integration set them (the panel keeps them and rings them itself).
-pub fn set_all(ui: &AppWindow, list: &serde_json::Value) {
+/// The alarms as the integration set them (the panel keeps them and rings them itself). `cancelled`: the alarms the
+/// change switched off or deleted (a voice assistant's cancel); their snooze ends too, also when the alarm was off
+/// already (a once alarm that rang).
+pub fn set_all(ui: &AppWindow, list: &serde_json::Value, cancelled: &serde_json::Value) {
     let Some(items) = list.as_array() else { return };
     let mut alarms: Vec<Alarm> = items.iter().take(20).filter_map(Alarm::from_integration).collect();
     alarms.sort_by_key(|a| a.h * 60 + a.m);
+    let cancelled: Vec<AlarmKey> = cancelled.as_array().map(|l| l.iter().filter_map(AlarmKey::from_integration).collect()).unwrap_or_default();
     with_state(|s| {
         s.alarm_edit = None;
         s.settings.alarms = alarms;
         s.settings.save();
+        if s.snooze.as_ref().is_some_and(|sn| cancelled.contains(&sn.alarm)) {
+            eprintln!("nspanel-app: alarm snooze cancelled (its alarm was cancelled in Home Assistant)");
+            s.snooze = None;
+        }
+        check_snooze(s);
         crate::sounds::keep(&crate::used_sounds(s));
         refresh(ui, s);
     });
@@ -159,14 +235,18 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
         .alarms
         .iter()
         .enumerate()
-        .map(|(i, a)| AlarmItem {
-            time: hm(a.h, a.m).into(),
-            days: days_text(&a.days).into(),
-            label: if a.label.is_empty() { "Alarm".into() } else { a.label.clone().into() },
-            on: a.on,
-            tint: tint(i),
-            hour: a.h as f32 + a.m as f32 / 60.0,
-            soon: minutes_to(a, t).is_some_and(|m| m <= 1440),
+        .map(|(i, a)| {
+            // a snoozed alarm is on until its snooze rings (a once alarm switched itself off as it rang)
+            let snoozed = is_snoozed(s, a);
+            AlarmItem {
+                time: hm(a.h, a.m).into(),
+                days: days_text(&a.days).into(),
+                label: if a.label.is_empty() { "Alarm".into() } else { a.label.clone().into() },
+                on: a.on || snoozed,
+                tint: tint(i),
+                hour: a.h as f32 + a.m as f32 / 60.0,
+                soon: snoozed || minutes_to(a, t).is_some_and(|m| m <= 1440),
+            }
         })
         .collect();
     if let Some(m) = crate::pages::update_rows(&ui.get_timers_alarms(), rows) {
@@ -208,8 +288,8 @@ pub fn refresh(ui: &AppWindow, s: &crate::UiState) {
     }
     // a snoozed alarm: the time of day it rings again (the looks' next-alarm lines show it), -1 none
     let snooze_h = match &s.snooze {
-        Some((at, ..)) => {
-            let ring = t + at.saturating_duration_since(std::time::Instant::now()).as_secs() as i64;
+        Some(sn) => {
+            let ring = t + sn.at.saturating_duration_since(Instant::now()).as_secs() as i64;
             let (h, m) = (local_format(ring, "%H").parse::<f32>().unwrap_or(0.0), local_format(ring, "%M").parse::<f32>().unwrap_or(0.0));
             h + m / 60.0
         }
@@ -228,8 +308,17 @@ pub fn now_hm() -> (String, f32) {
     (hm(h, m), h as f32 + m as f32 / 60.0)
 }
 
-/// Alarms that ring this minute (called when the minute turns): time, label, sound, the time as hours of the day.
-pub fn due(s: &mut crate::UiState) -> Option<(String, String, String, f32)> {
+/// An alarm that rings: which one, its time (as the panel writes it and as hours of the day), label and sound.
+pub struct Ring {
+    pub alarm: AlarmKey,
+    pub time: String,
+    pub hour: f32,
+    pub label: String,
+    pub tone: String,
+}
+
+/// Alarms that ring this minute (called when the minute turns).
+pub fn due(s: &mut crate::UiState) -> Option<Ring> {
     let t = now();
     let wd = (local_format(t, "%u").parse::<usize>().unwrap_or(1) - 1).min(6);
     let (h, m) = (local_format(t, "%H").parse::<i32>().unwrap_or(-1), local_format(t, "%M").parse::<i32>().unwrap_or(-1));
@@ -238,7 +327,13 @@ pub fn due(s: &mut crate::UiState) -> Option<(String, String, String, f32)> {
     for a in s.settings.alarms.iter_mut() {
         let once = a.days.iter().all(|x| !x);
         if a.on && a.h == h && a.m == m && (once || a.days[wd]) {
-            rang = Some((hm(a.h, a.m), if a.label.is_empty() { "Alarm".to_string() } else { a.label.clone() }, a.ring_tone(), a.h as f32 + a.m as f32 / 60.0));
+            rang = Some(Ring {
+                alarm: a.key(),
+                time: hm(a.h, a.m),
+                hour: a.h as f32 + a.m as f32 / 60.0,
+                label: if a.label.is_empty() { "Alarm".to_string() } else { a.label.clone() },
+                tone: a.ring_tone(),
+            });
             if once {
                 a.on = false;
                 changed = true;
@@ -298,9 +393,15 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
             open_editor(ui, &a, false, n);
         }
         "alarms.toggle" => with_state(|s| {
+            // a snoozed alarm shows on: a tap switches it off and ends its snooze (a once alarm that rang stays off)
+            let snoozed = s.settings.alarms.get(n).is_some_and(|a| is_snoozed(s, a));
             if let Some(a) = s.settings.alarms.get_mut(n) {
-                a.on = !a.on;
+                a.on = !a.on && !snoozed;
                 s.settings.save();
+            }
+            if snoozed {
+                eprintln!("nspanel-app: alarm snooze cancelled (its alarm was switched off)");
+                s.snooze = None;
             }
         }),
         "alarm.day" => {
@@ -449,7 +550,11 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
         }
         _ => {}
     }
-    with_state(|s| refresh(ui, s));
+    with_state(|s| {
+        // a deleted alarm (or one saved with another time, days or name) takes its snooze with it
+        check_snooze(s);
+        refresh(ui, s);
+    });
 }
 
 #[cfg(test)]
@@ -476,5 +581,79 @@ mod tests {
         assert_eq!(days_text(&[true, false, true, false, true, false, true]), "Mon, Wed, Fri, Sun");
         assert_eq!(days_text(&[true, true, false, false, false, false, true]), "Mon, Tue, Sun");
         assert_eq!(days_text(&[false, false, true, false, false, false, false]), "Wed");
+    }
+
+    const WEEKDAYS: [bool; 7] = [true, true, true, true, true, false, false];
+
+    fn alarm(h: i32, m: i32, days: [bool; 7], label: &str, on: bool) -> Alarm {
+        Alarm { h, m, days, label: label.into(), on, ..Alarm::default() }
+    }
+
+    #[test]
+    fn snooze_of_a_repeating_alarm() {
+        let mut list = vec![alarm(6, 45, WEEKDAYS, "Work", true), alarm(8, 0, [false; 7], "", true)];
+        let mut sn = snooze(&list, list[0].key(), "Work".into(), "lib:birds".into());
+        assert!(sn.armed);
+        // another alarm switched off, its own sound changed: it holds
+        list[1].on = false;
+        assert!(snooze_holds(&mut sn, &list));
+        list[0].tone = "lib:marimba".into();
+        assert!(snooze_holds(&mut sn, &list));
+        // switched off: it ends
+        list[0].on = false;
+        assert!(!snooze_holds(&mut sn, &list));
+    }
+
+    #[test]
+    fn snooze_of_a_deleted_or_changed_alarm_ends() {
+        let mut list = vec![alarm(11, 18, [true; 7], "", true), alarm(12, 0, [true; 7], "", true)];
+        let mut sn = snooze(&list, list[0].key(), "Alarm".into(), String::new());
+        list.remove(0);
+        assert!(!snooze_holds(&mut sn, &list));
+        // saved with another time, days or name: another alarm
+        for change in 0..3 {
+            let mut list = vec![alarm(11, 18, [true; 7], "", true)];
+            let mut sn = snooze(&list, list[0].key(), "Alarm".into(), String::new());
+            match change {
+                0 => list[0].m = 30,
+                1 => list[0].days = WEEKDAYS,
+                _ => list[0].label = "Gym".into(),
+            }
+            assert!(!snooze_holds(&mut sn, &list), "change {change}");
+        }
+        // the same alarm sent back by Home Assistant: it holds
+        let list = vec![alarm(11, 18, [true; 7], "", true)];
+        let mut sn = snooze(&list, list[0].key(), "Alarm".into(), String::new());
+        assert!(snooze_holds(&mut sn, &[alarm(11, 18, [true; 7], "", true)]));
+    }
+
+    #[test]
+    fn snooze_of_a_once_alarm() {
+        // a once alarm switched itself off as it rang: its snooze holds while it stays off
+        let mut list = vec![alarm(7, 0, [false; 7], "", false)];
+        let mut sn = snooze(&list, list[0].key(), "Alarm".into(), String::new());
+        assert!(!sn.armed);
+        assert!(snooze_holds(&mut sn, &list));
+        // switched on, then off again: it ends
+        list[0].on = true;
+        assert!(snooze_holds(&mut sn, &list));
+        list[0].on = false;
+        assert!(!snooze_holds(&mut sn, &list));
+        // deleted: it ends
+        let list = vec![alarm(7, 0, [false; 7], "", false)];
+        let mut sn = snooze(&list, list[0].key(), "Alarm".into(), String::new());
+        assert!(!snooze_holds(&mut sn, &[]));
+    }
+
+    #[test]
+    fn alarm_keys_from_the_integration() {
+        let a = alarm(6, 45, WEEKDAYS, "Work", true);
+        let v = serde_json::json!({"h": 6, "m": 45, "days": WEEKDAYS, "label": " Work ", "on": false, "tone": "auto"});
+        assert_eq!(AlarmKey::from_integration(&v), Some(a.key()));
+        // days cut short count as off; without its time it names no alarm
+        let v = serde_json::json!({"h": 6, "m": 45, "days": [true, true, true, true, true], "label": "Work"});
+        assert_eq!(AlarmKey::from_integration(&v), Some(a.key()));
+        assert_eq!(AlarmKey::from_integration(&serde_json::json!({"m": 45, "label": "Work"})), None);
+        assert_ne!(AlarmKey::from_integration(&serde_json::json!({"h": 6, "m": 45, "days": WEEKDAYS})), Some(a.key()));
     }
 }

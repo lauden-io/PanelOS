@@ -299,9 +299,9 @@ def _alarm_matches(a: dict[str, Any], hour: int | None, minute: int | None, labe
     return not label or _norm(a.get("label") or "") == label
 
 
-def _send_alarms(hass: HomeAssistant, panel: Any, alarms: list[dict[str, Any]]) -> bool:
+def _send_alarms(hass: HomeAssistant, panel: Any, alarms: list[dict[str, Any]], cancelled: list[dict[str, Any]] | None = None) -> bool:
     alarms.sort(key=lambda a: int(a.get("h", 0)) * 60 + int(a.get("m", 0)))
-    sent = panel.set_pending_alarms(alarms)
+    sent = panel.set_pending_alarms(alarms, cancelled)
     async_dispatcher_send(hass, SIGNAL_PAGE)
     return sent
 
@@ -446,12 +446,14 @@ class CancelPanelAlarm(Tool):
                       "alarms": [_alarm_out(a) for a in hits]},
                 error=True,
             )
+        # the panel ends their snooze too (an alarm that rang once is off already, and still rings at its snooze time)
+        cancelled = [{"h": a.get("h"), "m": a.get("m"), "days": a.get("days") or [], "label": a.get("label") or ""} for a in hits]
         if args.get("keep"):
             for a in hits:
                 a["on"] = False
         else:
             alarms = [a for a in alarms if not any(a is h for h in hits)]
-        sent = _send_alarms(hass, panel, alarms)
+        sent = _send_alarms(hass, panel, alarms, cancelled)
         return ToolResult(data={"success": True, "panel": room, "switched_off" if args.get("keep") else "deleted": len(hits),
                                 "delivered_now": sent})
 
