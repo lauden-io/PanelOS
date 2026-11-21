@@ -112,6 +112,9 @@ export component PhotoSky inherits Rectangle {
     // and both give way to the night clouds at twilight (cloud layers are transparent)
     property <float> gk: root.vector ? 1 - root.nmix : 1;
     property <float> base-a: (root.vector && root.has-grade ? max(0, 1 - root.dk - root.dn) : 1) * root.gk;
+    // a picture at full opacity over the day pictures hides them where it is opaque (the backdrops and the photos' skies
+    // everywhere, the land below its `land` row): the night pictures at night, the dusk or dawn ones in their full light
+    property <bool> day-hidden: root.nmix >= 1 || (root.has-grade && (root.dk >= 1 || root.dn >= 1));
 
     // The landscape stays still (no pan): centre crop of the 528 px layers.
     property <length> sx: -24px;
@@ -230,9 +233,9 @@ export component PhotoSky inherits Rectangle {
         y: 0; height: root.land * 1px + root.sy;
         clip: true;
         // 0. drawn themes: still backdrop (sky gradient, sun or moon, stars) under the drifting clouds
-        if root.vector: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.back(root.theme, root.mood); }
-        if root.vector && root.has-grade && root.dk > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dk; source: root.gback(root.theme, root.mood, 0); }
-        if root.vector && root.has-grade && root.dn > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dn; source: root.gback(root.theme, root.mood, 1); }
+        if root.vector && !root.day-hidden: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.back(root.theme, root.mood); }
+        if root.vector && root.has-grade && root.dk > 0 && root.nmix < 1: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dk; source: root.gback(root.theme, root.mood, 0); }
+        if root.vector && root.has-grade && root.dn > 0 && root.nmix < 1: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dn; source: root.gback(root.theme, root.mood, 1); }
         if root.vector && root.nmix > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.nmix; source: root.back(root.theme, root.nmood); }
 
         // 0b. sun (behind the clouds and the land, so it sets behind the hills / skyline)
@@ -262,23 +265,23 @@ export component PhotoSky inherits Rectangle {
             source: (root.light-variant ? @image-url("wx-light/vline-moon-light.png") : @image-url("wx/vline-moon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
 
         // 1. sky photo: seamless 792 px tile, two copies, plus the sub-pixel copies
-        if !root.rust-sky: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-        if !root.rust-sky: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-        if !root.rust-sky: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
-        if !root.rust-sky: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
-        if root.has-grade && root.dk > 0: Image {
+        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
+        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
+        if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
             source: root.gsky(root.theme, root.mood, 0);
         }
-        if root.has-grade && root.dk > 0: Image {
+        if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
             source: root.gsky(root.theme, root.mood, 0);
         }
-        if root.has-grade && root.dn > 0: Image {
+        if root.has-grade && root.dn > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dn * root.gk;
             source: root.gsky(root.theme, root.mood, 1);
         }
-        if root.has-grade && root.dn > 0: Image {
+        if root.has-grade && root.dn > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; opacity: root.dn * root.gk;
             source: root.gsky(root.theme, root.mood, 1);
         }
@@ -428,17 +431,19 @@ export component PhotoSky inherits Rectangle {
         if root.misty && root.wb > 0.004: Image { x: -root.m1b * 1px + 1056px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * root.wb; }
     }
 
-    // 5. foreground cut-out (its rows from land-top to land-bot)
+    // 5. foreground cut-out (its rows from land-top to land-bot; a hidden day picture only down to `land`)
     property <int> land-h: root.land-bot - root.land-top;
-    Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; source: root.fg(root.theme, root.mood);
-        source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
+    property <int> day-h: (root.day-hidden ? root.land : root.land-bot) - root.land-top;
+    property <int> grade-h: (root.nmix >= 1 ? root.land : root.land-bot) - root.land-top;
+    Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.day-h * 1px; source: root.fg(root.theme, root.mood);
+        source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.day-h; }
     if root.has-grade && root.dk > 0: Image {
-        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.dk;
-        source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h;
+        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dk;
+        source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
     }
     if root.has-grade && root.dn > 0: Image {
-        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.dn;
-        source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h;
+        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dn;
+        source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
     }
     if root.nmix > 0: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.nmix;
         source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
@@ -471,20 +476,20 @@ export component PhotoSky inherits Rectangle {
             property <float> of: max(0.03, min(0.97, self.off - self.oi));
             x: 0; y: 0; width: root.width; height: root.height;
             visible: root.sway-y0 + k * 8 < 528;
-            Image {
+            if !root.day-hidden: Image {
                 x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px;
                 source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
             }
-            Image {
+            if !root.day-hidden: Image {
                 x: root.fx + (parent.oi + 1) * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px;
                 source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
                 opacity: parent.of;
             }
-            if root.has-grade && root.dk > 0: Image {
+            if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
                 x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.dk;
                 source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
             }
-            if root.has-grade && root.dn > 0: Image {
+            if root.has-grade && root.dn > 0 && root.nmix < 1: Image {
                 x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.dn;
                 source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
             }
@@ -578,13 +583,13 @@ export component PhotoSky inherits Rectangle {
             property <float> oi: Math.floor(self.off);
             property <float> of: max(0.03, min(0.97, self.off - self.oi));
             visible: root.wy0 + k * 3 < 528;
-            Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px;
+            if !root.day-hidden: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px;
                 source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            Image { x: root.fx + (ws.oi + 1) * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: ws.of;
+            if !root.day-hidden: Image { x: root.fx + (ws.oi + 1) * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: ws.of;
                 source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            if root.has-grade && root.dk > 0: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dk;
+            if root.has-grade && root.dk > 0 && root.nmix < 1: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dk;
                 source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            if root.has-grade && root.dn > 0: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dn;
+            if root.has-grade && root.dn > 0 && root.nmix < 1: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dn;
                 source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
             if root.nmix > 0: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.nmix;
                 source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
