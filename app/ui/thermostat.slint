@@ -10,7 +10,7 @@
 // The device chip (top right) opens the rooms; the option pills (fan, swing, preset) open the options; the quick shade's
 // page row opens the settings: each in the look's own menu (thermo_menus.slint).
 // The app gives every text and decides what the device can do.
-import { Icon, GlowText, RollDigit, PageMenu } from "widgets.slint";
+import { Icon, GlowText, RollDigit, PageMenu, TapArea } from "widgets.slint";
 import { Theme, Act, Clock } from "theme.slint";
 import { ClimateDev, ClimateRoom, TK, Seg7 } from "thermo_common.slint";
 import { ThermoSettingsData, BrandRooms, BrandOptions, BrandSettings, LcdRooms, LidSettings, PlateRooms, DoorSettings, CrtRooms, CrtOptions,
@@ -267,19 +267,19 @@ component ThermoClassic inherits ThermoBase {
     if root.show-t: Rectangle {
         x: (root.cx - 44 - 24) * 1px; y: 280px; width: 48px; height: 48px; border-radius: 24px; background: root.ink.with-alpha(minus.pressed ? 0.2 : 0.1);
         Icon { width: parent.width; height: parent.height; text: "\u{F0374}"; font-size: 26px; color: root.ink; }
-        minus := TouchArea { clicked => { Act.act("thermo.minus", ""); } }
+        minus := TapArea { tapped => { Act.act("thermo.minus", ""); } }
     }
     if root.show-t: Rectangle {
         x: (root.cx + 44 - 24) * 1px; y: 280px; width: 48px; height: 48px; border-radius: 24px; background: root.ink.with-alpha(plus.pressed ? 0.2 : 0.1);
         Icon { width: parent.width; height: parent.height; text: "\u{F0415}"; font-size: 26px; color: root.ink; }
-        plus := TouchArea { clicked => { Act.act("thermo.plus", ""); } }
+        plus := TapArea { tapped => { Act.act("thermo.plus", ""); } }
     }
     // modes (only those the device has); the chosen one glows while the device works
     HorizontalLayout {
         x: 0; y: 348px; width: root.width; height: 48px; alignment: center; spacing: 12px;
         for k[i] in root.d.modes: mb := Rectangle {
             width: 48px; height: 48px;
-            TouchArea { clicked => { Act.act("thermo.mode", i); } }
+            TapArea { tapped => { Act.act("thermo.mode", i); } }
             // while heating the flame flickers through its three frames (a new one every 120–200 ms); while cooling the
             // snowflake's tips dim now and then (every 0.4–1.2 s) (M22)
             property <bool> flame: k == 1 && i == root.d.mode && root.busy && root.d.action == 1;
@@ -408,7 +408,7 @@ component ThermoRemote inherits ThermoBase {
             color: !Clock.h24 && root.clock-h >= 12 ? root.seg : root.ghost; }
         Text { x: 352px; y: 43px; height: 13px; text: "12H"; font-size: 10px; font-weight: 800; letter-spacing: 1px; color: Clock.h24 ? root.ghost : root.seg; }
         Text { x: 388px; y: 43px; height: 13px; text: "24H"; font-size: 10px; font-weight: 800; letter-spacing: 1px; color: Clock.h24 ? root.seg : root.ghost; }
-        TouchArea { x: 336px; y: 4px; width: 100px; height: 54px; clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } }
+        TapArea { x: 336px; y: 4px; width: 100px; height: 54px; tapped => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } }
 
         // fan speed (bars) and swing, left (display only)
         if root.d.fan != "": Rectangle {
@@ -447,10 +447,10 @@ component ThermoRemote inherits ThermoBase {
         // ▲ / ▼ next to the digits: the only touch areas on the LCD, they set the target
         Path { x: 352px; y: 70px; width: 56px; height: 48px; viewbox-width: 56; viewbox-height: 48; commands: "M 28 4 L 53 44 L 3 44 Z";
             fill: root.show-t ? root.seg : root.ghost; }
-        TouchArea { x: 340px; y: 60px; width: 80px; height: 62px; enabled: root.show-t; clicked => { Act.act("thermo.plus", ""); } }
+        TapArea { x: 340px; y: 60px; width: 80px; height: 62px; enabled: root.show-t; tapped => { Act.act("thermo.plus", ""); } }
         Path { x: 352px; y: 132px; width: 56px; height: 48px; viewbox-width: 56; viewbox-height: 48; commands: "M 3 4 L 53 4 L 28 44 Z";
             fill: root.show-t ? root.seg : root.ghost; }
-        TouchArea { x: 340px; y: 124px; width: 80px; height: 62px; enabled: root.show-t; clicked => { Act.act("thermo.minus", ""); } }
+        TapArea { x: 340px; y: 124px; width: 80px; height: 62px; enabled: root.show-t; tapped => { Act.act("thermo.minus", ""); } }
 
         // bottom: the room, its humidity, the presets (display only)
         Text { x: 16px; y: 198px; height: 13px; text: "ROOM"; font-size: 11px; font-weight: 800; letter-spacing: 1px; color: root.seg; }
@@ -759,7 +759,7 @@ component ThermoNeon inherits ThermoBase {
     for b[i] in [{ x: 240 - 44 - 24, g: "\u{F0374}" }, { x: 240 + 44 - 24, g: "\u{F0415}" }]: Rectangle {
         visible: root.show-t;
         x: b.x * 1px; y: 280px; width: 48px; height: 48px;
-        TouchArea { x: -6px; y: -6px; width: parent.width + 12px; height: parent.height + 12px; clicked => { Act.act(i == 0 ? "thermo.minus" : "thermo.plus", ""); } }
+        TapArea { x: -6px; y: -6px; width: parent.width + 12px; height: parent.height + 12px; tapped => { Act.act(i == 0 ? "thermo.minus" : "thermo.plus", ""); } }
         Rectangle { x: -4px; y: -4px; width: 56px; height: 56px; border-radius: 28px; border-width: 4px; border-color: root.grid.with-alpha(0.22); }
         Rectangle { border-radius: 24px; background: #0000004d; border-width: 2px; border-color: root.grid.mix(#ffffff, 0.35); }
         GlowText { width: parent.width; height: parent.height; icon: true; text: b.g; font-size: 26px; color: #ffffff; neon: true; glow: root.grid; horizontal-alignment: center; }
@@ -768,7 +768,7 @@ component ThermoNeon inherits ThermoBase {
         x: 0; y: 348px; width: root.width; height: 48px; alignment: center; spacing: 12px;
         for k[i] in root.d.modes: Rectangle {
             width: 48px; height: 48px;
-            TouchArea { clicked => { Act.act("thermo.mode", i); } }
+            TapArea { tapped => { Act.act("thermo.mode", i); } }
             if i == root.d.mode: Disc { cx: 24; cy: 24; r: 32; background: TK.neons[k].with-alpha(root.busy ? 0.16 + 0.12 * root.pulse : 0.14); }
             Rectangle { x: -3px; y: -3px; width: 54px; height: 54px; border-radius: 27px; border-width: 3px; border-color: TK.neons[k].with-alpha(i == root.d.mode ? 0.35 : 0.14); }
             Rectangle { border-radius: 24px; background: i == root.d.mode ? TK.neons[k].with-alpha(0.32) : #00000059;
