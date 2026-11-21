@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 import logging
+import re
 import time
 from typing import Any
 
@@ -20,7 +21,7 @@ from homeassistant.exceptions import HomeAssistantError
 from homeassistant.components.intent.const import TIMER_DATA
 from homeassistant.helpers import area_registry as ar, device_registry as dr, entity_registry as er
 from homeassistant.helpers.dispatcher import async_dispatcher_connect, async_dispatcher_send
-from homeassistant.helpers.event import async_call_later
+from homeassistant.helpers.event import async_call_later, async_track_state_change_event
 from homeassistant.helpers.entity import Entity, entity_sources
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.start import async_at_started
@@ -155,21 +156,110 @@ def set_panel_user(hass: HomeAssistant, entry: ConfigEntry, user: User | None) -
     hass.config_entries.async_update_entry(entry, data=data)
 
 
+# The panel's ESPHome entry (its voice satellite) has the same device name as the panel id; "noise_psk" is the API key
+# Home Assistant keeps in it (the ESPHome integration's CONF_NOISE_PSK).
+_ESPHOME_DEVICE_NAME = "device_name"
+_ESPHOME_KEY = "noise_psk"
+# The unique id of the panel's "Panel user" text sensor ends with one of these: Home Assistant's ESPHome integration
+# names it "{mac}/0/text_sensor/{name}" (2026.11), older versions "{mac}-text_sensor-{object id}".
+_USER_SENSOR_IDS = ("/text_sensor/Panel user", "-text_sensor-panel_user")
+# A Home Assistant user id (uuid4 in hex).
+_USER_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def voice_entry(hass: HomeAssistant, panel_id: str) -> ConfigEntry | None:
+    """The panel's ESPHome entry (voice satellite): same device name."""
+    for entry in hass.config_entries.async_entries("esphome"):
+        if entry.data.get(_ESPHOME_DEVICE_NAME) == panel_id:
+            return entry
+    return None
+
+
+def _user_sensor_of(hass: HomeAssistant, voice: ConfigEntry | None) -> str | None:
+    if voice is None:
+        return None
+    for e in er.async_entries_for_config_entry(er.async_get(hass), voice.entry_id):
+        if e.domain == "sensor" and e.platform == "esphome" and e.unique_id.endswith(_USER_SENSOR_IDS):
+            return e.entity_id
+    return None
+
+
+def user_sensor(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """The entity id of the panel's "Panel user" sensor (a text sensor of its ESPHome device), None without one."""
+    return _user_sensor_of(hass, voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, "")))
+
+
+def reported_user(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
+    """The id of the Home Assistant user the panel says it is logged in as (its "Panel user" sensor), None when it
+    says none: an older panel, the sensor missing, disabled, unavailable or empty, or an ESPHome entry without a key.
+    Only an ESPHome entry with a key counts: the sensor's state then comes over the encrypted connection that only the
+    panel can answer (over Home Assistant's API only administrators can set an entity's state)."""
+    voice = voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""))
+    if voice is None or not voice.data.get(_ESPHOME_KEY):
+        return None
+    entity_id = _user_sensor_of(hass, voice)
+    state = hass.states.get(entity_id) if entity_id else None
+    return state.state if state is not None and _USER_ID.fullmatch(state.state) else None
+
+
 @callback
 def may_act(hass: HomeAssistant, entry: ConfigEntry, user: User) -> bool:
-    """Whether this user may act as the entry's panel: administrators always, otherwise only the panel's user. While
-    the panel has none, the first user that is not an administrator becomes its user."""
+    """Whether this user may act as the entry's panel: administrators always, otherwise only the panel's user. A panel
+    that reports its user names it, and the kept user follows; while a panel reports none, the first user that is not
+    an administrator becomes its user."""
     if user.is_admin:
         return True
+    reported = reported_user(hass, entry)
+    if reported is not None and reported != user.id:
+        return False
     kept = panel_user(entry)
     if kept is None:
         set_panel_user(hass, entry, user)
         return True
     if kept["id"] != user.id:
-        return False
+        if reported is None:
+            return False
+        # the panel reports this user (paired again with another one): the binding moves
+        set_panel_user(hass, entry, user)
+        return True
     if kept.get("name") != (user.name or ""):
         # renamed in Home Assistant: the PanelOS page shows the new name
         set_panel_user(hass, entry, user)
+    return True
+
+
+@callback
+def user_reported(hass: HomeAssistant, entry: ConfigEntry) -> None:
+    """The panel's "Panel user" sensor changed: a reported user other than the kept one becomes the panel's user, and
+    the links of every other user that is not an administrator end. Nothing changes while it reports none."""
+    reported = reported_user(hass, entry)
+    kept = panel_user(entry)
+    if reported is None or (kept is not None and kept["id"] == reported):
+        return
+    entry.async_create_task(hass, _async_take_reported(hass, entry, reported))
+
+
+async def _async_take_reported(hass: HomeAssistant, entry: ConfigEntry, user_id: str) -> None:
+    user = await hass.auth.async_get_user(user_id)
+    kept = panel_user(entry)
+    if reported_user(hass, entry) != user_id or (kept is not None and kept["id"] == user_id):
+        # reported again meanwhile, or the panel subscribed as this user and was kept
+        return
+    if user is None:
+        # not one of Home Assistant's users (deleted): only administrators act as the panel until it reports another
+        async_dispatcher_send(hass, SIGNAL_PANEL_USER, entry.entry_id, user_id)
+        return
+    _LOGGER.info("The panel '%s' reports its Home Assistant user: %s", entry.title, user.name or user.id)
+    set_panel_user(hass, entry, user)
+
+
+@callback
+def forget_panel_user(hass: HomeAssistant, entry: ConfigEntry) -> bool:
+    """Forget the panel's user (the next subscriber is kept); False when the panel reports its user: the binding then
+    follows the panel, and nothing is forgotten."""
+    if reported_user(hass, entry) is not None:
+        return False
+    set_panel_user(hass, entry, None)
     return True
 
 
@@ -602,6 +692,9 @@ class Panel:
         self.skip: list[str] = []
         self.resources: list[dict[str, Any]] = []
         self._skip_task: asyncio.Task | None = None
+        # The "Panel user" sensor of the panel's ESPHome device that is followed, and how to stop following it.
+        self._user_sensor: str | None = None
+        self._unsub_user_sensor: Callable[[], None] | None = None
 
     def unique_id(self, key: str) -> str:
         return f"{self.panel_id}-{key}"
@@ -787,6 +880,13 @@ class Panel:
         self.entry.async_on_unload(async_dispatcher_connect(self.hass, SIGNAL_LINKS, self._links_changed))
         self.entry.async_on_unload(self._cancel_grace)
         self.entry.async_on_unload(self._stop_waiting)
+        # The user the panel reports on its ESPHome device: followed, and looked up again when sensors come, go or are
+        # renamed (the ESPHome entry may be added after this one).
+        self._follow_user_sensor()
+        self.entry.async_on_unload(
+            self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._sensors_changed, event_filter=self._is_sensor)
+        )
+        self.entry.async_on_unload(self._stop_user_sensor)
         # A dashboard saved in Home Assistant may need other card resources.
         self.entry.async_on_unload(self.hass.bus.async_listen("lovelace_updated", self._lovelace_updated))
         # Dashboards and resources are there once Home Assistant has started.
@@ -802,6 +902,41 @@ class Panel:
         path = event.data.get("url_path") or "lovelace"
         if path in (self.dashboard, None) or (path == "lovelace" and self.dashboard in ("", "lovelace")):
             self.refresh_skip()
+
+    # -- the panel's user --------------------------------------------------
+    # The panel reports the Home Assistant user it is logged in as on its ESPHome device ("Panel user"); a change moves
+    # the binding (`user_reported`).
+
+    @callback
+    def _follow_user_sensor(self) -> None:
+        entity_id = user_sensor(self.hass, self.entry)
+        if entity_id != self._user_sensor:
+            self._stop_user_sensor()
+            self._user_sensor = entity_id
+            if entity_id is not None:
+                self._unsub_user_sensor = async_track_state_change_event(self.hass, [entity_id], self._user_sensor_changed)
+        user_reported(self.hass, self.entry)
+
+    @callback
+    def _stop_user_sensor(self) -> None:
+        if self._unsub_user_sensor is not None:
+            self._unsub_user_sensor()
+            self._unsub_user_sensor = None
+        self._user_sensor = None
+
+    @callback
+    def _user_sensor_changed(self, _event: Event) -> None:
+        # the state machine is read again, not the event; the PanelOS page offers Forget only without a reported user
+        user_reported(self.hass, self.entry)
+        async_dispatcher_send(self.hass, SIGNAL_PAGE)
+
+    @callback
+    def _is_sensor(self, data: er.EventEntityRegistryUpdatedData) -> bool:
+        return data["entity_id"].startswith("sensor.")
+
+    @callback
+    def _sensors_changed(self, _event: Event) -> None:
+        self._follow_user_sensor()
 
     # -- timers ------------------------------------------------------------
     # The panel's timers are Home Assistant's own (its timer manager, the ones voice starts and stops): started,
@@ -832,10 +967,7 @@ class Panel:
 
     def _voice_entry(self) -> ConfigEntry | None:
         """The panel's ESPHome entry (voice satellite): same device name."""
-        for entry in self.hass.config_entries.async_entries("esphome"):
-            if entry.data.get("device_name") == self.panel_id:
-                return entry
-        return None
+        return voice_entry(self.hass, self.panel_id)
 
     def _register_device(self, info: dict[str, str]) -> None:
         connections = {(dr.CONNECTION_NETWORK_MAC, dr.format_mac(info["mac"]))} if info.get("mac") else set()

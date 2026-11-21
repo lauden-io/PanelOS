@@ -21,7 +21,8 @@ For administrators. The page uses these websocket commands:
   calibration (it measures the proximity sensor's resting level; the result
   shows on the panel);
 * ``panelos/page/forget_user``: forget the panel's Home Assistant user (the
-  next user that subscribes for the panel is kept).
+  next user that subscribes for the panel is kept; not for a panel that
+  reports its user).
 
 The panel sends that picture with ``panelos/screen`` when its subscription
 asks for it (command ``screenshot``).
@@ -96,7 +97,7 @@ from .const import (
     WAKE_DISTANCES,
 )
 from .house import HOUSE_SCHEMA, House, _tone
-from .panel import KEY_DOMAIN, Panel, find_entry, panel_caps, panel_config, panel_user, set_panel_user
+from .panel import KEY_DOMAIN, Panel, find_entry, forget_panel_user, panel_caps, panel_config, panel_user, reported_user
 
 _LOGGER = logging.getLogger(__name__)
 from .resources import async_resource_list
@@ -425,6 +426,8 @@ def _page_data(hass: HomeAssistant) -> dict[str, Any]:
                 "device_id": panel.device_id if panel else None,
                 # the name of the Home Assistant user the panel logs in with, None until it subscribed
                 "panel_user": (panel_user(entry) or {}).get("name"),
+                # the panel reports that user itself (its ESPHome device's Panel user sensor): no Forget
+                "panel_user_reported": reported_user(hass, entry) is not None,
                 "loaded": panel is not None,
                 "connected": bool(panel and panel.connected),
                 "states": dict(panel.states) if panel else {},
@@ -776,12 +779,15 @@ def ws_page_proximity_calibration(hass: HomeAssistant, connection: websocket_api
 @websocket_api.websocket_command({vol.Required("type"): "panelos/page/forget_user", vol.Required("entry_id"): str})
 @callback
 def ws_page_forget_user(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """Forget the panel's Home Assistant user: its links end, and the next user that subscribes for the panel is kept."""
+    """Forget the panel's Home Assistant user: its links end, and the next user that subscribes for the panel is kept.
+    A panel that reports its user keeps it."""
     entry = hass.config_entries.async_get_entry(msg["entry_id"])
     if entry is None or entry.domain != DOMAIN:
         connection.send_error(msg["id"], "not_found", "No such PanelOS entry")
         return
-    set_panel_user(hass, entry, None)
+    if not forget_panel_user(hass, entry):
+        connection.send_error(msg["id"], "not_supported", "The panel reports its user itself")
+        return
     connection.send_result(msg["id"])
 
 
