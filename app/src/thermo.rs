@@ -250,8 +250,9 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
 
 /// − / + presses in a quick row are sent together once the presses pause this long.
 const SETTLE: Duration = Duration::from_millis(700);
-/// A value sent must come back from Home Assistant within this time, or the page shows Home Assistant's again.
-const CONFIRM: Duration = Duration::from_secs(5);
+/// A value sent must come back from Home Assistant within this time, or the page shows Home Assistant's again (some heating
+/// devices report a new target only 10 s later)
+const CONFIRM: Duration = Duration::from_secs(15);
 
 fn same(a: f32, b: f32) -> bool {
     (a - b).abs() < 0.01
@@ -672,9 +673,9 @@ mod tests {
         sp.press(20.5, -0.5, 10.0, 32.0, at(t0, 700));
         assert_eq!(sp.tick(Some(20.5), at(t0, 1400)), Step::Send(19.0));
         // Home Assistant keeps 20.0
-        assert_eq!(sp.tick(Some(20.0), at(t0, 1400 + 4900)), Step::Wait);
+        assert_eq!(sp.tick(Some(20.0), at(t0, 1400 + 14900)), Step::Wait);
         assert_eq!(sp.shown(Some(20.0)), Some(19.0));
-        assert_eq!(sp.tick(Some(20.0), at(t0, 1400 + 5000)), Step::Back);
+        assert_eq!(sp.tick(Some(20.0), at(t0, 1400 + 15000)), Step::Back);
         assert!(!sp.busy());
         assert_eq!(sp.shown(Some(20.0)), Some(20.0));
         // the next press counts from the real value
