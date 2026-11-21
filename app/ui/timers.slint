@@ -129,7 +129,6 @@ component NixieTube inherits Rectangle {
     Timer { interval: 80ms; running: !root.steady; triggered => { root.ft = animation-tick() / 1ms; } }
     property <[image]> glow: [@image-url("timers/nixie/digit-0.png"), @image-url("timers/nixie/digit-1.png"), @image-url("timers/nixie/digit-2.png"), @image-url("timers/nixie/digit-3.png"), @image-url("timers/nixie/digit-4.png"), @image-url("timers/nixie/digit-5.png"), @image-url("timers/nixie/digit-6.png"), @image-url("timers/nixie/digit-7.png"), @image-url("timers/nixie/digit-8.png"), @image-url("timers/nixie/digit-9.png")];
     property <[image]> core: [@image-url("timers/nixie/digit-0-core.png"), @image-url("timers/nixie/digit-1-core.png"), @image-url("timers/nixie/digit-2-core.png"), @image-url("timers/nixie/digit-3-core.png"), @image-url("timers/nixie/digit-4-core.png"), @image-url("timers/nixie/digit-5-core.png"), @image-url("timers/nixie/digit-6-core.png"), @image-url("timers/nixie/digit-7-core.png"), @image-url("timers/nixie/digit-8-core.png"), @image-url("timers/nixie/digit-9-core.png")];
-    property <int> dd: root.d >= 0 && root.d <= 9 ? root.d : 0;
     property <float> f: 0.94 + 0.06 * Math.abs(Math.sin(1rad * (root.ft / 37 + root.n * 1.7)) * Math.sin(1rad * (root.ft / 91 + root.n)));
     // a digit change (25.T9): the old cathode dies over 120 ms while the new one lights over 60 ms
     property <int> cur: -1;
@@ -138,10 +137,14 @@ component NixieTube inherits Rectangle {
     property <bool> fading;
     init => { root.cur = root.d; }
     changed d => { root.old = root.cur; root.cur = root.d; root.t0 = animation-tick(); root.fading = !root.steady; }
+    // the lit digit follows `cur`, which changes only when the digit does: `d` is worked out again whenever the running
+    // time moves, and a picture bound to it would be made anew in every tube at every step, not only where the digit
+    // changed
+    property <int> lit: root.cur >= 0 && root.cur <= 9 ? root.cur : 0;
     Timer { interval: 130ms; running: root.fading; triggered => { root.fading = false; } }
     property <float> since: root.fading ? (animation-tick() - root.t0) / 1ms : 1000;
     property <float> new-k: max(0.5, clamp(root.since / 60, 0, 1));
-    property <float> old-k: root.old >= 0 && root.old <= 9 && root.old != root.d ? 1 - clamp(root.since / 120, 0, 1) : 0;
+    property <float> old-k: root.old >= 0 && root.old <= 9 && root.old != root.cur ? 1 - clamp(root.since / 120, 0, 1) : 0;
     Rectangle { x: 0; y: 0; width: 54px; height: 132px; border-radius: 26px; border-width: 1px; border-color: #ffffff29; clip: true;
         background: @linear-gradient(90deg, #ffffff05 0%, #ffffff0f 22%, #ffffff04 50%, #ffffff0b 100%);
         Rectangle { x: 6px; y: 20px; width: 42px; height: 96px; background: @radial-gradient(circle, #ff6e14.with-alpha(0.22 * root.f) 0%, #ff6e1400 70%); }
@@ -154,8 +157,8 @@ component NixieTube inherits Rectangle {
         if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.old]; opacity: root.old-k; }
         // the lit digit: its glow (flickering) and its core, pictures of the four strokes (tools/nixie_digits.py): a
         // textured quad each, where four wide strokes per digit and frame kept the running stopwatch under 30 fps
-        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow[root.dd]; opacity: root.steady ? 1 : root.new-k * root.f; }
-        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.dd]; opacity: root.steady ? 1 : root.new-k; }
+        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow[root.lit]; opacity: root.steady ? 1 : root.new-k * root.f; }
+        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.lit]; opacity: root.steady ? 1 : root.new-k; }
         // the anode mesh and the glass highlights in front: drawn once
         Rectangle { cache-rendering-hint: true;
         Path { x: 0; y: 0; width: 54px; height: 132px; viewbox-width: 54; viewbox-height: 132; stroke: #b08a6a; stroke-width: 0.6px; opacity: 0.32;
