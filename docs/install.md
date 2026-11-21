@@ -126,7 +126,7 @@ The second command downloads the Linux kernel and Buildroot (a few GB). It ends 
 
 ## 5. Connect to the panel and check root
 
-Store the panel's IP address and a short name for the panel (letters and digits, no spaces, for example `kitchen`). **Set again after reopening.**
+Store the panel's IP address and a short name for the panel. The name is the panel's own name from now on: its backups are named after it (step 6), and the panel is known by it in Home Assistant (step 9). Use lower-case letters `a`–`z`, digits and hyphens, at most 31 characters, for example `kitchen`; every panel gets a different one, and no other ESPHome device in Home Assistant may have it. **Set again after reopening.**
 
 ```
 PANEL=<panel IP address>
@@ -134,6 +134,12 @@ PANEL=<panel IP address>
 
 ```
 NAME=<short name of the panel>
+```
+
+Check the name. It must print `name ok`:
+
+```
+echo "$NAME" | grep -Eqx '[a-z0-9]([a-z0-9-]{0,29}[a-z0-9])?' && echo "name ok" || echo "not a valid name"
 ```
 
 Connect to the panel:
@@ -223,6 +229,14 @@ The answer starts with `default boot: open system`. From now on the panel starts
 
 The first SSH command stores the panel's SSH host key in `/root/.ssh/panelos_known_hosts`; later commands check it. The panel keeps the key across reboots and updates; should it ever change on purpose (e.g. after restoring the stock firmware), remove the old one with `ssh-keygen -R $PANEL -f /root/.ssh/panelos_known_hosts`.
 
+Then give the panel its name (step 5). The command writes it on the panel and restarts the panel; PanelOS comes back with the setup screen after about a minute:
+
+```
+ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "echo $NAME > /mnt/persist/nspanel/panel_name && nohup reboot >/dev/null 2>&1 </dev/null &"
+```
+
+The panel's settings show the name under **About** as its **Panel ID**. A panel without a name is `nspanel-pro`: panels installed before names keep it, with all their devices and entities in Home Assistant. To rename a panel later, see [home_assistant.md](home_assistant.md#renaming-a-panel).
+
 ## 10. Tell the panel where Home Assistant is
 
 On the panel's setup screen **"Connect to Home Assistant"**:
@@ -246,7 +260,7 @@ ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnow
 
 ## 12. Add the panel to Home Assistant
 
-1. If Home Assistant and the panel are in the same network segment, Home Assistant finds the panel by itself (mDNS): **Settings → Devices & services** shows "NSPanel Pro" under Discovered; tap **Add**. Otherwise: **Settings → Devices & services → Add integration → ESPHome**.
+1. If Home Assistant and the panel are in the same network segment, Home Assistant finds the panel by itself (mDNS): **Settings → Devices & services** shows it under Discovered; tap **Add**. Otherwise: **Settings → Devices & services → Add integration → ESPHome**.
 2. Host: the panel's IP address (pre-filled when discovered). Port: `6053`. Leave the encryption key empty: Home Assistant gives the panel a key by itself right after adding it and connects encrypted from then on.
 3. The panel appears as a device with its settings, sensors and the voice assistant (Assist satellite). Choose the wake words and the assistant on the device page.
 
@@ -268,7 +282,7 @@ paste `https://github.com/lauden-io/PanelOS`, download **PanelOS**, then restart
 **By hand:** copy `custom_components/panelos` into Home Assistant's
 `custom_components` folder, then restart Home Assistant.
 
-Then **Settings → Devices & services → Add integration → PanelOS**, Panel ID: the panel's network name (`nspanel-pro` by default). The panel's pages, looks, voice and display settings are then set on the PanelOS page. More: [home_assistant.md](home_assistant.md).
+Then **Settings → Devices & services → Add integration → PanelOS**, Panel ID: the panel's name from step 5. Further panels are added on the PanelOS page (**Add a panel**). The panel's pages, looks, voice and display settings are then set on the PanelOS page. More: [home_assistant.md](home_assistant.md).
 
 ## 13. Check
 
@@ -328,7 +342,7 @@ Today, while the stock Android is on the panel, a PanelOS that does not start at
 
 ## More panels
 
-Do steps 1–2, 5–6 and 8–13 for each further panel. Steps 3, 4 and 7 are not needed again: the computer is ready, and the same image fits every NSPanel Pro 86. In step 5 set `PANEL` and `NAME` for the new panel, so its backup goes into its own folder.
+Do steps 1–2, 5–6 and 8–13 for each further panel. Steps 3, 4 and 7 are not needed again: the computer is ready, and the same image fits every NSPanel Pro 86. In step 5 set `PANEL` and `NAME` for the new panel: its backup goes into its own folder, and step 9 gives it its own name, so several panels work side by side in one Home Assistant.
 
 ## Updating later
 

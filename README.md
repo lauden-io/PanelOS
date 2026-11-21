@@ -90,7 +90,7 @@ paste `https://github.com/lauden-io/PanelOS`, download **PanelOS**, then restart
 **By hand:** copy `custom_components/panelos` into Home Assistant's
 `custom_components` folder, then restart Home Assistant.
 
-**First setup:** Settings → Devices & services → Add integration → **PanelOS**. Panel ID: the panel's network name (`nspanel-pro` by default). The panel's pages, looks and settings are then set on the PanelOS page. Details: [docs/home_assistant.md](docs/home_assistant.md).
+**First setup:** Settings → Devices & services → Add integration → **PanelOS**. Panel ID: the panel's name given at installation (`nspanel-pro` for a panel without one). The panel's pages, looks and settings are then set on the PanelOS page. Details: [docs/home_assistant.md](docs/home_assistant.md).
 
 ## Known limitations
 
