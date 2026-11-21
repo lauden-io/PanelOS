@@ -116,8 +116,10 @@ component Ring inherits Rectangle {
     }
 }
 
-// One nixie tube (spec 24.4): the glass with its haze and highlights, all ten cathodes faint, the lit digit glowing
-// orange (four strokes, no blur), never quite steady; the 45° anode mesh in front; the socket.
+// One nixie tube's lit part (spec 24.4): the warm haze in the glass, all ten cathodes faint, the lit digit glowing orange
+// (four strokes, no blur), never quite steady. The tube's fixed parts, the glass and the socket behind this and the anode
+// mesh and the highlights in front of it, are NixieTubeBack and NixieTubeFront: the look draws them for all its tubes in
+// one layer behind and one in front, so a frame draws only what lights.
 component NixieTube inherits Rectangle {
     in property <int> d;
     in property <int> n;                  // which tube (its own flicker)
@@ -127,9 +129,11 @@ component NixieTube inherits Rectangle {
     // the glow's unsteadiness, 12 times a second (not every frame)
     property <float> ft;
     Timer { interval: 80ms; running: !root.steady; triggered => { root.ft = animation-tick() / 1ms; } }
-    property <[image]> glow: [@image-url("timers/nixie/digit-0.png"), @image-url("timers/nixie/digit-1.png"), @image-url("timers/nixie/digit-2.png"), @image-url("timers/nixie/digit-3.png"), @image-url("timers/nixie/digit-4.png"), @image-url("timers/nixie/digit-5.png"), @image-url("timers/nixie/digit-6.png"), @image-url("timers/nixie/digit-7.png"), @image-url("timers/nixie/digit-8.png"), @image-url("timers/nixie/digit-9.png")];
-    property <[image]> core: [@image-url("timers/nixie/digit-0-core.png"), @image-url("timers/nixie/digit-1-core.png"), @image-url("timers/nixie/digit-2-core.png"), @image-url("timers/nixie/digit-3-core.png"), @image-url("timers/nixie/digit-4-core.png"), @image-url("timers/nixie/digit-5-core.png"), @image-url("timers/nixie/digit-6-core.png"), @image-url("timers/nixie/digit-7-core.png"), @image-url("timers/nixie/digit-8-core.png"), @image-url("timers/nixie/digit-9-core.png")];
-    property <int> dd: root.d >= 0 && root.d <= 9 ? root.d : 0;
+    // the digit pictures (tools/nixie_digits.py), looked up by their path whenever a digit changes: the image cache then
+    // gives every tube the one picture of that digit that is already on the GPU (a picture kept in a list property is a
+    // copy of the file that is uploaded again every time it is shown anew)
+    pure function glow(k: int) -> image { k == 1 ? @image-url("timers/nixie/digit-1.png") : k == 2 ? @image-url("timers/nixie/digit-2.png") : k == 3 ? @image-url("timers/nixie/digit-3.png") : k == 4 ? @image-url("timers/nixie/digit-4.png") : k == 5 ? @image-url("timers/nixie/digit-5.png") : k == 6 ? @image-url("timers/nixie/digit-6.png") : k == 7 ? @image-url("timers/nixie/digit-7.png") : k == 8 ? @image-url("timers/nixie/digit-8.png") : k == 9 ? @image-url("timers/nixie/digit-9.png") : @image-url("timers/nixie/digit-0.png") }
+    pure function core(k: int) -> image { k == 1 ? @image-url("timers/nixie/digit-1-core.png") : k == 2 ? @image-url("timers/nixie/digit-2-core.png") : k == 3 ? @image-url("timers/nixie/digit-3-core.png") : k == 4 ? @image-url("timers/nixie/digit-4-core.png") : k == 5 ? @image-url("timers/nixie/digit-5-core.png") : k == 6 ? @image-url("timers/nixie/digit-6-core.png") : k == 7 ? @image-url("timers/nixie/digit-7-core.png") : k == 8 ? @image-url("timers/nixie/digit-8-core.png") : k == 9 ? @image-url("timers/nixie/digit-9-core.png") : @image-url("timers/nixie/digit-0-core.png") }
     property <float> f: 0.94 + 0.06 * Math.abs(Math.sin(1rad * (root.ft / 37 + root.n * 1.7)) * Math.sin(1rad * (root.ft / 91 + root.n)));
     // a digit change (25.T9): the old cathode dies over 120 ms while the new one lights over 60 ms
     property <int> cur: -1;
@@ -138,33 +142,44 @@ component NixieTube inherits Rectangle {
     property <bool> fading;
     init => { root.cur = root.d; }
     changed d => { root.old = root.cur; root.cur = root.d; root.t0 = animation-tick(); root.fading = !root.steady; }
+    // the lit digit follows `cur`, which changes only when the digit does: `d` is worked out again whenever the running
+    // time moves, and a picture bound to it would be made anew in every tube at every step, not only where the digit
+    // changed
+    property <int> lit: root.cur >= 0 && root.cur <= 9 ? root.cur : 0;
     Timer { interval: 130ms; running: root.fading; triggered => { root.fading = false; } }
     property <float> since: root.fading ? (animation-tick() - root.t0) / 1ms : 1000;
     property <float> new-k: max(0.5, clamp(root.since / 60, 0, 1));
-    property <float> old-k: root.old >= 0 && root.old <= 9 && root.old != root.d ? 1 - clamp(root.since / 120, 0, 1) : 0;
-    Rectangle { x: 0; y: 0; width: 54px; height: 132px; border-radius: 26px; border-width: 1px; border-color: #ffffff29; clip: true;
-        background: @linear-gradient(90deg, #ffffff05 0%, #ffffff0f 22%, #ffffff04 50%, #ffffff0b 100%);
-        Rectangle { x: 6px; y: 20px; width: 42px; height: 96px; background: @radial-gradient(circle, #ff6e14.with-alpha(0.22 * root.f) 0%, #ff6e1400 70%); }
-        // the ten faint cathodes: drawn once into their own layer (the lit digit covers its own)
-        Rectangle { cache-rendering-hint: true;
-            for g[i] in root.nx: Path { x: 9px; y: 30px; width: 36px; height: 72px; viewbox-width: 36; viewbox-height: 72;
-                stroke: #7a6655; stroke-width: 1.5px; stroke-line-cap: round; stroke-line-join: round; opacity: 0.32; commands: g; } }
-        // the digit going out (the same pictures as the lit one)
-        if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow[root.old]; opacity: root.old-k * root.f; }
-        if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.old]; opacity: root.old-k; }
-        // the lit digit: its glow (flickering) and its core, pictures of the four strokes (tools/nixie_digits.py): a
-        // textured quad each, where four wide strokes per digit and frame kept the running stopwatch under 30 fps
-        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow[root.dd]; opacity: root.steady ? 1 : root.new-k * root.f; }
-        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.dd]; opacity: root.steady ? 1 : root.new-k; }
-        // the anode mesh and the glass highlights in front: drawn once
-        Rectangle { cache-rendering-hint: true;
-        Path { x: 0; y: 0; width: 54px; height: 132px; viewbox-width: 54; viewbox-height: 132; stroke: #b08a6a; stroke-width: 0.6px; opacity: 0.32;
-            commands: "M 43.0 14.0 L 47.0 18.0 M 11.0 14.0 L 7.0 18.0 M 34.0 14.0 L 47.0 27.0 M 20.0 14.0 L 7.0 27.0 M 25.0 14.0 L 47.0 36.0 M 29.0 14.0 L 7.0 36.0 M 16.0 14.0 L 47.0 45.0 M 38.0 14.0 L 7.0 45.0 M 7.0 14.0 L 47.0 54.0 M 47.0 14.0 L 7.0 54.0 M 7.0 23.0 L 47.0 63.0 M 47.0 23.0 L 7.0 63.0 M 7.0 32.0 L 47.0 72.0 M 47.0 32.0 L 7.0 72.0 M 7.0 41.0 L 47.0 81.0 M 47.0 41.0 L 7.0 81.0 M 7.0 50.0 L 47.0 90.0 M 47.0 50.0 L 7.0 90.0 M 7.0 59.0 L 47.0 99.0 M 47.0 59.0 L 7.0 99.0 M 7.0 68.0 L 47.0 108.0 M 47.0 68.0 L 7.0 108.0 M 7.0 77.0 L 47.0 117.0 M 47.0 77.0 L 7.0 117.0 M 7.0 86.0 L 39.0 118.0 M 47.0 86.0 L 15.0 118.0 M 7.0 95.0 L 30.0 118.0 M 47.0 95.0 L 24.0 118.0 M 7.0 104.0 L 21.0 118.0 M 47.0 104.0 L 33.0 118.0 M 7.0 113.0 L 12.0 118.0 M 47.0 113.0 L 42.0 118.0"; }
-        Rectangle { x: 9px; y: 8px; width: 5px; height: 96px; border-radius: 3px; background: #ffffff21; }
-        Rectangle { x: 20px; y: 2px; width: 14px; height: 6px; border-radius: 3px; background: #ffffff1a; }
-        }
-    }
+    property <float> old-k: root.old >= 0 && root.old <= 9 && root.old != root.cur ? 1 - clamp(root.since / 120, 0, 1) : 0;
+    // (inside the glass outline, x 0-54 and y 0-132, which NixieTubeBack draws)
+    Rectangle { x: 6px; y: 20px; width: 42px; height: 96px; background: @radial-gradient(circle, #ff6e14.with-alpha(0.22 * root.f) 0%, #ff6e1400 70%); }
+    // the ten faint cathodes: drawn once into their own layer (the lit digit covers its own)
+    Rectangle { cache-rendering-hint: true;
+        for g[i] in root.nx: Path { x: 9px; y: 30px; width: 36px; height: 72px; viewbox-width: 36; viewbox-height: 72;
+            stroke: #7a6655; stroke-width: 1.5px; stroke-line-cap: round; stroke-line-join: round; opacity: 0.32; commands: g; } }
+    // the digit going out (the same pictures as the lit one)
+    if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow(root.old); opacity: root.old-k * root.f; }
+    if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core(root.old); opacity: root.old-k; }
+    // the lit digit: its glow (flickering) and its core, pictures of the four strokes (tools/nixie_digits.py): a
+    // textured quad each, where four wide strokes per digit and frame kept the running stopwatch under 30 fps
+    Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow(root.lit); opacity: root.steady ? 1 : root.new-k * root.f; }
+    Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core(root.lit); opacity: root.steady ? 1 : root.new-k; }
+}
+
+// A nixie tube's fixed parts behind its lit part: the glass with its faint sheen and rim, the socket.
+component NixieTubeBack inherits Rectangle {
+    width: 54px; height: 140px;
+    Rectangle { x: 0; y: 0; width: 54px; height: 132px; border-radius: 26px; border-width: 1px; border-color: #ffffff29;
+        background: @linear-gradient(90deg, #ffffff05 0%, #ffffff0f 22%, #ffffff04 50%, #ffffff0b 100%); }
     Rectangle { x: 4px; y: 128px; width: 46px; height: 12px; border-radius: 3px; background: #121010; border-width: 1px; border-color: #2a2522; }
+}
+
+// A nixie tube's fixed parts in front of its lit part: the 45° anode mesh and the glass highlights.
+component NixieTubeFront inherits Rectangle {
+    width: 54px; height: 132px;
+    Path { x: 0; y: 0; width: 54px; height: 132px; viewbox-width: 54; viewbox-height: 132; stroke: #b08a6a; stroke-width: 0.6px; opacity: 0.32;
+        commands: "M 43.0 14.0 L 47.0 18.0 M 11.0 14.0 L 7.0 18.0 M 34.0 14.0 L 47.0 27.0 M 20.0 14.0 L 7.0 27.0 M 25.0 14.0 L 47.0 36.0 M 29.0 14.0 L 7.0 36.0 M 16.0 14.0 L 47.0 45.0 M 38.0 14.0 L 7.0 45.0 M 7.0 14.0 L 47.0 54.0 M 47.0 14.0 L 7.0 54.0 M 7.0 23.0 L 47.0 63.0 M 47.0 23.0 L 7.0 63.0 M 7.0 32.0 L 47.0 72.0 M 47.0 32.0 L 7.0 72.0 M 7.0 41.0 L 47.0 81.0 M 47.0 41.0 L 7.0 81.0 M 7.0 50.0 L 47.0 90.0 M 47.0 50.0 L 7.0 90.0 M 7.0 59.0 L 47.0 99.0 M 47.0 59.0 L 7.0 99.0 M 7.0 68.0 L 47.0 108.0 M 47.0 68.0 L 7.0 108.0 M 7.0 77.0 L 47.0 117.0 M 47.0 77.0 L 7.0 117.0 M 7.0 86.0 L 39.0 118.0 M 47.0 86.0 L 15.0 118.0 M 7.0 95.0 L 30.0 118.0 M 47.0 95.0 L 24.0 118.0 M 7.0 104.0 L 21.0 118.0 M 47.0 104.0 L 33.0 118.0 M 7.0 113.0 L 12.0 118.0 M 47.0 113.0 L 42.0 118.0"; }
+    Rectangle { x: 9px; y: 8px; width: 5px; height: 96px; border-radius: 3px; background: #ffffff21; }
+    Rectangle { x: 20px; y: 2px; width: 14px; height: 6px; border-radius: 3px; background: #ffffff1a; }
 }
 
 // A straight stroke in the 480 × 480 screen frame (box grown by the stroke width, see above).
@@ -1511,18 +1526,23 @@ export component TimersPage inherits Rectangle {
     Timer { interval: 1s; running: root.on-anim; triggered => { root.on-anim = false; } }
     property <float> on-t: root.on-anim ? (animation-tick() - root.on-t0) / 1ms : 2000;
     // the stopwatch reset (25.T6 flyback, 25.T9 anti-poisoning cycle) and a new lap (T6 drop, T7 push)
+    // The reset (only from a stopped stopwatch) is seen on the time at rest, -1 while it runs: a running stopwatch's time
+    // changes in every frame, and a handler watching it would ask for every next frame on every page while it runs.
+    property <float> sw-rest: root.watch-running ? -1 : root.watch;
     property <float> sw-prev;
     property <bool> flyback;
     property <duration> fly-t0;
     property <float> fly-from;
     Timer { interval: 420ms; running: root.flyback; triggered => { root.flyback = false; } }
-    changed watch => {
-        if root.watch == 0 && root.sw-prev > 0 {
+    changed sw-rest => {
+        if root.sw-rest == 0 && root.sw-prev > 0 {
             root.fly-from = root.sw-prev;
             root.fly-t0 = animation-tick();
             root.flyback = true;
         }
-        root.sw-prev = root.watch;
+        if root.sw-rest >= 0 {
+            root.sw-prev = root.sw-rest;
+        }
     }
     property <float> fly-k: root.flyback ? 1 - Math.pow(1 - clamp((animation-tick() - root.fly-t0) / 400ms, 0, 1), 3) : 1;
     property <int> lapn: root.laps.length;
@@ -1762,51 +1782,54 @@ export component TimersPage inherits Rectangle {
 
     // 4 nixie tubes: mm ss cc in six tubes and three neon dots on a walnut plinth inside a dark case, the last lap below
     if !root.ringing && root.mode == 2 && root.sw-look == 4: nix := Rectangle {
-        // the time as the tubes show it: sampled 30 times a second while it runs (the hundredths blur anyway)
-        property <float> w30;
-        Timer { interval: 33ms; running: root.watch-running; triggered => { nix.w30 = root.watch; } }
-        property <float> wv: root.watch-running ? nix.w30 : root.watch;
-        property <int> mins: Math.mod(Math.floor(nix.wv / 60), 100);
-        property <int> secs: Math.mod(Math.floor(nix.wv), 60);
-        property <int> cs: Math.mod(Math.floor(nix.wv * 100), 100);
-        Rectangle { x: 22px; y: 108px; width: 436px; height: 200px; border-radius: 18px; background: Theme.dark ? #0e0c0b : #1a1614; }
-        // the plinth (board S4): walnut with grain lines and a knot, end-grain shading, a bevel highlight, the darker lower
-        // edge and a soft contact shadow
-        Path { x: 0; y: 0; width: 480px; height: 480px; viewbox-width: 480; viewbox-height: 480; fill: #000000; opacity: 0.5;
-            commands: "M 20 302 A 220 6 0 1 0 460 302 A 220 6 0 1 0 20 302 Z"; }
-        Rectangle { x: 30px; y: 264px; width: 420px; height: 34px; border-radius: 6px; cache-rendering-hint: true;
-            background: @linear-gradient(180deg, #8a5634 0%, #6b3f22 45%, #3f2313 100%);
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 1.2px; opacity: 0.42;
-                commands: "M0 4.1 L10 4.8 L20 4.7 L30 4.3 L40 4.5 L50 5.1 L60 5.0 L70 4.3 L80 3.9 L90 4.2 L100 4.2 L110 3.6 L120 3.0 L130 3.3 L140 3.8 L150 3.8 L160 3.4 L170 3.6 L180 4.4 L190 4.8 L200 4.5 L210 4.3 L220 4.8 L230 5.2 L240 4.7 L250 4.0 L260 3.9 L270 4.3 L280 4.0 L290 3.3 L300 3.0 L310 3.5 L320 3.9 L330 3.6 L340 3.3 L350 3.9 L360 4.7 L370 4.7 L380 4.3 L390 4.4 L400 5.0 L410 5.1 L420 4.4"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
-                commands: "M0 6.4 L10 7.8 L20 7.2 L30 6.9 L40 7.2 L50 7.1 L60 6.3 L70 5.5 L80 5.6 L90 5.9 L100 5.5 L110 5.0 L120 5.2 L130 5.9 L140 6.3 L150 6.1 L160 6.2 L170 7.0 L180 7.7 L190 7.5 L200 7.1 L210 7.3 L220 7.8 L230 7.4 L240 6.5 L250 6.1 L260 6.3 L270 6.3 L280 5.5 L290 4.9 L300 5.3 L310 5.8 L320 5.7 L330 5.4 L340 5.8 L350 6.8 L360 7.2 L370 6.9 L380 6.9 L390 7.6 L400 8.0 L410 7.5 L420 6.8"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
-                commands: "M0 8.8 L10 9.0 L20 8.3 L30 8.3 L40 8.3 L50 7.7 L60 7.0 L70 7.0 L80 7.7 L90 7.8 L100 7.5 L110 7.7 L120 8.7 L130 9.4 L140 9.4 L150 9.3 L160 9.9 L170 10.6 L180 10.5 L190 9.9 L200 9.7 L210 9.9 L220 9.7 L230 8.7 L240 8.0 L250 8.0 L260 8.1 L270 7.6 L280 6.9 L290 7.1 L300 7.8 L310 8.0 L320 7.7 L330 8.0 L340 9.0 L350 9.7 L360 9.6 L370 9.5 L380 10.1 L390 10.7 L400 10.5 L410 9.7 L420 9.5"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
-                commands: "M0 11.1 L10 10.1 L20 10.3 L30 10.8 L40 10.7 L50 10.2 L60 10.3 L70 11.0 L80 11.4 L90 11.1 L100 10.9 L110 11.5 L120 12.1 L130 11.9 L140 11.4 L150 11.5 L160 12.1 L170 12.1 L180 11.4 L190 11.0 L200 11.3 L210 11.5 L220 10.9 L230 10.2 L240 10.4 L250 10.8 L260 10.7 L270 10.1 L280 10.1 L290 10.8 L300 11.2 L310 10.9 L320 10.7 L330 11.2 L340 11.9 L350 11.8 L360 11.4 L370 11.5 L380 12.1 L390 12.2 L400 11.5 L410 11.2 L420 11.5"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
-                commands: "M0 13.5 L10 12.3 L20 13.1 L30 13.5 L40 13.3 L50 13.2 L60 13.9 L70 14.6 L80 14.5 L90 14.1 L100 14.3 L110 14.9 L120 14.8 L130 14.1 L140 13.8 L150 14.1 L160 14.2 L170 13.4 L180 12.7 L190 12.8 L200 13.1 L210 12.8 L220 12.1 L230 12.0 L240 12.6 L250 12.9 L260 12.5 L270 12.4 L280 13.1 L290 13.8 L300 13.7 L310 13.5 L320 13.9 L330 14.7 L340 14.8 L350 14.3 L360 14.2 L370 14.7 L380 14.9 L390 14.2 L400 13.6 L410 13.6 L420 13.9"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
-                commands: "M0 15.8 L10 16.5 L20 17.2 L30 17.1 L40 16.8 L50 17.1 L60 17.7 L70 17.6 L80 16.8 L90 16.6 L100 16.9 L110 16.8 L120 16.0 L130 15.2 L140 15.3 L150 15.5 L160 14.9 L170 14.2 L180 14.1 L190 14.6 L200 14.7 L210 14.2 L220 14.2 L230 14.9 L240 15.6 L250 15.5 L260 15.4 L270 16.0 L280 16.9 L290 17.1 L300 16.7 L310 16.8 L320 17.5 L330 17.8 L340 17.2 L350 16.7 L360 16.9 L370 17.1 L380 16.5 L390 15.6 L400 15.4 L410 15.6 L420 15.4"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
-                commands: "M0 18.2 L10 19.3 L20 19.1 L30 18.4 L40 18.3 L50 18.8 L60 18.8 L70 18.1 L80 17.6 L90 17.9 L100 18.3 L110 17.8 L120 17.2 L130 17.3 L140 17.8 L150 17.8 L160 17.3 L170 17.2 L180 17.8 L190 18.2 L200 17.9 L210 17.6 L220 18.1 L230 18.7 L240 18.7 L250 18.3 L260 18.4 L270 19.0 L280 19.3 L290 18.7 L300 18.4 L310 18.8 L320 19.2 L330 18.8 L340 18.1 L350 18.1 L360 18.6 L370 18.4 L380 17.7 L390 17.4 L400 17.8 L410 18.0 L420 17.5"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
-                commands: "M0 20.5 L10 21.0 L20 20.2 L30 19.8 L40 20.1 L50 20.3 L60 19.7 L70 19.1 L80 19.3 L90 19.8 L100 19.7 L110 19.2 L120 19.2 L130 19.9 L140 20.3 L150 20.0 L160 19.9 L170 20.5 L180 21.2 L190 21.1 L200 20.8 L210 21.0 L220 21.8 L230 21.9 L240 21.4 L250 21.2 L260 21.7 L270 22.0 L280 21.4 L290 20.8 L300 20.9 L310 21.2 L320 20.9 L330 20.1 L340 19.8 L350 20.2 L360 20.2 L370 19.6 L380 19.1 L390 19.4 L400 19.9 L410 19.6 L420 19.1"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 1.2px; opacity: 0.42;
-                commands: "M0 22.9 L10 21.5 L20 21.0 L30 21.2 L40 21.8 L50 21.7 L60 21.3 L70 21.4 L80 22.2 L90 22.6 L100 22.4 L110 22.4 L120 23.1 L130 23.8 L140 23.7 L150 23.4 L160 23.8 L170 24.6 L180 24.7 L190 24.1 L200 24.0 L210 24.4 L220 24.6 L230 24.0 L240 23.4 L250 23.5 L260 23.7 L270 23.3 L280 22.4 L290 22.1 L300 22.5 L310 22.4 L320 21.6 L330 21.1 L340 21.5 L350 21.8 L360 21.5 L370 21.0 L380 21.3 L390 22.0 L400 22.2 L410 21.8 L420 21.9"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
-                commands: "M0 25.2 L10 24.4 L20 24.6 L30 25.3 L40 25.5 L50 25.1 L60 24.9 L70 25.6 L80 26.1 L90 25.8 L100 25.4 L110 25.7 L120 26.3 L130 26.2 L140 25.6 L150 25.5 L160 26.0 L170 26.2 L180 25.6 L190 25.1 L200 25.4 L210 25.8 L220 25.4 L230 24.7 L240 24.7 L250 25.2 L260 25.1 L270 24.5 L280 24.2 L290 24.6 L300 25.0 L310 24.6 L320 24.1 L330 24.4 L340 25.0 L350 25.0 L360 24.5 L370 24.6 L380 25.3 L390 25.6 L400 25.2 L410 25.0 L420 25.5"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
-                commands: "M0 27.6 L10 27.8 L20 28.5 L30 28.9 L40 28.6 L50 28.2 L60 28.5 L70 29.1 L80 28.9 L90 28.2 L100 28.1 L110 28.6 L120 28.6 L130 27.9 L140 27.4 L150 27.7 L160 28.0 L170 27.4 L180 26.7 L190 26.7 L200 27.2 L210 27.0 L220 26.3 L230 26.1 L240 26.6 L250 26.9 L260 26.5 L270 26.1 L280 26.5 L290 27.2 L300 27.1 L310 26.7 L320 26.9 L330 27.6 L340 28.0 L350 27.6 L360 27.5 L370 28.1 L380 28.7 L390 28.5 L400 28.1 L410 28.4 L420 29.0"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
-                commands: "M0 29.9 L10 31.3 L20 31.7 L30 31.3 L40 30.6 L50 30.5 L60 30.8 L70 30.7 L80 29.9 L90 29.4 L100 29.6 L110 29.8 L120 29.2 L130 28.5 L140 28.6 L150 29.0 L160 28.8 L170 28.1 L180 28.0 L190 28.6 L200 28.9 L210 28.5 L220 28.3 L230 28.8 L240 29.5 L250 29.4 L260 29.1 L270 29.4 L280 30.3 L290 30.6 L300 30.3 L310 30.3 L320 31.0 L330 31.5 L340 31.3 L350 30.9 L360 31.2 L370 31.8 L380 31.7 L390 31.1 L400 30.9 L410 31.4 L420 31.4"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 1px; opacity: 0.45;
-                commands: "M 283 17 A 9 3.2 0 1 0 301 17 A 9 3.2 0 1 0 283 17 Z"; }
-            Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: #2c170b; opacity: 0.45;
-                commands: "M 288 17 A 4 1.4 0 1 0 296 17 A 4 1.4 0 1 0 288 17 Z"; }
-            Rectangle { border-radius: 6px; background: @linear-gradient(90deg, #00000061 0%, #00000000 5%, #00000000 95%, #0000006b 100%); }
-            Rectangle { x: 4px; y: 0; width: 412px; height: 1.8px; border-radius: 1px; background: #ffffff3d; }
-            Rectangle { x: 0; y: 32px; width: 420px; height: 2px; border-radius: 1px; background: #00000066; } }
+        // the time as the tubes show it: the live time in every frame, hundredths included (only the tubes whose digit
+        // changed draw anything new)
+        property <int> mins: Math.mod(Math.floor(root.watch / 60), 100);
+        property <int> secs: Math.mod(Math.floor(root.watch), 60);
+        property <int> cs: Math.mod(Math.floor(root.watch * 100), 100);
+        // what never changes behind the lit tubes, drawn once into one layer: the case, the plinth (board S4: walnut with
+        // grain lines and a knot, end-grain shading, a bevel highlight, the darker lower edge and a soft contact shadow),
+        // each tube's glass and socket
+        Rectangle { cache-rendering-hint: true;
+            Rectangle { x: 22px; y: 108px; width: 436px; height: 200px; border-radius: 18px; background: Theme.dark ? #0e0c0b : #1a1614; }
+            // (the shadow's box hugs it, 2 px round, so the layer holds no empty screen)
+            Path { x: 18px; y: 294px; width: 444px; height: 16px; viewbox-x: 18; viewbox-y: 294; viewbox-width: 444; viewbox-height: 16; fill: #000000; opacity: 0.5;
+                commands: "M 20 302 A 220 6 0 1 0 460 302 A 220 6 0 1 0 20 302 Z"; }
+            Rectangle { x: 30px; y: 264px; width: 420px; height: 34px; border-radius: 6px;
+                background: @linear-gradient(180deg, #8a5634 0%, #6b3f22 45%, #3f2313 100%);
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 1.2px; opacity: 0.42;
+                    commands: "M0 4.1 L10 4.8 L20 4.7 L30 4.3 L40 4.5 L50 5.1 L60 5.0 L70 4.3 L80 3.9 L90 4.2 L100 4.2 L110 3.6 L120 3.0 L130 3.3 L140 3.8 L150 3.8 L160 3.4 L170 3.6 L180 4.4 L190 4.8 L200 4.5 L210 4.3 L220 4.8 L230 5.2 L240 4.7 L250 4.0 L260 3.9 L270 4.3 L280 4.0 L290 3.3 L300 3.0 L310 3.5 L320 3.9 L330 3.6 L340 3.3 L350 3.9 L360 4.7 L370 4.7 L380 4.3 L390 4.4 L400 5.0 L410 5.1 L420 4.4"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
+                    commands: "M0 6.4 L10 7.8 L20 7.2 L30 6.9 L40 7.2 L50 7.1 L60 6.3 L70 5.5 L80 5.6 L90 5.9 L100 5.5 L110 5.0 L120 5.2 L130 5.9 L140 6.3 L150 6.1 L160 6.2 L170 7.0 L180 7.7 L190 7.5 L200 7.1 L210 7.3 L220 7.8 L230 7.4 L240 6.5 L250 6.1 L260 6.3 L270 6.3 L280 5.5 L290 4.9 L300 5.3 L310 5.8 L320 5.7 L330 5.4 L340 5.8 L350 6.8 L360 7.2 L370 6.9 L380 6.9 L390 7.6 L400 8.0 L410 7.5 L420 6.8"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
+                    commands: "M0 8.8 L10 9.0 L20 8.3 L30 8.3 L40 8.3 L50 7.7 L60 7.0 L70 7.0 L80 7.7 L90 7.8 L100 7.5 L110 7.7 L120 8.7 L130 9.4 L140 9.4 L150 9.3 L160 9.9 L170 10.6 L180 10.5 L190 9.9 L200 9.7 L210 9.9 L220 9.7 L230 8.7 L240 8.0 L250 8.0 L260 8.1 L270 7.6 L280 6.9 L290 7.1 L300 7.8 L310 8.0 L320 7.7 L330 8.0 L340 9.0 L350 9.7 L360 9.6 L370 9.5 L380 10.1 L390 10.7 L400 10.5 L410 9.7 L420 9.5"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
+                    commands: "M0 11.1 L10 10.1 L20 10.3 L30 10.8 L40 10.7 L50 10.2 L60 10.3 L70 11.0 L80 11.4 L90 11.1 L100 10.9 L110 11.5 L120 12.1 L130 11.9 L140 11.4 L150 11.5 L160 12.1 L170 12.1 L180 11.4 L190 11.0 L200 11.3 L210 11.5 L220 10.9 L230 10.2 L240 10.4 L250 10.8 L260 10.7 L270 10.1 L280 10.1 L290 10.8 L300 11.2 L310 10.9 L320 10.7 L330 11.2 L340 11.9 L350 11.8 L360 11.4 L370 11.5 L380 12.1 L390 12.2 L400 11.5 L410 11.2 L420 11.5"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
+                    commands: "M0 13.5 L10 12.3 L20 13.1 L30 13.5 L40 13.3 L50 13.2 L60 13.9 L70 14.6 L80 14.5 L90 14.1 L100 14.3 L110 14.9 L120 14.8 L130 14.1 L140 13.8 L150 14.1 L160 14.2 L170 13.4 L180 12.7 L190 12.8 L200 13.1 L210 12.8 L220 12.1 L230 12.0 L240 12.6 L250 12.9 L260 12.5 L270 12.4 L280 13.1 L290 13.8 L300 13.7 L310 13.5 L320 13.9 L330 14.7 L340 14.8 L350 14.3 L360 14.2 L370 14.7 L380 14.9 L390 14.2 L400 13.6 L410 13.6 L420 13.9"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
+                    commands: "M0 15.8 L10 16.5 L20 17.2 L30 17.1 L40 16.8 L50 17.1 L60 17.7 L70 17.6 L80 16.8 L90 16.6 L100 16.9 L110 16.8 L120 16.0 L130 15.2 L140 15.3 L150 15.5 L160 14.9 L170 14.2 L180 14.1 L190 14.6 L200 14.7 L210 14.2 L220 14.2 L230 14.9 L240 15.6 L250 15.5 L260 15.4 L270 16.0 L280 16.9 L290 17.1 L300 16.7 L310 16.8 L320 17.5 L330 17.8 L340 17.2 L350 16.7 L360 16.9 L370 17.1 L380 16.5 L390 15.6 L400 15.4 L410 15.6 L420 15.4"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
+                    commands: "M0 18.2 L10 19.3 L20 19.1 L30 18.4 L40 18.3 L50 18.8 L60 18.8 L70 18.1 L80 17.6 L90 17.9 L100 18.3 L110 17.8 L120 17.2 L130 17.3 L140 17.8 L150 17.8 L160 17.3 L170 17.2 L180 17.8 L190 18.2 L200 17.9 L210 17.6 L220 18.1 L230 18.7 L240 18.7 L250 18.3 L260 18.4 L270 19.0 L280 19.3 L290 18.7 L300 18.4 L310 18.8 L320 19.2 L330 18.8 L340 18.1 L350 18.1 L360 18.6 L370 18.4 L380 17.7 L390 17.4 L400 17.8 L410 18.0 L420 17.5"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
+                    commands: "M0 20.5 L10 21.0 L20 20.2 L30 19.8 L40 20.1 L50 20.3 L60 19.7 L70 19.1 L80 19.3 L90 19.8 L100 19.7 L110 19.2 L120 19.2 L130 19.9 L140 20.3 L150 20.0 L160 19.9 L170 20.5 L180 21.2 L190 21.1 L200 20.8 L210 21.0 L220 21.8 L230 21.9 L240 21.4 L250 21.2 L260 21.7 L270 22.0 L280 21.4 L290 20.8 L300 20.9 L310 21.2 L320 20.9 L330 20.1 L340 19.8 L350 20.2 L360 20.2 L370 19.6 L380 19.1 L390 19.4 L400 19.9 L410 19.6 L420 19.1"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 1.2px; opacity: 0.42;
+                    commands: "M0 22.9 L10 21.5 L20 21.0 L30 21.2 L40 21.8 L50 21.7 L60 21.3 L70 21.4 L80 22.2 L90 22.6 L100 22.4 L110 22.4 L120 23.1 L130 23.8 L140 23.7 L150 23.4 L160 23.8 L170 24.6 L180 24.7 L190 24.1 L200 24.0 L210 24.4 L220 24.6 L230 24.0 L240 23.4 L250 23.5 L260 23.7 L270 23.3 L280 22.4 L290 22.1 L300 22.5 L310 22.4 L320 21.6 L330 21.1 L340 21.5 L350 21.8 L360 21.5 L370 21.0 L380 21.3 L390 22.0 L400 22.2 L410 21.8 L420 21.9"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
+                    commands: "M0 25.2 L10 24.4 L20 24.6 L30 25.3 L40 25.5 L50 25.1 L60 24.9 L70 25.6 L80 26.1 L90 25.8 L100 25.4 L110 25.7 L120 26.3 L130 26.2 L140 25.6 L150 25.5 L160 26.0 L170 26.2 L180 25.6 L190 25.1 L200 25.4 L210 25.8 L220 25.4 L230 24.7 L240 24.7 L250 25.2 L260 25.1 L270 24.5 L280 24.2 L290 24.6 L300 25.0 L310 24.6 L320 24.1 L330 24.4 L340 25.0 L350 25.0 L360 24.5 L370 24.6 L380 25.3 L390 25.6 L400 25.2 L410 25.0 L420 25.5"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #c08a5c; stroke-width: 0.8px; opacity: 0.22;
+                    commands: "M0 27.6 L10 27.8 L20 28.5 L30 28.9 L40 28.6 L50 28.2 L60 28.5 L70 29.1 L80 28.9 L90 28.2 L100 28.1 L110 28.6 L120 28.6 L130 27.9 L140 27.4 L150 27.7 L160 28.0 L170 27.4 L180 26.7 L190 26.7 L200 27.2 L210 27.0 L220 26.3 L230 26.1 L240 26.6 L250 26.9 L260 26.5 L270 26.1 L280 26.5 L290 27.2 L300 27.1 L310 26.7 L320 26.9 L330 27.6 L340 28.0 L350 27.6 L360 27.5 L370 28.1 L380 28.7 L390 28.5 L400 28.1 L410 28.4 L420 29.0"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 0.8px; opacity: 0.42;
+                    commands: "M0 29.9 L10 31.3 L20 31.7 L30 31.3 L40 30.6 L50 30.5 L60 30.8 L70 30.7 L80 29.9 L90 29.4 L100 29.6 L110 29.8 L120 29.2 L130 28.5 L140 28.6 L150 29.0 L160 28.8 L170 28.1 L180 28.0 L190 28.6 L200 28.9 L210 28.5 L220 28.3 L230 28.8 L240 29.5 L250 29.4 L260 29.1 L270 29.4 L280 30.3 L290 30.6 L300 30.3 L310 30.3 L320 31.0 L330 31.5 L340 31.3 L350 30.9 L360 31.2 L370 31.8 L380 31.7 L390 31.1 L400 30.9 L410 31.4 L420 31.4"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: transparent; stroke: #2c170b; stroke-width: 1px; opacity: 0.45;
+                    commands: "M 283 17 A 9 3.2 0 1 0 301 17 A 9 3.2 0 1 0 283 17 Z"; }
+                Path { x: 0; y: 0; width: 420px; height: 34px; viewbox-width: 420; viewbox-height: 34; fill: #2c170b; opacity: 0.45;
+                    commands: "M 288 17 A 4 1.4 0 1 0 296 17 A 4 1.4 0 1 0 288 17 Z"; }
+                Rectangle { border-radius: 6px; background: @linear-gradient(90deg, #00000061 0%, #00000000 5%, #00000000 95%, #0000006b 100%); }
+                Rectangle { x: 4px; y: 0; width: 412px; height: 1.8px; border-radius: 1px; background: #ffffff3d; }
+                Rectangle { x: 0; y: 32px; width: 420px; height: 2px; border-radius: 1px; background: #00000066; } }
+            for x in [47, 107, 183, 243, 319, 379]: NixieTubeBack { x: x * 1px; y: 124px; }
+        }
         property <bool> cycling: root.flyback && (animation-tick() - root.fly-t0) < 400ms;
         // the entrance (25.T16), with a time on the stopwatch: every tube runs through 0-9 once (T9's cycle, 400 ms), then
         // stops on its digit; while the tab waits the tubes show 0
@@ -1816,8 +1839,10 @@ export component TimersPage inherits Rectangle {
                 : nix.ent-cycle ? Math.mod(Math.floor(sw-ent.ent / 40) + i, 10) : sw-ent.armed ? 0
                 : i == 0 ? Math.floor(nix.mins / 10) : i == 1 ? Math.mod(nix.mins, 10) : i == 2 ? Math.floor(nix.secs / 10) : i == 3 ? Math.mod(nix.secs, 10)
                 : i == 4 ? Math.floor(nix.cs / 10) : Math.mod(nix.cs, 10); }
-        // the three neon dots with their glow: drawn once
+        // what never changes in front of the lit tubes, drawn once into one layer: each tube's anode mesh and glass
+        // highlights, the three neon dots with their glow
         Rectangle { cache-rendering-hint: true;
+            for x in [47, 107, 183, 243, 319, 379]: NixieTubeFront { x: x * 1px; y: 124px; }
             for dt in [{ x: 167, y: 164 }, { x: 167, y: 202 }, { x: 303, y: 222 }]: Rectangle { x: dt.x * 1px; y: dt.y * 1px; width: 9px; height: 9px; border-radius: 4.5px;
                 background: #ffb35c; drop-shadow-blur: 10px; drop-shadow-color: #ff6a00; } }
         // the laps under the case, newest on top; two lines show, the rest scrolls
