@@ -6025,7 +6025,7 @@ class PanelOSPage extends HTMLElement {
   _startAdd() {
     const used = new Set(this._panels.map((x) => x.settings?.panel_id));
     // a panel that already asks for its settings, else the ID of a panel without a name while no panel uses it
-    const asking = (this._data.waiting_panels || []).find((id) => !used.has(id));
+    const asking = (this._data?.waiting_panels || []).find((id) => !used.has(id));
     const panelId = asking || (used.has("nspanel-pro") ? "" : "nspanel-pro");
     this._openSheet({ kind: "add", step: 1, panelId, start: "defaults", copyFrom: this._panels[0]?.entry_id || null, error: null, busy: false });
   }
