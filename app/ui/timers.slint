@@ -1780,6 +1780,11 @@ export component TimersPage inherits Rectangle {
         // the time as the tubes show it: sampled 30 times a second while it runs (the hundredths blur anyway)
         property <float> w30;
         Timer { interval: 33ms; running: root.watch-running; triggered => { nix.w30 = root.watch; } }
+        // a start, and the look shown while it runs, take the time at once: until the first tick the tubes would show the
+        // last sample, the run before's time after a Reset
+        property <bool> run: root.watch-running;
+        init => { nix.w30 = root.watch; }
+        changed run => { nix.w30 = root.watch; }
         property <float> wv: root.watch-running ? nix.w30 : root.watch;
         property <int> mins: Math.mod(Math.floor(nix.wv / 60), 100);
         property <int> secs: Math.mod(Math.floor(nix.wv), 60);
