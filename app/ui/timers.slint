@@ -1777,18 +1777,11 @@ export component TimersPage inherits Rectangle {
 
     // 4 nixie tubes: mm ss cc in six tubes and three neon dots on a walnut plinth inside a dark case, the last lap below
     if !root.ringing && root.mode == 2 && root.sw-look == 4: nix := Rectangle {
-        // the time as the tubes show it: sampled 30 times a second while it runs (the hundredths blur anyway)
-        property <float> w30;
-        Timer { interval: 33ms; running: root.watch-running; triggered => { nix.w30 = root.watch; } }
-        // a start, and the look shown while it runs, take the time at once: until the first tick the tubes would show the
-        // last sample, the run before's time after a Reset
-        property <bool> run: root.watch-running;
-        init => { nix.w30 = root.watch; }
-        changed run => { nix.w30 = root.watch; }
-        property <float> wv: root.watch-running ? nix.w30 : root.watch;
-        property <int> mins: Math.mod(Math.floor(nix.wv / 60), 100);
-        property <int> secs: Math.mod(Math.floor(nix.wv), 60);
-        property <int> cs: Math.mod(Math.floor(nix.wv * 100), 100);
+        // the time as the tubes show it: the live time in every frame, hundredths included (only the tubes whose digit
+        // changed draw anything new)
+        property <int> mins: Math.mod(Math.floor(root.watch / 60), 100);
+        property <int> secs: Math.mod(Math.floor(root.watch), 60);
+        property <int> cs: Math.mod(Math.floor(root.watch * 100), 100);
         // what never changes behind the lit tubes, drawn once into one layer: the case, the plinth (board S4: walnut with
         // grain lines and a knot, end-grain shading, a bevel highlight, the darker lower edge and a soft contact shadow),
         // each tube's glass and socket
