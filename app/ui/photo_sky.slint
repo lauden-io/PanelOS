@@ -234,37 +234,41 @@ export component PhotoSky inherits Rectangle {
     Rectangle {
         y: 0; height: root.land * 1px + root.sy;
         clip: true;
-        // 0. drawn themes: still backdrop (sky gradient, sun or moon, stars) under the drifting clouds
-        if root.vector && !root.day-hidden: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.back(root.theme, root.mood); }
-        if root.vector && root.has-grade && root.dk > 0 && root.nmix < 1: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dk; source: root.gback(root.theme, root.mood, 0); }
-        if root.vector && root.has-grade && root.dn > 0 && root.nmix < 1: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dn; source: root.gback(root.theme, root.mood, 1); }
-        if root.vector && root.nmix > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.nmix; source: root.back(root.theme, root.nmood); }
+        // 0-0c: drawn once into a layer (the line theme's rays shimmer: drawn directly)
+        Rectangle {
+            cache-rendering-hint: root.vector && root.theme != 7;
+            // 0. drawn themes: still backdrop (sky gradient, sun or moon, stars) under the drifting clouds
+            if root.vector && !root.day-hidden: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.back(root.theme, root.mood); }
+            if root.vector && root.has-grade && root.dk > 0 && root.nmix < 1: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dk; source: root.gback(root.theme, root.mood, 0); }
+            if root.vector && root.has-grade && root.dn > 0 && root.nmix < 1: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dn; source: root.gback(root.theme, root.mood, 1); }
+            if root.vector && root.nmix > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.nmix; source: root.back(root.theme, root.nmood); }
 
-        // 0b. sun (behind the clouds and the land, so it sets behind the hills / skyline)
-        if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 230) * 1px; y: root.sy + (root.sun-py - 230) * 1px; width: 460px; height: 460px;
-            source: (root.light-variant ? @image-url("wx-light/vsun-glow-light.png") : @image-url("wx/vsun-glow.png")); opacity: root.sa * (1 - root.low) * root.sglow; }
-        if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 210) * 1px; y: root.sy + (root.sun-py - 210) * 1px; width: 420px; height: 420px;
-            source: (root.light-variant ? @image-url("wx-light/vsun-glow-low-light.png") : @image-url("wx/vsun-glow-low.png")); opacity: root.sa * root.low * root.sglow; }
-        if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
-            source: (root.light-variant ? @image-url("wx-light/vsun-disc-light.png") : @image-url("wx/vsun-disc.png")); opacity: root.sa * (1 - root.low) * root.sdisc; }
-        if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
-            source: (root.light-variant ? @image-url("wx-light/vsun-disc-low-light.png") : @image-url("wx/vsun-disc-low.png")); opacity: root.sa * root.low * root.sdisc; }
-        // line theme: an accent ring with two sets of short rays crossfading (a slow shimmer);
-        // the rays fade when the sun is low
-        if root.sun-on && root.theme == 7: Image { x: root.sx + (root.sun-px - 28) * 1px; y: root.sy + (root.sun-py - 28) * 1px; width: 56px; height: 56px;
-            source: (root.light-variant ? @image-url("wx-light/vline-sun-light.png") : @image-url("wx/vline-sun.png")); colorize: root.line-acc; opacity: root.sa * 0.85 * root.sdisc; }
-        if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
-            source: (root.light-variant ? @image-url("wx-light/vline-rays-a-light.png") : @image-url("wx/vline-rays-a.png")); colorize: root.line-acc; opacity: root.ra * (0.5 + 0.5 * Math.sin(root.t * 60deg)); }
-        if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
-            source: (root.light-variant ? @image-url("wx-light/vline-rays-b-light.png") : @image-url("wx/vline-rays-b.png")); colorize: root.line-acc; opacity: root.ra * (0.5 - 0.5 * Math.sin(root.t * 60deg)); }
+            // 0b. sun (behind the clouds and the land, so it sets behind the hills / skyline)
+            if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 230) * 1px; y: root.sy + (root.sun-py - 230) * 1px; width: 460px; height: 460px;
+                source: (root.light-variant ? @image-url("wx-light/vsun-glow-light.png") : @image-url("wx/vsun-glow.png")); opacity: root.sa * (1 - root.low) * root.sglow; }
+            if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 210) * 1px; y: root.sy + (root.sun-py - 210) * 1px; width: 420px; height: 420px;
+                source: (root.light-variant ? @image-url("wx-light/vsun-glow-low-light.png") : @image-url("wx/vsun-glow-low.png")); opacity: root.sa * root.low * root.sglow; }
+            if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
+                source: (root.light-variant ? @image-url("wx-light/vsun-disc-light.png") : @image-url("wx/vsun-disc.png")); opacity: root.sa * (1 - root.low) * root.sdisc; }
+            if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
+                source: (root.light-variant ? @image-url("wx-light/vsun-disc-low-light.png") : @image-url("wx/vsun-disc-low.png")); opacity: root.sa * root.low * root.sdisc; }
+            // line theme: an accent ring with two sets of short rays crossfading (a slow shimmer);
+            // the rays fade when the sun is low
+            if root.sun-on && root.theme == 7: Image { x: root.sx + (root.sun-px - 28) * 1px; y: root.sy + (root.sun-py - 28) * 1px; width: 56px; height: 56px;
+                source: (root.light-variant ? @image-url("wx-light/vline-sun-light.png") : @image-url("wx/vline-sun.png")); colorize: root.line-acc; opacity: root.sa * 0.85 * root.sdisc; }
+            if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
+                source: (root.light-variant ? @image-url("wx-light/vline-rays-a-light.png") : @image-url("wx/vline-rays-a.png")); colorize: root.line-acc; opacity: root.ra * (0.5 + 0.5 * Math.sin(root.t * 60deg)); }
+            if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
+                source: (root.light-variant ? @image-url("wx-light/vline-rays-b-light.png") : @image-url("wx/vline-rays-b.png")); colorize: root.line-acc; opacity: root.ra * (0.5 - 0.5 * Math.sin(root.t * 60deg)); }
 
-        // 0c. moon with its real phase
-        if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 120) * 1px; y: root.sy + (root.moon-py - 120) * 1px; width: 240px; height: 240px;
-            source: (root.light-variant ? @image-url("wx-light/vmoon-glow-light.png") : @image-url("wx/vmoon-glow.png")); opacity: root.moon-a * (0.25 + 0.75 * Math.sin(root.moon-phase * 180deg)) * root.mdisc; }
-        if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
-            source: (root.light-variant ? @image-url("wx-light/vmoon-light.png") : @image-url("wx/vmoon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
-        if root.moon-on && root.theme == 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
-            source: (root.light-variant ? @image-url("wx-light/vline-moon-light.png") : @image-url("wx/vline-moon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
+            // 0c. moon with its real phase
+            if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 120) * 1px; y: root.sy + (root.moon-py - 120) * 1px; width: 240px; height: 240px;
+                source: (root.light-variant ? @image-url("wx-light/vmoon-glow-light.png") : @image-url("wx/vmoon-glow.png")); opacity: root.moon-a * (0.25 + 0.75 * Math.sin(root.moon-phase * 180deg)) * root.mdisc; }
+            if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
+                source: (root.light-variant ? @image-url("wx-light/vmoon-light.png") : @image-url("wx/vmoon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
+            if root.moon-on && root.theme == 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
+                source: (root.light-variant ? @image-url("wx-light/vline-moon-light.png") : @image-url("wx/vline-moon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
+        }
 
         // 1. sky photo: seamless 792 px tile, two copies, plus the sub-pixel copies
         if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
@@ -437,22 +441,26 @@ export component PhotoSky inherits Rectangle {
     property <int> land-h: root.land-bot - root.land-top;
     property <int> day-h: (root.day-hidden ? root.land : root.land-bot) - root.land-top;
     property <int> grade-h: (root.nmix >= 1 ? root.land : root.land-bot) - root.land-top;
-    Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.day-h * 1px; source: root.fg(root.theme, root.mood);
-        source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.day-h; }
-    if root.has-grade && root.dk > 0: Image {
-        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dk;
-        source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
+    // drawn once into a layer: the land changes only with the weather, the light and the lit windows
+    Rectangle {
+        cache-rendering-hint: true;
+        Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.day-h * 1px; source: root.fg(root.theme, root.mood);
+            source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.day-h; }
+        if root.has-grade && root.dk > 0: Image {
+            x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dk;
+            source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
+        }
+        if root.has-grade && root.dn > 0: Image {
+            x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dn;
+            source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
+        }
+        if root.nmix > 0: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.nmix;
+            source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
+        // city windows lit one by one (the app draws them over the unlit art): the lit layer
+        if root.win-on: Image { x: root.fx + root.win-base-rect.x * 1px; y: root.fy + root.win-base-rect.y * 1px;
+            width: root.win-base-rect.w * 1px; height: root.win-base-rect.h * 1px; source: root.win-base; }
     }
-    if root.has-grade && root.dn > 0: Image {
-        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dn;
-        source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
-    }
-    if root.nmix > 0: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.nmix;
-        source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
-    // city windows lit one by one (the app draws them over the unlit art): the lit layer, a window
-    // coming on fading in, a window going off fading out (0.9 s)
-    if root.win-on: Image { x: root.fx + root.win-base-rect.x * 1px; y: root.fy + root.win-base-rect.y * 1px;
-        width: root.win-base-rect.w * 1px; height: root.win-base-rect.h * 1px; source: root.win-base; }
+    // a window coming on fading in, a window going off fading out (0.9 s), over the land's layer
     if root.win-on && root.win-in-k > 0.001: Image {
         x: root.fx + root.win-in-rect.x * 1px; y: root.fy + root.win-in-rect.y * 1px; width: root.win-in-rect.w * 1px; height: root.win-in-rect.h * 1px;
         source: root.win-in; opacity: root.win-in-k; }
