@@ -467,12 +467,18 @@ export component SettingsLayer inherits Rectangle {
         Rectangle { x: 420px; y: 52px + parent.lift; width: 44px; height: 44px; border-radius: 22px; background: close-ta.pressed ? Brand.pressed : Brand.raised;
             Icon { text: "\u{F0156}"; font-size: 22px; color: Brand.text; }
             close-ta := TouchArea { clicked => { Act.act("shade.close", ""); } } }
-        // the rows on one card: 52 px each, a line between them; the card scrolls when it is taller than the room
-        property <length> card-h: Math.min(root.rows.length * 52px + 28px, parent.height - 106px - 40px);
+        // the rows on one card: 52 px each, a line between them, 14 px padding. When they do not all fit, the rows'
+        // window ends 34 px into a row and the card scrolls; the alarm chips' foot fade lies over that row (its name fades
+        // out at the edge) until the list is at its end, so it shows that more rows follow
+        property <length> room: parent.height - 106px - 40px;
+        property <length> all-h: root.rows.length * 52px;
+        property <int> full: Math.max(0, Math.floor((self.room - 28px - 34px) / 52px));
+        property <length> win-h: self.all-h + 28px <= self.room ? self.all-h : self.full * 52px + 34px;
+        property <length> card-h: self.win-h + 28px;
         Rectangle {
             x: 16px; y: 106px + parent.lift; width: 448px; height: parent.card-h; border-radius: 18px; background: Brand.surface; border-width: 1px; border-color: Brand.line;
             clip: true;
-            Flickable { x: 0; y: 14px; width: parent.width; height: parent.height - 28px;
+            list := Flickable { x: 0; y: 14px; width: parent.width; height: parent.height - 28px;
                 viewport-height: Math.max(self.height, root.rows.length * 52px);
                 for r[i] in root.rows: Rectangle {
                     x: 14px; y: i * 52px; width: parent.width - 28px; height: 52px;
@@ -489,6 +495,11 @@ export component SettingsLayer inherits Rectangle {
                     if !r.danger: Icon { x: parent.width - 24px; y: 0; width: 22px; height: parent.height; text: "\u{F0142}"; font-size: 20px; color: Brand.muted; }
                 }
             }
+            // more below: a soft fade at the foot of the rows (until the list is scrolled to its end); inside the outline and
+            // above the bottom padding, so it never reaches the rounded corners
+            if list.content-y > list.height - list.content-height + 2px: Rectangle {
+                x: 1px; y: list.y + list.height - 22px; width: parent.width - 2px; height: 22px;
+                background: @linear-gradient(180deg, Brand.surface.with-alpha(0) 0%, Brand.surface 100%); }
         }
         Text { x: 16px; y: parent.height - 30px; width: parent.width - 32px; text: root.tagline; font-size: 12px; color: Brand.muted; horizontal-alignment: center; }
         // ------------------------------------------------------------------ 5 restart: are you sure
