@@ -1526,18 +1526,23 @@ export component TimersPage inherits Rectangle {
     Timer { interval: 1s; running: root.on-anim; triggered => { root.on-anim = false; } }
     property <float> on-t: root.on-anim ? (animation-tick() - root.on-t0) / 1ms : 2000;
     // the stopwatch reset (25.T6 flyback, 25.T9 anti-poisoning cycle) and a new lap (T6 drop, T7 push)
+    // The reset (only from a stopped stopwatch) is seen on the time at rest, -1 while it runs: a running stopwatch's time
+    // changes in every frame, and a handler watching it would ask for every next frame on every page while it runs.
+    property <float> sw-rest: root.watch-running ? -1 : root.watch;
     property <float> sw-prev;
     property <bool> flyback;
     property <duration> fly-t0;
     property <float> fly-from;
     Timer { interval: 420ms; running: root.flyback; triggered => { root.flyback = false; } }
-    changed watch => {
-        if root.watch == 0 && root.sw-prev > 0 {
+    changed sw-rest => {
+        if root.sw-rest == 0 && root.sw-prev > 0 {
             root.fly-from = root.sw-prev;
             root.fly-t0 = animation-tick();
             root.flyback = true;
         }
-        root.sw-prev = root.watch;
+        if root.sw-rest >= 0 {
+            root.sw-prev = root.sw-rest;
+        }
     }
     property <float> fly-k: root.flyback ? 1 - Math.pow(1 - clamp((animation-tick() - root.fly-t0) / 400ms, 0, 1), 3) : 1;
     property <int> lapn: root.laps.length;
