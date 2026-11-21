@@ -233,10 +233,19 @@ fn session(
     }
 
     let mut next_id: u64 = 1;
+    // Who the panel is logged in as: the user's id goes to Home Assistant as the Panel user sensor of the panel's
+    // ESPHome device, and the PanelOS integration accepts commands as this panel only from that user (and
+    // administrators). Asked first, so the sensor is usually there before the panel subscribes.
+    let user_id = next_id;
+    send_json(&mut ws, &json!({"id": user_id, "type": "auth/current_user"}))?;
+    next_id += 1;
     let dash_id = next_id;
     send_json(&mut ws, &json!({"id": dash_id, "type": "lovelace/config", "url_path": url_path}))?;
     let config = loop {
         let msg = read_json(&mut ws)?.ok_or("no dashboard answer")?;
+        if msg["id"] == user_id {
+            take_user(&msg, &shared.device);
+        }
         if msg["id"] == dash_id {
             if msg["success"] != true {
                 return Err(format!("dashboard '{dashboard}': {}", msg["error"]["message"]));
@@ -445,6 +454,7 @@ fn session(
                         panel_retry_at = Some(Instant::now() + Duration::from_secs(10));
                     }
                     Some("result") if msg["id"] == panel_id => report = Report { linked: true, ..Default::default() },
+                    Some("result") if msg["id"] == user_id => take_user(&msg, &shared.device),
                     Some("result") if msg["id"].as_u64().is_some_and(|id| timer_starts.contains_key(&id)) => {
                         if let Some((seconds, name)) = msg["id"].as_u64().and_then(|id| timer_starts.remove(&id)) {
                             if msg["success"] != true {
@@ -536,6 +546,29 @@ fn session(
                 log_id = next_id;
             }
         }
+    }
+}
+
+/// The id and name of the user in Home Assistant's answer to `auth/current_user`; None for an error or an odd answer
+/// (Home Assistant's user ids are 32 hex digits).
+fn current_user(msg: &Value) -> Option<(String, String)> {
+    if msg["success"] != true {
+        return None;
+    }
+    let id = msg["result"]["id"].as_str()?;
+    if id.is_empty() || id.len() > 64 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    Some((id.to_string(), msg["result"]["name"].as_str().unwrap_or("").to_string()))
+}
+
+/// Home Assistant said who the panel is logged in as: the Panel user sensor of the ESPHome device shows it.
+fn take_user(msg: &Value, device: &std::sync::Mutex<crate::esphome::DeviceState>) {
+    match current_user(msg) {
+        Some((id, name)) => {
+            crate::esphome::set_panel_user(device, &id, &name);
+        }
+        None => eprintln!("nspanel-app: Home Assistant did not say which user the panel is logged in as: {}", msg["error"]),
     }
 }
 
@@ -732,4 +765,35 @@ pub fn spawn(
             delay = (delay * 2).min(10);
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn current_user_from_the_answer() {
+        let ok = json!({"id": 1, "type": "result", "success": true,
+            "result": {"id": "0123456789abcdef0123456789abcdef", "name": "Panel", "is_owner": false, "is_admin": false}});
+        assert_eq!(current_user(&ok), Some(("0123456789abcdef0123456789abcdef".into(), "Panel".into())));
+        // a user without a name
+        let unnamed = json!({"id": 1, "type": "result", "success": true, "result": {"id": "abc123", "name": null}});
+        assert_eq!(current_user(&unnamed), Some(("abc123".into(), String::new())));
+    }
+
+    #[test]
+    fn current_user_refuses_errors_and_odd_ids() {
+        let error = json!({"id": 1, "type": "result", "success": false, "error": {"code": "unknown_command", "message": "Unknown command."}});
+        assert_eq!(current_user(&error), None);
+        let no_id = json!({"id": 1, "type": "result", "success": true, "result": {"name": "Panel"}});
+        assert_eq!(current_user(&no_id), None);
+        let empty = json!({"id": 1, "type": "result", "success": true, "result": {"id": ""}});
+        assert_eq!(current_user(&empty), None);
+        let odd = json!({"id": 1, "type": "result", "success": true, "result": {"id": "abc 123"}});
+        assert_eq!(current_user(&odd), None);
+        let long = json!({"id": 1, "type": "result", "success": true, "result": {"id": "a".repeat(65)}});
+        assert_eq!(current_user(&long), None);
+        let number = json!({"id": 1, "type": "result", "success": true, "result": {"id": 42}});
+        assert_eq!(current_user(&number), None);
+    }
 }
