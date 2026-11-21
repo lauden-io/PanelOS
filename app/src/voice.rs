@@ -62,6 +62,19 @@ pub static MIC_TRACE: std::sync::Mutex<std::collections::VecDeque<i16>> = std::s
 pub static OUT_TRACE: std::sync::Mutex<std::collections::VecDeque<i16>> = std::sync::Mutex::new(std::collections::VecDeque::new());
 const TRACE_KEEP: usize = 1600;
 
+/// UI → voice thread: do not disturb is on and does not let voice through. The assistant still listens and answers, but
+/// a conversation started now has no listening chime and its answer is not spoken (it shows on the screen).
+pub static DND_QUIET: AtomicBool = AtomicBool::new(false);
+/// Voice thread → UI: the current conversation is a quiet one (`DND_QUIET` at its wake word; its follow-ups and an
+/// answer that comes after do not disturb has ended stay quiet, a new wake word decides again).
+pub static QUIET_RUN: AtomicBool = AtomicBool::new(false);
+
+/// How long a silent answer stays on the screen after its run (it is not spoken, so it is read): 5 s, longer for a
+/// long answer (15 characters a second), at most 30 s. A tap closes it sooner.
+pub fn silent_answer_secs(answer: &str) -> u64 {
+    (answer.chars().count() as u64 / 15).clamp(5, 30)
+}
+
 fn keep_trace(q: &std::sync::Mutex<std::collections::VecDeque<i16>>, samples: impl Iterator<Item = i16>) {
     let mut q = q.lock().unwrap();
     q.extend(samples);
@@ -1121,6 +1134,19 @@ pub fn busy() -> bool {
     RUN_ACTIVE.load(Ordering::Relaxed) || ANNOUNCING.load(Ordering::Relaxed)
 }
 
+/// A conversation starts at a wake word: the listening chime, unless do not disturb keeps voice quiet now. Returns
+/// whether the conversation is a quiet one (no chime, its answers not spoken), and tells the UI.
+fn begin_conversation(player: &Player) -> bool {
+    let quiet = DND_QUIET.load(Ordering::Relaxed);
+    QUIET_RUN.store(quiet, Ordering::Relaxed);
+    if quiet {
+        eprintln!("nspanel-app: voice: do not disturb: no chime, the answer only on the screen");
+    } else {
+        player.play(Sound::Chime);
+    }
+    quiet
+}
+
 /// Downloads and plays an announcement; reports the result back to Home Assistant.
 fn announce(media_id: String, ha_url: String, player: Arc<Player>, to_api: Sender<ToApi>) {
     if ANNOUNCING.swap(true, Ordering::SeqCst) {
@@ -1241,6 +1267,8 @@ pub fn spawn(
         // After the panel ended a silent follow-up: Home Assistant's late
         // error events are not shown.
         let mut quiet_until: Option<Instant> = None;
+        // Do not disturb without voice at the conversation's wake word: no chime, the answer not spoken.
+        let mut quiet_run = false;
         loop {
             // Microphones
             let frames = {
@@ -1392,7 +1420,8 @@ pub fn spawn(
                             // TTS stream start, TTS end (URL), stream end
                             98 => {
                                 expecting_tts = Some(Instant::now());
-                                tts_hold = Some((Vec::new(), Instant::now()));
+                                // a quiet conversation's answer is not played (nothing is held for it)
+                                tts_hold = (!quiet_run).then(|| (Vec::new(), Instant::now()));
                                 tts_chunks = 0;
                                 tts_first = None;
                                 tts_last = None;
@@ -1413,13 +1442,18 @@ pub fn spawn(
                                 }
                                 if let (Some(first), Some(last)) = (tts_first, tts_last) {
                                     eprintln!(
-                                        "nspanel-app: tts stream: {tts_chunks} chunks, {:.1} s of audio in {:.1} s, longest wait between chunks {} ms",
+                                        "nspanel-app: tts stream: {tts_chunks} chunks, {:.1} s of audio in {:.1} s, longest wait between chunks {} ms{}",
                                         tts_bytes as f64 / 32000.0,
                                         last.duration_since(first).as_secs_f64(),
-                                        tts_max_gap.as_millis()
+                                        tts_max_gap.as_millis(),
+                                        if quiet_run { " (not played: do not disturb)" } else { "" }
                                     );
                                 }
-                                if tts_chunks == 0 {
+                                if tts_chunks == 0 && quiet_run {
+                                    if tts_url.is_some() {
+                                        eprintln!("nspanel-app: answer audio not fetched (do not disturb)");
+                                    }
+                                } else if tts_chunks == 0 {
                                     if let Some(url) = tts_url.take() {
                                         fetching.store(true, Ordering::SeqCst);
                                         let (player, fetching, ha_url) = (player.clone(), fetching.clone(), control.ha_url.clone());
@@ -1488,6 +1522,8 @@ pub fn spawn(
                         tts_last = Some(now);
                         tts_bytes += bytes.len();
                         match tts_hold.as_mut() {
+                            // a quiet conversation: the answer only shows on the screen
+                            _ if quiet_run => {}
                             Some((held, _)) => {
                                 held.extend_from_slice(&bytes);
                                 if held.len() >= TTS_PREBUFFER_BYTES {
@@ -1533,7 +1569,7 @@ pub fn spawn(
                                 .unwrap_or(word)
                                 .phrase
                                 .clone();
-                            player.play(Sound::Chime);
+                            quiet_run = begin_conversation(&player);
                             let _ = to_api.send(ToApi::Start { conversation_id: String::new(), wake_word_phrase: phrase });
                             state = State::Starting;
                             since = Instant::now();
@@ -1715,7 +1751,7 @@ pub fn spawn(
                             }
                             tts_hold = None;
                             idle_after_speech = false;
-                            player.play(Sound::Chime);
+                            quiet_run = begin_conversation(&player);
                             engine.reset();
                             follow_up_run = false;
                             conversation_id.clear();
@@ -1792,4 +1828,19 @@ pub fn spawn(
             }
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::silent_answer_secs;
+
+    #[test]
+    fn a_silent_answer_stays_long_enough_to_read() {
+        assert_eq!(silent_answer_secs(""), 5);
+        assert_eq!(silent_answer_secs("It is 21 degrees outside."), 5);
+        assert_eq!(silent_answer_secs(&"x".repeat(150)), 10);
+        // characters, not bytes
+        assert_eq!(silent_answer_secs(&"é".repeat(150)), 10);
+        assert_eq!(silent_answer_secs(&"x".repeat(2000)), 30);
+    }
 }

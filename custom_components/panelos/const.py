@@ -103,7 +103,10 @@ WAKE_DISTANCES = ("near", "medium", "far")
 DEFAULT_WAKE_DISTANCE = "medium"
 
 # Do not disturb: off, on, or on a schedule; what still comes through
-# (critical alerts always do).
+# (critical alerts always do). Without "voice" the assistant answers on the
+# screen only (no listening chime, the answer not spoken). "calls" is kept
+# for panel-to-panel calls, which do not exist yet: the panel never reads it
+# and the PanelOS page does not show it.
 CONF_DND = "dnd"
 DND_MODES = ("off", "on", "schedule")
 DND_ALLOW = ("alarms", "timers", "status", "ring", "voice", "calls")
