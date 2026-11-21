@@ -54,6 +54,7 @@ export component PhotoSky inherits Rectangle {
     in property <bool> taps;             // 25.H2: the home background answers taps (drawn themes)
     in property <bool> win-on;
     in property <image> win-base;
+    in property <WinRect> win-base-rect;   // where the lit layer lies (it covers only the windows' area)
     in property <image> win-in;
     in property <WinRect> win-in-rect;
     in property <bool> win-in-show;
@@ -449,9 +450,9 @@ export component PhotoSky inherits Rectangle {
     if root.nmix > 0: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.nmix;
         source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
     // city windows lit one by one (the app draws them over the unlit art): the lit layer, a window
-    // coming on fading in, a window going off fading out (0.9 s); the lit windows all lie in the land's rows
-    if root.win-on: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; source: root.win-base;
-        source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
+    // coming on fading in, a window going off fading out (0.9 s)
+    if root.win-on: Image { x: root.fx + root.win-base-rect.x * 1px; y: root.fy + root.win-base-rect.y * 1px;
+        width: root.win-base-rect.w * 1px; height: root.win-base-rect.h * 1px; source: root.win-base; }
     if root.win-on && root.win-in-k > 0.001: Image {
         x: root.fx + root.win-in-rect.x * 1px; y: root.fy + root.win-in-rect.y * 1px; width: root.win-in-rect.w * 1px; height: root.win-in-rect.h * 1px;
         source: root.win-in; opacity: root.win-in-k; }

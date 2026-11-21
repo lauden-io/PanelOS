@@ -1,16 +1,15 @@
 //! City windows that light up one by one (drawn city and drawn big city backgrounds). The art comes
 //! in two kinds: the usual layers with their windows painted lit, and "unlit" versions with every
 //! window dark plus a list of the windows (place, size, lit colour, how many of each kind are lit).
-//! This draws the lit ones into a transparent picture laid over the unlit art, changes one window
-//! at a time (more in the evening, fewer late at night, a few lamps on dull days) and hands over
-//! the next picture: the UI fades between the two, so a window comes on or goes off softly.
+//! This draws the lit ones into a transparent picture laid over the unlit art (only as big as the
+//! area the windows take, placed by the UI), changes one window at a time (more in the evening,
+//! fewer late at night, a few lamps on dull days) and hands over the next picture: the UI fades
+//! between the two, so a window comes on or goes off softly.
 
 use serde_json::Value;
 use slint::{Image, Rgba8Pixel, SharedPixelBuffer};
 
 use crate::{AppWindow, WinRect};
-
-const SIZE: u32 = 528;
 
 struct Win {
     x: f32,
@@ -114,15 +113,24 @@ fn cond_name(mood: i32) -> &'static str {
     }
 }
 
+/// The area a picture of these windows takes in the layer (x, y, width, height): from the whole pixel at their top left
+/// to the whole pixel past their bottom right, at least one pixel.
+fn area(wins: &[Win]) -> (f32, f32, f32, f32) {
+    if wins.is_empty() {
+        return (0.0, 0.0, 1.0, 1.0);
+    }
+    let x0 = wins.iter().map(|w| w.x).fold(f32::MAX, f32::min).floor().max(0.0);
+    let y0 = wins.iter().map(|w| w.y).fold(f32::MAX, f32::min).floor().max(0.0);
+    let x1 = wins.iter().map(|w| w.x + w.w).fold(f32::MIN, f32::max).ceil();
+    let y1 = wins.iter().map(|w| w.y + w.h).fold(f32::MIN, f32::max).ceil();
+    (x0, y0, (x1 - x0).max(1.0), (y1 - y0).max(1.0))
+}
+
 fn render(st: &State, only: Option<usize>) -> (Image, f32, f32, f32, f32) {
-    // the whole layer, or one window cut out (its own small picture, placed by the UI)
+    // the lit layer over the area of all the windows, or one window cut out (its own small picture); the UI places each
     let (ox, oy, w, h) = match only {
-        Some(i) => {
-            let win = &st.wins[i];
-            let (x0, y0) = (win.x.floor().max(0.0), win.y.floor().max(0.0));
-            (x0, y0, ((win.x + win.w).ceil() - x0).max(1.0), ((win.y + win.h).ceil() - y0).max(1.0))
-        }
-        None => (0.0, 0.0, SIZE as f32, SIZE as f32),
+        Some(i) => area(&st.wins[i..=i]),
+        None => area(&st.wins),
     };
     let (bw, bh) = (w as u32, h as u32);
     let mut buf = SharedPixelBuffer::<Rgba8Pixel>::new(bw, bh);
@@ -158,6 +166,13 @@ fn render(st: &State, only: Option<usize>) -> (Image, f32, f32, f32, f32) {
         }
     }
     (Image::from_rgba8(buf), ox, oy, w, h)
+}
+
+/// The lit layer to the UI: its picture and its place.
+fn set_base(ui: &AppWindow, st: &State) {
+    let (img, x, y, w, h) = render(st, None);
+    ui.set_win_base(img);
+    ui.set_win_base_rect(WinRect { x, y, w, h });
 }
 
 /// Once a second: the city theme in use (4 drawn city, 6 big city; light or dark), the weather and
@@ -214,7 +229,7 @@ pub fn tick(ui: &AppWindow, theme: i32, light: bool, mood: i32, sun_el: f32, hou
         if fresh || !ui.get_win_on() {
             // the first picture: as it should be now, no fades (the page shows it as a whole)
             st.lit = want;
-            ui.set_win_base(render(&st, None).0);
+            set_base(ui, &st);
             ui.set_win_in_show(false);
             ui.set_win_out_show(true);
             ui.set_win_on(true);
@@ -228,7 +243,7 @@ pub fn tick(ui: &AppWindow, theme: i32, light: bool, mood: i32, sun_el: f32, hou
                 return;
             }
             st.fading = None;
-            ui.set_win_base(render(&st, None).0);
+            set_base(ui, &st);
             ui.set_win_in(Image::default());
             ui.set_win_in_show(false);
             ui.set_win_out(Image::default());
@@ -264,7 +279,7 @@ pub fn tick(ui: &AppWindow, theme: i32, light: bool, mood: i32, sun_el: f32, hou
             let (img, x, y, w, h) = render(&st, Some(i));
             ui.set_win_out(img);
             ui.set_win_out_rect(WinRect { x, y, w, h });
-            ui.set_win_base(render(&st, None).0);
+            set_base(ui, &st);
             ui.set_win_out_show(false);
         }
         if let Some(i) = on {
@@ -299,7 +314,7 @@ pub fn tap(ui: &AppWindow, x: f32, y: f32) {
             let (img, x, y, w, h) = render(&st, Some(i));
             ui.set_win_out(img);
             ui.set_win_out_rect(WinRect { x, y, w, h });
-            ui.set_win_base(render(&st, None).0);
+            set_base(ui, &st);
             ui.set_win_out_show(false);
         } else {
             let (img, x, y, w, h) = render(&st, Some(i));
@@ -313,4 +328,27 @@ pub fn tap(ui: &AppWindow, x: f32, y: f32) {
         st.held.push((i, t + 60.0));
         eprintln!("nspanel-app: city window tapped");
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn win(x: f32, y: f32, w: f32, h: f32) -> Win {
+        Win { x, y, w, h, c: [255, 210, 122], o: 1.0, p: 0.5 }
+    }
+
+    #[test]
+    fn area_of_one_window_covers_its_pixels() {
+        assert_eq!(area(&[win(10.4, 20.6, 3.2, 4.0)]), (10.0, 20.0, 4.0, 5.0));
+        // never less than a pixel, never left of or above the layer
+        assert_eq!(area(&[win(-1.5, 7.0, 0.0, 0.0)]), (0.0, 7.0, 1.0, 1.0));
+    }
+
+    #[test]
+    fn area_of_all_windows_is_their_union() {
+        let wins = [win(12.0, 247.0, 6.0, 9.0), win(300.5, 251.2, 4.0, 6.0), win(520.0, 340.0, 8.8, 12.0)];
+        assert_eq!(area(&wins), (12.0, 247.0, 517.0, 105.0));
+        assert_eq!(area(&[]), (0.0, 0.0, 1.0, 1.0));
+    }
 }

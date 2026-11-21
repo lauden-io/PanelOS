@@ -655,6 +655,7 @@ export component AppWindow inherits Window {
     // city windows lit one by one (windows.rs)
     in property <bool> win-on;
     in property <image> win-base;
+    in property <WinRect> win-base-rect;
     in property <image> win-in;
     in property <WinRect> win-in-rect;
     in property <bool> win-in-show;
@@ -1074,7 +1075,7 @@ export component AppWindow inherits Window {
                     theme: home-slot.home-theme;
                     light-variant: home-slot.light-scene;
                     win-on: root.win-on && (home-slot.home-theme == 4 || home-slot.home-theme == 6);
-                    win-base: root.win-base; win-in: root.win-in; win-in-rect: root.win-in-rect; win-in-show: root.win-in-show;
+                    win-base: root.win-base; win-base-rect: root.win-base-rect; win-in: root.win-in; win-in-rect: root.win-in-rect; win-in-show: root.win-in-show;
                     win-out: root.win-out; win-out-rect: root.win-out-rect; win-out-show: root.win-out-show;
                     rain: root.weather.rain;
                     dusk: root.weather.dusk;
@@ -1105,7 +1106,7 @@ export component AppWindow inherits Window {
                     theme: home-slot.home-theme;
                     light-variant: home-slot.light-scene;
                     win-on: root.win-on && (home-slot.home-theme == 4 || home-slot.home-theme == 6);
-                    win-base: root.win-base; win-in: root.win-in; win-in-rect: root.win-in-rect; win-in-show: root.win-in-show;
+                    win-base: root.win-base; win-base-rect: root.win-base-rect; win-in: root.win-in; win-in-rect: root.win-in-rect; win-in-show: root.win-in-show;
                     win-out: root.win-out; win-out-rect: root.win-out-rect; win-out-show: root.win-out-show;
                     rain: root.weather.rain;
                     dusk: root.weather.dusk;
