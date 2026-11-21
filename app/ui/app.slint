@@ -467,8 +467,6 @@ export component AppWindow inherits Window {
     // number of the scenes' loops), so the number stays small and exact however long the panel runs
     in-out property <duration> scene-base;
     out property <float> scene-t: (animation-tick() - root.scene-base) / 1s;
-    property <[image]> palms-l: [@image-url("timers/sw/palm-l-00.png"), @image-url("timers/sw/palm-l-01.png"), @image-url("timers/sw/palm-l-02.png"), @image-url("timers/sw/palm-l-03.png"), @image-url("timers/sw/palm-l-04.png"), @image-url("timers/sw/palm-l-05.png"), @image-url("timers/sw/palm-l-06.png"), @image-url("timers/sw/palm-l-07.png"), @image-url("timers/sw/palm-l-08.png"), @image-url("timers/sw/palm-l-09.png"), @image-url("timers/sw/palm-l-10.png"), @image-url("timers/sw/palm-l-11.png"), @image-url("timers/sw/palm-l-12.png"), @image-url("timers/sw/palm-l-13.png"), @image-url("timers/sw/palm-l-14.png"), @image-url("timers/sw/palm-l-15.png"), @image-url("timers/sw/palm-l-16.png"), @image-url("timers/sw/palm-l-17.png"), @image-url("timers/sw/palm-l-18.png"), @image-url("timers/sw/palm-l-19.png"), @image-url("timers/sw/palm-l-20.png"), @image-url("timers/sw/palm-l-21.png"), @image-url("timers/sw/palm-l-22.png"), @image-url("timers/sw/palm-l-23.png"), @image-url("timers/sw/palm-l-24.png"), @image-url("timers/sw/palm-l-25.png"), @image-url("timers/sw/palm-l-26.png"), @image-url("timers/sw/palm-l-27.png"), @image-url("timers/sw/palm-l-28.png"), @image-url("timers/sw/palm-l-29.png"), @image-url("timers/sw/palm-l-30.png"), @image-url("timers/sw/palm-l-31.png"), @image-url("timers/sw/palm-l-32.png")];
-    property <[image]> palms-r: [@image-url("timers/sw/palm-r-00.png"), @image-url("timers/sw/palm-r-01.png"), @image-url("timers/sw/palm-r-02.png"), @image-url("timers/sw/palm-r-03.png"), @image-url("timers/sw/palm-r-04.png"), @image-url("timers/sw/palm-r-05.png"), @image-url("timers/sw/palm-r-06.png"), @image-url("timers/sw/palm-r-07.png"), @image-url("timers/sw/palm-r-08.png"), @image-url("timers/sw/palm-r-09.png"), @image-url("timers/sw/palm-r-10.png"), @image-url("timers/sw/palm-r-11.png"), @image-url("timers/sw/palm-r-12.png"), @image-url("timers/sw/palm-r-13.png"), @image-url("timers/sw/palm-r-14.png"), @image-url("timers/sw/palm-r-15.png"), @image-url("timers/sw/palm-r-16.png"), @image-url("timers/sw/palm-r-17.png"), @image-url("timers/sw/palm-r-18.png"), @image-url("timers/sw/palm-r-19.png"), @image-url("timers/sw/palm-r-20.png"), @image-url("timers/sw/palm-r-21.png"), @image-url("timers/sw/palm-r-22.png"), @image-url("timers/sw/palm-r-23.png"), @image-url("timers/sw/palm-r-24.png"), @image-url("timers/sw/palm-r-25.png"), @image-url("timers/sw/palm-r-26.png"), @image-url("timers/sw/palm-r-27.png"), @image-url("timers/sw/palm-r-28.png"), @image-url("timers/sw/palm-r-29.png"), @image-url("timers/sw/palm-r-30.png"), @image-url("timers/sw/palm-r-31.png"), @image-url("timers/sw/palm-r-32.png")];
     // The palms in the wind: three sines of unrelated periods (4.8, 7.5, 12.5 s: each a whole part of the
     // scene clock's 1200 s rebase, so the rebase never shows) with each palm's own
     // phases, scaled by gusts (synth.rs starts one every 6-14 s; it reaches the right palm 0.22 s
@@ -503,10 +501,8 @@ export component AppWindow inherits Window {
     in property <float> home-fl-t: root.scene-t;
     in property <[SwCar]> home-fl-cars;
     in property <bool> home-fl-cars-on: true;
-    in property <image> home-fl-palm-l: root.palms-l[root.palm-il];
-    in property <image> home-fl-palm-r: root.palms-r[root.palm-ir];
-    in property <image> home-fl-palm-l2: root.palms-l[root.palm-il + 1];
-    in property <image> home-fl-palm-r2: root.palms-r[root.palm-ir + 1];
+    in property <int> home-fl-palm-il: root.palm-il;
+    in property <int> home-fl-palm-ir: root.palm-ir;
     in property <float> home-fl-palm-lk: root.palm-fl - root.palm-il;
     in property <float> home-fl-palm-rk: root.palm-fr - root.palm-ir;
     in property <bool> home-fl-neon;
@@ -615,10 +611,8 @@ export component AppWindow inherits Window {
     in property <image> timers-hg-stream-shade;
     in property <float> timers-sw-t: root.scene-t;
     in property <[SwCar]> timers-sw-cars;
-    in property <image> timers-sw-palm-l: root.palms-l[root.palm-il];
-    in property <image> timers-sw-palm-r: root.palms-r[root.palm-ir];
-    in property <image> timers-sw-palm-l2: root.palms-l[root.palm-il + 1];
-    in property <image> timers-sw-palm-r2: root.palms-r[root.palm-ir + 1];
+    in property <int> timers-sw-palm-il: root.palm-il;
+    in property <int> timers-sw-palm-ir: root.palm-ir;
     in property <float> timers-sw-palm-lk: root.palm-fl - root.palm-il;
     in property <float> timers-sw-palm-rk: root.palm-fr - root.palm-ir;
     in property <bool> timers-edit;
@@ -1185,7 +1179,7 @@ export component AppWindow inherits Window {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
                     back-c: root.home-fl-back-c; floor-c: root.home-fl-floor-c; mix-c: root.home-fl-mix-c;
                     mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars-on ? root.home-fl-cars : [];
-                    palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r; palm-l2: root.home-fl-palm-l2; palm-r2: root.home-fl-palm-r2; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
+                    palm-il: root.home-fl-palm-il; palm-ir: root.home-fl-palm-ir; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
                     HomeGrid {
                         live: home-slot.on-view;
                         items: home-slot.home-items;
@@ -1276,7 +1270,7 @@ export component AppWindow inherits Window {
                     hg-stream-mask: root.timers-hg-stream-mask; hg-stream-shade: root.timers-hg-stream-shade;
                     sw-scene: root.timers-inst[slot.n].sw-scene; sw-choice: root.timers-inst[slot.n].sw-choice; sw-back: root.timers-inst[slot.n].sw-back;
                     sw-floor: root.timers-inst[slot.n].sw-floor; sw-t: root.timers-sw-t;
-                    sw-cars: root.timers-sw-cars; sw-palm-l: root.timers-sw-palm-l; sw-palm-r: root.timers-sw-palm-r; sw-palm-l2: root.timers-sw-palm-l2; sw-palm-r2: root.timers-sw-palm-r2; sw-palm-lk: root.timers-sw-palm-lk; sw-palm-rk: root.timers-sw-palm-rk;
+                    sw-cars: root.timers-sw-cars; sw-palm-il: root.timers-sw-palm-il; sw-palm-ir: root.timers-sw-palm-ir; sw-palm-lk: root.timers-sw-palm-lk; sw-palm-rk: root.timers-sw-palm-rk;
                     edit: root.timers-edit && root.page == i; edit-new: root.timers-edit-new; edit-timer: root.timers-edit-timer; edit-h <=> root.timers-edit-h; edit-m <=> root.timers-edit-m; edit-days: root.timers-edit-days;
                     edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; ha-sounds: root.timers-ha-sounds; edit-keyboard: root.timers-edit-keyboard && root.page == i; kb-layer: root.timers-kb-layer; kb-layout: root.kb-layout;
                     edit-info: root.timers-edit-info; edit-tint: root.timers-edit-tint;
@@ -1286,7 +1280,7 @@ export component AppWindow inherits Window {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
                     back-c: root.home-fl-back-c; floor-c: root.home-fl-floor-c; mix-c: root.home-fl-mix-c;
                     mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars-on ? root.home-fl-cars : [];
-                    palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r; palm-l2: root.home-fl-palm-l2; palm-r2: root.home-fl-palm-r2; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
+                    palm-il: root.home-fl-palm-il; palm-ir: root.home-fl-palm-ir; palm-lk: root.home-fl-palm-lk; palm-rk: root.home-fl-palm-rk;
                 }
                 if slot.kind == "thermostat": ThermostatPage {
                     devices: root.thermo-inst[slot.n].devices; sel: root.thermo-inst[slot.n].sel; rooms: root.thermo-inst[slot.n].rooms;
