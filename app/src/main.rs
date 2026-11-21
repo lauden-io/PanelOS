@@ -52,6 +52,7 @@ mod stt;
 mod synth;
 mod texts;
 mod thermo;
+mod timezone;
 mod todo;
 mod touch;
 mod visit;
@@ -83,18 +84,11 @@ use visit::{Hold, Visit};
 
 slint::include_modules!();
 
-/// Budapest time as a POSIX TZ rule (works without zoneinfo files).
-const DEFAULT_TZ: &str = "CET-1CEST,M3.5.0,M10.5.0/3";
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// Pull to refresh: a pull counts after this many px down, and reloads the
 /// page after this many more.
 const PULL_START: f32 = 16.0;
 const PULL_DISTANCE: f32 = 110.0;
-
-extern "C" {
-    // POSIX; not exported by the libc crate for this target.
-    fn tzset();
-}
 
 pub struct UiState {
     config: Option<AppConfig>,
@@ -1412,6 +1406,10 @@ fn rewarm(ui: &AppWindow) {
 
 /// The page list and what the integration's configuration changes.
 fn apply_panel_config(ui: &AppWindow) {
+    // Home Assistant's time zone (it comes with the settings)
+    if let Some((name, rule)) = with_state(|s| timezone::apply(s.panel_config.as_ref())) {
+        time_zone_changed(ui, &name, &rule);
+    }
     // copies of the uploaded sounds the settings use: fetched when missing, dropped when unused
     with_state(|s| sounds::keep(&used_sounds(s)));
     // the panel's speech recognition (stop words while a timer rings)
@@ -1485,6 +1483,22 @@ fn apply_panel_config(ui: &AppWindow) {
         eprintln!("nspanel-app: the pages follow other entities: new Home Assistant session");
         send(Command::Reload);
     }
+}
+
+/// A new time zone: the times on screen written again, the calendar read again (its six weeks and all-day events are
+/// local dates), the web view started again in it. The pages follow in `apply_panel_config`.
+fn time_zone_changed(ui: &AppWindow, name: &str, rule: &str) {
+    connlog::note(&format!("time zone: {} ({rule})", if name.is_empty() { "no name" } else { name }));
+    cal::time_zone_changed();
+    update_clock(ui);
+    with_state(|s| {
+        alarms::refresh(ui, s);
+        info::refresh(ui, s);
+        todo::refresh(ui, s);
+        if let Some(web) = &s.web {
+            web.follow_time_zone();
+        }
+    });
 }
 
 /// Goes to a page of `kind` (`pages::acting_slot`: the page on screen when it is of that kind, else the first of the
@@ -4363,11 +4377,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Programs the app starts (wpa_cli, iw, the web helper) use their own.
     #[cfg(feature = "gpu")]
     std::env::remove_var("LD_LIBRARY_PATH");
-    if std::env::var_os("TZ").is_none() {
-        std::env::set_var("TZ", DEFAULT_TZ);
-    }
-    // SAFETY: tzset only re-reads the TZ variable.
-    unsafe { tzset() };
+    // the time zone kept with the integration's last settings (before any other thread starts)
+    timezone::init(settings::load_panel_config().as_ref());
 
     platform::install_screenshot_signal();
 
