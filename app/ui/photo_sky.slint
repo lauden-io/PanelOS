@@ -64,6 +64,15 @@ export component PhotoSky inherits Rectangle {
     property <float> win-out-k: root.win-out-show ? 1 : 0;
     animate win-out-k { duration: 900ms; easing: ease-in-out; }
     property <bool> vector: root.theme >= 3;
+    // The land's rows (528 px layer coordinates), the same in every picture of a theme (all conditions, night, light
+    // and unlit variants, the columns on screen): its cut-out has content from `land-top` down and is opaque from
+    // `land` down. What lies behind it is drawn only above `land`; the land itself from `land-top` down to where the
+    // water's or the meadow's strips take over (they cover their rows whole, and opaque).
+    property <int> land-top: root.theme == 0 ? 146 : root.theme == 1 ? 203 : root.theme == 2 ? 234 : root.theme == 3 ? 260
+        : root.theme == 4 ? 201 : root.theme == 5 ? 202 : root.theme == 6 ? 128 : 300;
+    property <int> land: root.theme == 0 ? 303 : root.theme == 1 ? 295 : root.theme == 2 ? 282 : root.theme == 3 ? 274
+        : root.theme == 4 ? 279 : root.theme == 5 ? 287 : root.theme == 6 ? 370 : 360;
+    property <int> land-bot: root.wa > 0 ? root.wy0 : root.sway-a > 0 ? root.sway-y0 : 528;
 
     // sun and moon on the screen (528 px layer coordinates): azimuth 2 px per degree around the
     // south (x 264); elevation from the theme's horizon (0 deg) up to y 60 (62 deg and above)
@@ -193,240 +202,250 @@ export component PhotoSky inherits Rectangle {
     pure function gtrees(t: int, m: int, k: int) -> image { t == 3 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dusk-trees-light.png") : @image-url("wx/vcountryside-sunny-dusk-trees.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dawn-trees-light.png") : @image-url("wx/vcountryside-sunny-dawn-trees.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dusk-trees-light.png") : @image-url("wx/vcountryside-partly-cloudy-dusk-trees.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dawn-trees-light.png") : @image-url("wx/vcountryside-partly-cloudy-dawn-trees.png")))) : (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vneutral-sunny-dusk-trees-light.png") : @image-url("wx/vneutral-sunny-dusk-trees.png")) : (root.light-variant ? @image-url("wx-light/vneutral-sunny-dawn-trees-light.png") : @image-url("wx/vneutral-sunny-dawn-trees.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vneutral-partly-cloudy-dusk-trees-light.png") : @image-url("wx/vneutral-partly-cloudy-dusk-trees.png")) : (root.light-variant ? @image-url("wx-light/vneutral-partly-cloudy-dawn-trees-light.png") : @image-url("wx/vneutral-partly-cloudy-dawn-trees.png")))) }
     pure function gback(t: int, m: int, k: int) -> image { t == 0 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dusk-back-light.png") : @image-url("wx/vcountryside-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dawn-back-light.png") : @image-url("wx/vcountryside-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dusk-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dawn-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dawn-back.png")))) : t == 1 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dusk-back-light.png") : @image-url("wx/vcountryside-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dawn-back-light.png") : @image-url("wx/vcountryside-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dusk-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dawn-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dawn-back.png")))) : t == 2 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dusk-back-light.png") : @image-url("wx/vcountryside-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dawn-back-light.png") : @image-url("wx/vcountryside-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dusk-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dawn-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dawn-back.png")))) : t == 3 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dusk-back-light.png") : @image-url("wx/vcountryside-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-sunny-dawn-back-light.png") : @image-url("wx/vcountryside-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dusk-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcountryside-partly-cloudy-dawn-back-light.png") : @image-url("wx/vcountryside-partly-cloudy-dawn-back.png")))) : t == 4 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vcity-sunny-dusk-back-light.png") : @image-url("wx/vcity-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcity-sunny-dawn-back-light.png") : @image-url("wx/vcity-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vcity-partly-cloudy-dusk-back-light.png") : @image-url("wx/vcity-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vcity-partly-cloudy-dawn-back-light.png") : @image-url("wx/vcity-partly-cloudy-dawn-back.png")))) : t == 5 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vneutral-sunny-dusk-back-light.png") : @image-url("wx/vneutral-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vneutral-sunny-dawn-back-light.png") : @image-url("wx/vneutral-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vneutral-partly-cloudy-dusk-back-light.png") : @image-url("wx/vneutral-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vneutral-partly-cloudy-dawn-back-light.png") : @image-url("wx/vneutral-partly-cloudy-dawn-back.png")))) : t == 6 ? (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vmetro-sunny-dusk-back-light.png") : @image-url("wx/vmetro-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vmetro-sunny-dawn-back-light.png") : @image-url("wx/vmetro-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vmetro-partly-cloudy-dusk-back-light.png") : @image-url("wx/vmetro-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vmetro-partly-cloudy-dawn-back-light.png") : @image-url("wx/vmetro-partly-cloudy-dawn-back.png")))) : (m == 0 ? (k == 0 ? (root.light-variant ? @image-url("wx-light/vline-sunny-dusk-back-light.png") : @image-url("wx/vline-sunny-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vline-sunny-dawn-back-light.png") : @image-url("wx/vline-sunny-dawn-back.png"))) : (k == 0 ? (root.light-variant ? @image-url("wx-light/vline-partly-cloudy-dusk-back-light.png") : @image-url("wx/vline-partly-cloudy-dusk-back.png")) : (root.light-variant ? @image-url("wx-light/vline-partly-cloudy-dawn-back-light.png") : @image-url("wx/vline-partly-cloudy-dawn-back.png")))) }
 
-    // 0. drawn themes: still backdrop (sky gradient, sun or moon, stars) under the drifting clouds
-    if root.vector: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.back(root.theme, root.mood); }
-    if root.vector && root.has-grade && root.dk > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dk; source: root.gback(root.theme, root.mood, 0); }
-    if root.vector && root.has-grade && root.dn > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dn; source: root.gback(root.theme, root.mood, 1); }
-    if root.vector && root.nmix > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.nmix; source: root.back(root.theme, root.nmood); }
-
-    // 0b. sun (behind the clouds and the land, so it sets behind the hills / skyline)
+    // (values of the layers behind the land)
     property <bool> sun-on: root.vector && root.sun-k > 0 && root.sun-vis > 0 && root.sun-py < root.hz + 40;
     property <float> sa: root.sun-k * root.sun-vis;
     property <float> sdisc: 1 - 0.65 * root.sun-veil;
     property <float> sglow: 1 - 0.45 * root.sun-veil;
     property <float> mdisc: 1 - 0.55 * root.moon-veil;
-    if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 230) * 1px; y: root.sy + (root.sun-py - 230) * 1px; width: 460px; height: 460px;
-        source: (root.light-variant ? @image-url("wx-light/vsun-glow-light.png") : @image-url("wx/vsun-glow.png")); opacity: root.sa * (1 - root.low) * root.sglow; }
-    if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 210) * 1px; y: root.sy + (root.sun-py - 210) * 1px; width: 420px; height: 420px;
-        source: (root.light-variant ? @image-url("wx-light/vsun-glow-low-light.png") : @image-url("wx/vsun-glow-low.png")); opacity: root.sa * root.low * root.sglow; }
-    if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
-        source: (root.light-variant ? @image-url("wx-light/vsun-disc-light.png") : @image-url("wx/vsun-disc.png")); opacity: root.sa * (1 - root.low) * root.sdisc; }
-    if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
-        source: (root.light-variant ? @image-url("wx-light/vsun-disc-low-light.png") : @image-url("wx/vsun-disc-low.png")); opacity: root.sa * root.low * root.sdisc; }
-    // line theme: an accent ring with two sets of short rays crossfading (a slow shimmer);
-    // the rays fade when the sun is low
     property <color> line-acc: #ff9a52.mix(#ffcf6b, root.low);
     property <float> ra: root.sa * (1 - root.low) * 0.8 * root.sdisc;
-    if root.sun-on && root.theme == 7: Image { x: root.sx + (root.sun-px - 28) * 1px; y: root.sy + (root.sun-py - 28) * 1px; width: 56px; height: 56px;
-        source: (root.light-variant ? @image-url("wx-light/vline-sun-light.png") : @image-url("wx/vline-sun.png")); colorize: root.line-acc; opacity: root.sa * 0.85 * root.sdisc; }
-    if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
-        source: (root.light-variant ? @image-url("wx-light/vline-rays-a-light.png") : @image-url("wx/vline-rays-a.png")); colorize: root.line-acc; opacity: root.ra * (0.5 + 0.5 * Math.sin(root.t * 60deg)); }
-    if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
-        source: (root.light-variant ? @image-url("wx-light/vline-rays-b-light.png") : @image-url("wx/vline-rays-b.png")); colorize: root.line-acc; opacity: root.ra * (0.5 - 0.5 * Math.sin(root.t * 60deg)); }
-
-    // 0c. moon with its real phase
     property <bool> moon-on: root.vector && root.moon-a > 0.01 && root.moon-py < root.hz + 30;
-    if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 120) * 1px; y: root.sy + (root.moon-py - 120) * 1px; width: 240px; height: 240px;
-        source: (root.light-variant ? @image-url("wx-light/vmoon-glow-light.png") : @image-url("wx/vmoon-glow.png")); opacity: root.moon-a * (0.25 + 0.75 * Math.sin(root.moon-phase * 180deg)) * root.mdisc; }
-    if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
-        source: (root.light-variant ? @image-url("wx-light/vmoon-light.png") : @image-url("wx/vmoon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
-    if root.moon-on && root.theme == 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
-        source: (root.light-variant ? @image-url("wx-light/vline-moon-light.png") : @image-url("wx/vline-moon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
-
-    // 1. sky photo: seamless 792 px tile, two copies, plus the sub-pixel copies
-    if !root.rust-sky: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-    if !root.rust-sky: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
     // always drawn (min 0.5 %): the renderer's alpha blend rounds down by ~0.5 level, so a frame
     // without this layer would be a touch brighter and pop at every whole-pixel position
     property <float> dfa: max(0.03, min(0.97, root.df));
-    if !root.rust-sky: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
-    if !root.rust-sky: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
-    if root.has-grade && root.dk > 0: Image {
-        x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
-        source: root.gsky(root.theme, root.mood, 0);
-    }
-    if root.has-grade && root.dk > 0: Image {
-        x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
-        source: root.gsky(root.theme, root.mood, 0);
-    }
-    if root.has-grade && root.dn > 0: Image {
-        x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dn * root.gk;
-        source: root.gsky(root.theme, root.mood, 1);
-    }
-    if root.has-grade && root.dn > 0: Image {
-        x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; opacity: root.dn * root.gk;
-        source: root.gsky(root.theme, root.mood, 1);
-    }
-
-    if !root.rust-sky && root.nmix > 0: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
-    if !root.rust-sky && root.nmix > 0: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
-    if root.rust-sky: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.sky-frame; }
-
-    // 2. the photo's own stars twinkle (clear night) and drift with the sky; irregular
-    //    scintillation, a soft glow around a small bright core
-    if root.star-a > 0.01 && root.theme == 0: Rectangle {
-        for s[i] in [{x: 331, y: 91, b: 0.34}, {x: 333, y: 77, b: 0.31}, {x: 204, y: 70, b: 0.28}, {x: 111, y: 57, b: 0.27}, {x: 789, y: 158, b: 0.27}, {x: 229, y: 77, b: 0.24}, {x: 786, y: 93, b: 0.24}, {x: 219, y: 69, b: 0.24}, {x: 219, y: 68, b: 0.24}, {x: 281, y: 21, b: 0.22}, {x: 109, y: 150, b: 0.22}, {x: 224, y: 18, b: 0.21}, {x: 300, y: 19, b: 0.20}, {x: 685, y: 18, b: 0.20}, {x: 389, y: 112, b: 0.20}, {x: 650, y: 152, b: 0.20}, {x: 186, y: 0, b: 0.20}, {x: 576, y: 226, b: 0.20}, {x: 555, y: 38, b: 0.20}, {x: 248, y: 98, b: 0.19}, {x: 182, y: 128, b: 0.19}, {x: 708, y: 103, b: 0.19}, {x: 161, y: 50, b: 0.19}, {x: 708, y: 5, b: 0.18}, {x: 199, y: 26, b: 0.18}, {x: 255, y: 16, b: 0.18}, {x: 319, y: 26, b: 0.18}, {x: 756, y: 37, b: 0.17}, {x: 213, y: 50, b: 0.17}, {x: 216, y: 77, b: 0.17}, {x: 269, y: 61, b: 0.17}, {x: 170, y: 158, b: 0.16}, {x: 587, y: 29, b: 0.16}, {x: 432, y: 88, b: 0.16}, {x: 39, y: 4, b: 0.16}, {x: 129, y: 124, b: 0.15}, {x: 746, y: 49, b: 0.15}, {x: 318, y: 21, b: 0.15}, {x: 321, y: 5, b: 0.15}, {x: 192, y: 164, b: 0.15}, {x: 732, y: 4, b: 0.15}, {x: 773, y: 158, b: 0.15}, {x: 195, y: 20, b: 0.15}, {x: 390, y: 31, b: 0.15}, {x: 389, y: 31, b: 0.15}, {x: 267, y: 21, b: 0.15}, {x: 549, y: 199, b: 0.14}, {x: 296, y: 41, b: 0.14}, {x: 191, y: 183, b: 0.14}, {x: 239, y: 52, b: 0.14}, {x: 210, y: 25, b: 0.14}, {x: 77, y: 68, b: 0.14}, {x: 644, y: 215, b: 0.14}, {x: 242, y: 86, b: 0.14}, {x: 119, y: 90, b: 0.14}, {x: 154, y: 23, b: 0.14}, {x: 715, y: 14, b: 0.14}, {x: 295, y: 24, b: 0.14}, {x: 281, y: 41, b: 0.14}, {x: 663, y: 25, b: 0.13}, {x: 144, y: 9, b: 0.13}, {x: 362, y: 91, b: 0.13}, {x: 203, y: 115, b: 0.13}, {x: 785, y: 167, b: 0.13}, {x: 766, y: 33, b: 0.13}, {x: 765, y: 86, b: 0.13}, {x: 395, y: 19, b: 0.13}, {x: 533, y: 172, b: 0.13}, {x: 123, y: 27, b: 0.12}, {x: 328, y: 163, b: 0.12}, {x: 202, y: 101, b: 0.12}, {x: 500, y: 20, b: 0.12}, {x: 499, y: 20, b: 0.12}, {x: 2, y: 67, b: 0.12}, {x: 551, y: 54, b: 0.12}, {x: 440, y: 147, b: 0.12}, {x: 197, y: 92, b: 0.12}, {x: 237, y: 7, b: 0.12}, {x: 764, y: 101, b: 0.12}, {x: 363, y: 56, b: 0.12}, {x: 68, y: 87, b: 0.12}, {x: 332, y: 109, b: 0.12}, {x: 26, y: 19, b: 0.12}, {x: 527, y: 60, b: 0.11}, {x: 240, y: 14, b: 0.11}, {x: 207, y: 9, b: 0.11}, {x: 249, y: 9, b: 0.11}, {x: 543, y: 198, b: 0.11}, {x: 222, y: 80, b: 0.11}, {x: 191, y: 85, b: 0.11}, {x: 286, y: 37, b: 0.11}, {x: 615, y: 55, b: 0.11}, {x: 140, y: 168, b: 0.11}, {x: 554, y: 24, b: 0.11}, {x: 314, y: 0, b: 0.11}, {x: 248, y: 45, b: 0.11}, {x: 375, y: 11, b: 0.11}, {x: 728, y: 143, b: 0.11}, {x: 137, y: 131, b: 0.11}, {x: 128, y: 73, b: 0.11}, {x: 436, y: 99, b: 0.11}, {x: 496, y: 149, b: 0.11}, {x: 671, y: 15, b: 0.11}, {x: 173, y: 131, b: 0.11}, {x: 173, y: 130, b: 0.11}, {x: 153, y: 151, b: 0.11}, {x: 232, y: 87, b: 0.11}, {x: 231, y: 40, b: 0.11}, {x: 199, y: 54, b: 0.11}, {x: 213, y: 98, b: 0.10}]: Rectangle {
-            property <length> p1: root.sx + root.dx + s.x * 1px;
-            property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
-            property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
-                                            * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
-            visible: self.p2 > -8px && self.p2 < 488px;
-            x: self.p2 - 3px; y: root.sy + s.y * 1px - 3px; width: 7px; height: 7px;
-            Rectangle { background: @radial-gradient(circle, #ffffffcc 0%, #cfdcff55 35%, #00000000 70%); opacity: min(1, s.b * 3.0) * parent.tw * root.star-a; }
-            Rectangle { x: 2px; y: 2px; width: 3px; height: 3px; border-radius: 1.5px; background: #ffffff; opacity: min(1, s.b * 4.0) * parent.tw * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 1: Rectangle {
-        for s[i] in [{x: 244, y: 95, b: 0.46}, {x: 4, y: 40, b: 0.39}, {x: 199, y: 14, b: 0.36}, {x: 702, y: 64, b: 0.35}, {x: 244, y: 77, b: 0.32}, {x: 780, y: 178, b: 0.32}, {x: 38, y: 140, b: 0.31}, {x: 17, y: 119, b: 0.31}, {x: 169, y: 14, b: 0.30}, {x: 306, y: 14, b: 0.28}, {x: 761, y: 189, b: 0.27}, {x: 762, y: 189, b: 0.27}, {x: 768, y: 35, b: 0.26}, {x: 789, y: 120, b: 0.24}, {x: 765, y: 21, b: 0.24}, {x: 719, y: 35, b: 0.24}, {x: 495, y: 2, b: 0.24}, {x: 177, y: 33, b: 0.23}, {x: 219, y: 17, b: 0.23}, {x: 477, y: 38, b: 0.23}, {x: 170, y: 41, b: 0.23}, {x: 559, y: 98, b: 0.22}, {x: 505, y: 8, b: 0.22}, {x: 192, y: 10, b: 0.22}, {x: 643, y: 208, b: 0.22}, {x: 503, y: 27, b: 0.22}, {x: 92, y: 81, b: 0.21}, {x: 191, y: 38, b: 0.21}, {x: 151, y: 16, b: 0.21}, {x: 49, y: 172, b: 0.21}, {x: 367, y: 80, b: 0.21}, {x: 231, y: 22, b: 0.20}, {x: 14, y: 129, b: 0.20}, {x: 250, y: 186, b: 0.20}, {x: 319, y: 114, b: 0.19}, {x: 563, y: 231, b: 0.18}, {x: 139, y: 115, b: 0.18}, {x: 278, y: 47, b: 0.18}, {x: 277, y: 47, b: 0.18}, {x: 459, y: 99, b: 0.18}, {x: 111, y: 89, b: 0.18}, {x: 247, y: 118, b: 0.18}, {x: 604, y: 12, b: 0.17}, {x: 788, y: 56, b: 0.17}, {x: 133, y: 10, b: 0.17}, {x: 751, y: 207, b: 0.17}, {x: 328, y: 135, b: 0.17}, {x: 282, y: 18, b: 0.17}, {x: 218, y: 12, b: 0.17}, {x: 159, y: 66, b: 0.17}, {x: 608, y: 118, b: 0.16}, {x: 579, y: 20, b: 0.16}, {x: 8, y: 7, b: 0.16}, {x: 583, y: 150, b: 0.16}, {x: 748, y: 122, b: 0.15}, {x: 536, y: 10, b: 0.15}, {x: 625, y: 34, b: 0.15}, {x: 640, y: 131, b: 0.15}, {x: 106, y: 92, b: 0.15}, {x: 524, y: 127, b: 0.15}, {x: 235, y: 83, b: 0.15}, {x: 468, y: 46, b: 0.15}, {x: 551, y: 39, b: 0.15}, {x: 730, y: 91, b: 0.15}, {x: 240, y: 101, b: 0.15}, {x: 386, y: 152, b: 0.15}, {x: 28, y: 62, b: 0.15}, {x: 220, y: 80, b: 0.14}, {x: 501, y: 86, b: 0.14}, {x: 671, y: 77, b: 0.14}, {x: 146, y: 115, b: 0.14}, {x: 98, y: 95, b: 0.14}, {x: 767, y: 54, b: 0.14}, {x: 527, y: 203, b: 0.14}, {x: 511, y: 120, b: 0.14}, {x: 257, y: 30, b: 0.14}, {x: 244, y: 38, b: 0.14}, {x: 126, y: 102, b: 0.14}, {x: 233, y: 71, b: 0.14}, {x: 756, y: 179, b: 0.14}, {x: 25, y: 85, b: 0.14}, {x: 178, y: 50, b: 0.14}, {x: 61, y: 199, b: 0.14}, {x: 770, y: 131, b: 0.14}, {x: 0, y: 68, b: 0.14}, {x: 186, y: 16, b: 0.14}, {x: 711, y: 126, b: 0.13}, {x: 319, y: 8, b: 0.13}, {x: 259, y: 63, b: 0.13}, {x: 232, y: 54, b: 0.13}, {x: 293, y: 44, b: 0.13}, {x: 769, y: 82, b: 0.13}, {x: 571, y: 67, b: 0.13}, {x: 146, y: 3, b: 0.13}, {x: 263, y: 178, b: 0.13}, {x: 126, y: 119, b: 0.13}, {x: 733, y: 109, b: 0.13}, {x: 563, y: 3, b: 0.13}, {x: 472, y: 27, b: 0.13}, {x: 245, y: 112, b: 0.12}, {x: 719, y: 29, b: 0.12}, {x: 4, y: 174, b: 0.12}, {x: 55, y: 114, b: 0.12}, {x: 43, y: 124, b: 0.12}, {x: 333, y: 1, b: 0.12}, {x: 157, y: 87, b: 0.12}, {x: 764, y: 162, b: 0.12}, {x: 454, y: 147, b: 0.12}, {x: 168, y: 134, b: 0.12}, {x: 136, y: 174, b: 0.12}]: Rectangle {
-            property <length> p1: root.sx + root.dx + s.x * 1px;
-            property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
-            property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
-                                            * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
-            visible: self.p2 > -8px && self.p2 < 488px;
-            x: self.p2 - 3px; y: root.sy + s.y * 1px - 3px; width: 7px; height: 7px;
-            Rectangle { background: @radial-gradient(circle, #ffffffcc 0%, #cfdcff55 35%, #00000000 70%); opacity: min(1, s.b * 3.0) * parent.tw * root.star-a; }
-            Rectangle { x: 2px; y: 2px; width: 3px; height: 3px; border-radius: 1.5px; background: #ffffff; opacity: min(1, s.b * 4.0) * parent.tw * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 2: Rectangle {
-        for s[i] in [{x: 707, y: 38, b: 0.07}, {x: 303, y: 42, b: 0.07}, {x: 688, y: 108, b: 0.06}]: Rectangle {
-            property <length> p1: root.sx + root.dx + s.x * 1px;
-            property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
-            property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
-                                            * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
-            visible: self.p2 > -8px && self.p2 < 488px;
-            x: self.p2 - 3px; y: root.sy + s.y * 1px - 3px; width: 7px; height: 7px;
-            Rectangle { background: @radial-gradient(circle, #ffffffcc 0%, #cfdcff55 35%, #00000000 70%); opacity: min(1, s.b * 3.0) * parent.tw * root.star-a; }
-            Rectangle { x: 2px; y: 2px; width: 3px; height: 3px; border-radius: 1.5px; background: #ffffff; opacity: min(1, s.b * 4.0) * parent.tw * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 3: Rectangle {
-        for s[i] in [{x: 93, y: 88, b: 0.47, k: 0}, {x: 259, y: 128, b: 0.71, k: 0}, {x: 304, y: 7, b: 0.59, k: 0}, {x: 57, y: 162, b: 0.55, k: 0}, {x: 381, y: 57, b: 0.53, k: 0}, {x: 316, y: 168, b: 0.66, k: 0}, {x: 353, y: 106, b: 0.72, k: 0}, {x: 318, y: 71, b: 0.71, k: 0}, {x: 333, y: 168, b: 0.44, k: 0}, {x: 183, y: 1, b: 0.39, k: 0}, {x: 417, y: 122, b: 0.70, k: 0}, {x: 298, y: 33, b: 0.78, k: 0}, {x: 416, y: 41, b: 1.00, k: 0}, {x: 294, y: 142, b: 0.47, k: 0}, {x: 498, y: 83, b: 0.59, k: 0}, {x: 59, y: 86, b: 0.47, k: 0}, {x: 320, y: 130, b: 0.63, k: 0}, {x: 27, y: 145, b: 0.40, k: 0}, {x: 92, y: 103, b: 0.62, k: 0}, {x: 22, y: 55, b: 0.38, k: 0}, {x: 54, y: 42, b: 0.60, k: 0}, {x: 50, y: 5, b: 0.74, k: 0}, {x: 448, y: 20, b: 0.57, k: 0}, {x: 45, y: 129, b: 1.00, k: 1}, {x: 154, y: 208, b: 1.00, k: 1}, {x: 316, y: 47, b: 1.00, k: 1}, {x: 446, y: 181, b: 1.00, k: 1}, {x: 348, y: 249, b: 1.00, k: 1}, {x: 198, y: 37, b: 1.00, k: 1}, {x: 511, y: 66, b: 1.00, k: 1}]: st3 := Rectangle {
-            // twinkle down to nothing and back (these stars are not painted on the backdrop)
-            property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
-                                                 * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
-            // hero stars: a short sparkle every 5..9 s
-            property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
-            x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
-            if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st3.tw * (0.55 + 0.45 * s.b) * root.star-a; }
-            if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st3.tw * s.b * root.star-a; }
-            if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st3.tw) * root.star-a; }
-            if s.k == 1 && st3.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st3.fl * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 4: Rectangle {
-        for s[i] in [{x: 517, y: 18, b: 0.63, k: 0}, {x: 500, y: 189, b: 0.46, k: 0}, {x: 416, y: 139, b: 0.40, k: 0}, {x: 115, y: 66, b: 0.42, k: 0}, {x: 419, y: 50, b: 0.69, k: 0}, {x: 440, y: 26, b: 1.00, k: 0}, {x: 33, y: 30, b: 0.79, k: 0}, {x: 194, y: 3, b: 0.59, k: 0}, {x: 267, y: 62, b: 0.70, k: 0}, {x: 224, y: 51, b: 0.47, k: 0}, {x: 91, y: 65, b: 0.87, k: 0}, {x: 161, y: 111, b: 0.53, k: 0}, {x: 171, y: 142, b: 0.74, k: 0}, {x: 303, y: 101, b: 0.51, k: 0}, {x: 246, y: 86, b: 0.47, k: 0}, {x: 381, y: 161, b: 0.38, k: 0}, {x: 419, y: 135, b: 0.49, k: 0}, {x: 345, y: 29, b: 1.00, k: 0}, {x: 335, y: 68, b: 0.59, k: 0}, {x: 59, y: 107, b: 0.60, k: 0}, {x: 113, y: 191, b: 0.58, k: 0}, {x: 321, y: 112, b: 0.57, k: 0}, {x: 13, y: 52, b: 0.55, k: 0}, {x: 213, y: 107, b: 0.60, k: 0}, {x: 358, y: 30, b: 0.83, k: 0}, {x: 299, y: 98, b: 0.70, k: 0}, {x: 321, y: 139, b: 0.61, k: 0}, {x: 463, y: 123, b: 0.54, k: 0}, {x: 521, y: 96, b: 0.57, k: 0}, {x: 263, y: 120, b: 0.57, k: 0}, {x: 57, y: 188, b: 0.48, k: 0}, {x: 145, y: 100, b: 1.00, k: 1}, {x: 63, y: 266, b: 1.00, k: 1}, {x: 324, y: 100, b: 1.00, k: 1}, {x: 442, y: 176, b: 1.00, k: 1}, {x: 417, y: 247, b: 1.00, k: 1}, {x: 177, y: 48, b: 1.00, k: 1}, {x: 483, y: 39, b: 1.00, k: 1}]: st4 := Rectangle {
-            // twinkle down to nothing and back (these stars are not painted on the backdrop)
-            property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
-                                                 * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
-            // hero stars: a short sparkle every 5..9 s
-            property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
-            x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
-            if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st4.tw * (0.55 + 0.45 * s.b) * root.star-a; }
-            if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st4.tw * s.b * root.star-a; }
-            if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st4.tw) * root.star-a; }
-            if s.k == 1 && st4.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st4.fl * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 5: Rectangle {
-        for s[i] in [{x: 438, y: 10, b: 1.00, k: 0}, {x: 363, y: 102, b: 0.79, k: 0}, {x: 340, y: 118, b: 0.45, k: 0}, {x: 323, y: 149, b: 0.71, k: 0}, {x: 220, y: 12, b: 0.53, k: 0}, {x: 143, y: 164, b: 0.42, k: 0}, {x: 230, y: 119, b: 0.41, k: 0}, {x: 138, y: 44, b: 0.56, k: 0}, {x: 343, y: 18, b: 0.53, k: 0}, {x: 125, y: 181, b: 0.51, k: 0}, {x: 232, y: 17, b: 1.00, k: 0}, {x: 426, y: 37, b: 0.61, k: 0}, {x: 432, y: 20, b: 0.93, k: 0}, {x: 522, y: 78, b: 0.51, k: 0}, {x: 498, y: 28, b: 0.60, k: 0}, {x: 484, y: 28, b: 0.68, k: 0}, {x: 81, y: 52, b: 0.38, k: 0}, {x: 299, y: 40, b: 0.80, k: 0}, {x: 3, y: 85, b: 0.51, k: 0}, {x: 282, y: 58, b: 0.67, k: 0}, {x: 205, y: 27, b: 0.72, k: 0}, {x: 269, y: 124, b: 0.57, k: 0}, {x: 482, y: 59, b: 0.47, k: 0}, {x: 37, y: 4, b: 1.00, k: 0}, {x: 340, y: 5, b: 1.00, k: 0}, {x: 493, y: 13, b: 0.61, k: 0}, {x: 426, y: 77, b: 0.51, k: 0}, {x: 152, y: 27, b: 0.71, k: 0}, {x: 137, y: 45, b: 0.39, k: 0}, {x: 103, y: 95, b: 0.54, k: 0}, {x: 151, y: 136, b: 0.57, k: 0}, {x: 115, y: 36, b: 0.66, k: 0}, {x: 99, y: 98, b: 1.00, k: 1}, {x: 96, y: 246, b: 1.00, k: 1}, {x: 325, y: 42, b: 1.00, k: 1}, {x: 487, y: 164, b: 1.00, k: 1}, {x: 419, y: 239, b: 1.00, k: 1}, {x: 181, y: 37, b: 1.00, k: 1}, {x: 513, y: 61, b: 1.00, k: 1}]: st5 := Rectangle {
-            // twinkle down to nothing and back (these stars are not painted on the backdrop)
-            property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
-                                                 * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
-            // hero stars: a short sparkle every 5..9 s
-            property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
-            x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
-            if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st5.tw * (0.55 + 0.45 * s.b) * root.star-a; }
-            if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st5.tw * s.b * root.star-a; }
-            if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st5.tw) * root.star-a; }
-            if s.k == 1 && st5.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st5.fl * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 6: Rectangle {
-        for s[i] in [{x: 189, y: 107, b: 0.43, k: 0}, {x: 338, y: 15, b: 0.63, k: 0}, {x: 367, y: 173, b: 0.42, k: 0}, {x: 369, y: 81, b: 0.74, k: 0}, {x: 159, y: 106, b: 0.48, k: 0}, {x: 87, y: 110, b: 0.48, k: 0}, {x: 221, y: 1, b: 0.41, k: 0}, {x: 63, y: 101, b: 0.63, k: 0}, {x: 127, y: 96, b: 0.75, k: 0}, {x: 137, y: 121, b: 0.60, k: 0}, {x: 123, y: 159, b: 0.70, k: 0}, {x: 480, y: 104, b: 0.56, k: 0}, {x: 138, y: 52, b: 0.52, k: 0}, {x: 439, y: 145, b: 0.57, k: 0}, {x: 219, y: 20, b: 0.73, k: 0}, {x: 339, y: 52, b: 0.62, k: 0}, {x: 240, y: 99, b: 0.86, k: 0}, {x: 293, y: 93, b: 0.43, k: 0}, {x: 491, y: 137, b: 0.41, k: 0}, {x: 317, y: 2, b: 0.73, k: 0}, {x: 181, y: 35, b: 0.54, k: 0}, {x: 479, y: 83, b: 0.83, k: 0}, {x: 60, y: 22, b: 0.63, k: 0}, {x: 463, y: 116, b: 0.64, k: 0}, {x: 17, y: 112, b: 0.48, k: 0}, {x: 355, y: 29, b: 0.93, k: 0}, {x: 451, y: 53, b: 0.78, k: 0}, {x: 53, y: 60, b: 0.54, k: 0}, {x: 414, y: 176, b: 0.38, k: 0}, {x: 310, y: 173, b: 0.46, k: 0}, {x: 192, y: 16, b: 0.82, k: 0}, {x: 85, y: 143, b: 0.58, k: 0}, {x: 68, y: 55, b: 0.50, k: 0}, {x: 44, y: 77, b: 1.00, k: 1}, {x: 62, y: 228, b: 1.00, k: 1}, {x: 342, y: 77, b: 1.00, k: 1}, {x: 480, y: 241, b: 1.00, k: 1}, {x: 396, y: 222, b: 1.00, k: 1}, {x: 210, y: 34, b: 1.00, k: 1}, {x: 462, y: 31, b: 1.00, k: 1}]: st6 := Rectangle {
-            // twinkle down to nothing and back (these stars are not painted on the backdrop)
-            property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
-                                                 * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
-            // hero stars: a short sparkle every 5..9 s
-            property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
-            x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
-            if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st6.tw * (0.55 + 0.45 * s.b) * root.star-a; }
-            if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st6.tw * s.b * root.star-a; }
-            if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st6.tw) * root.star-a; }
-            if s.k == 1 && st6.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st6.fl * root.star-a; }
-        }
-    }
-    if root.star-a > 0.01 && root.theme == 7: Rectangle {
-        for s[i] in [{x: 170, y: 47, b: 0.83, k: 0}, {x: 38, y: 167, b: 0.68, k: 0}, {x: 30, y: 158, b: 0.52, k: 0}, {x: 228, y: 21, b: 0.55, k: 0}, {x: 224, y: 257, b: 0.56, k: 0}, {x: 117, y: 195, b: 0.97, k: 0}, {x: 304, y: 123, b: 0.99, k: 0}, {x: 24, y: 267, b: 0.64, k: 0}, {x: 76, y: 36, b: 0.65, k: 0}, {x: 430, y: 56, b: 0.79, k: 0}, {x: 337, y: 116, b: 0.77, k: 0}, {x: 33, y: 18, b: 0.60, k: 0}, {x: 359, y: 133, b: 0.66, k: 0}, {x: 309, y: 141, b: 0.65, k: 0}, {x: 419, y: 218, b: 0.62, k: 0}, {x: 303, y: 163, b: 0.94, k: 0}, {x: 385, y: 89, b: 0.99, k: 0}, {x: 62, y: 130, b: 0.88, k: 0}, {x: 80, y: 152, b: 0.52, k: 0}, {x: 352, y: 238, b: 0.79, k: 0}, {x: 462, y: 97, b: 0.85, k: 0}, {x: 313, y: 180, b: 0.73, k: 0}, {x: 443, y: 294, b: 0.74, k: 0}, {x: 350, y: 18, b: 0.85, k: 0}, {x: 341, y: 309, b: 0.91, k: 0}, {x: 150, y: 120, b: 0.83, k: 0}, {x: 11, y: 144, b: 0.58, k: 0}, {x: 61, y: 18, b: 0.88, k: 0}, {x: 68, y: 77, b: 0.70, k: 0}, {x: 460, y: 25, b: 0.72, k: 0}, {x: 290, y: 275, b: 0.91, k: 0}, {x: 456, y: 86, b: 0.71, k: 0}, {x: 189, y: 275, b: 0.98, k: 0}, {x: 79, y: 54, b: 0.62, k: 0}, {x: 80, y: 96, b: 1.00, k: 1}, {x: 176, y: 200, b: 1.00, k: 1}, {x: 330, y: 62, b: 1.00, k: 1}, {x: 470, y: 210, b: 1.00, k: 1}, {x: 60, y: 260, b: 1.00, k: 1}]: st7 := Rectangle {
-            // twinkle down to nothing and back (these stars are not painted on the backdrop)
-            property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
-                                                 * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
-            // hero stars: a short sparkle every 5..9 s
-            property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
-            x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
-            if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vline-plus-light.png") : @image-url("wx/vline-plus.png")); opacity: st7.tw * s.b * root.star-a; }
-            if s.k == 1: Image { x: -10px; y: -10px; width: 21px; height: 21px; source: (root.light-variant ? @image-url("wx-light/vline-plus-big-light.png") : @image-url("wx/vline-plus-big.png")); opacity: (0.45 + 0.55 * max(st7.tw, st7.fl)) * root.star-a; }
-        }
-    }
-
-    // drawn and line themes: a shooting star every 17 s (0.8 s long), from a different place each time
     property <float> mt: Math.mod(root.t + 15.2, 17);
     property <int> mn: Math.floor((root.t + 15.2) / 17);
-    if root.vector && root.star-a > 0.8 && root.mt < 0.8: Image {
-        x: root.sx + (300 + Math.mod(root.mn * 137, 180) - root.mt * 300) * 1px;
-        y: root.sy + (24 + Math.mod(root.mn * 61, 80) + root.mt * 110) * 1px;
-        width: 160px; height: 64px; source: (root.light-variant ? @image-url("wx-light/vstar-meteor-light.png") : @image-url("wx/vstar-meteor.png"));
-        opacity: Math.sin(root.mt / 0.8 * 180deg);
-    }
-    // 3. distant lightning bolt, behind the mountains
-    if root.stormy && root.bolts && root.pulse > 0.2: Image {
-        x: root.sx + (90 + Math.mod(root.lc * 173, 300)) * 1px; y: root.sy + 20px;
-        width: 220px; height: 300px;
-        source: root.theme == 7 ? (Math.mod(root.lc, 2) == 0 ? (root.light-variant ? @image-url("wx-light/vline-bolt0-light.png") : @image-url("wx/vline-bolt0.png")) : (root.light-variant ? @image-url("wx-light/vline-bolt1-light.png") : @image-url("wx/vline-bolt1.png")))
-            : Math.mod(root.lc, 2) == 0 ? @image-url("wx/bolt0.png") : @image-url("wx/bolt1.png");
-        opacity: min(1, root.pulse * 1.2);
-    }
-
-    // 3b. wind: thin cloud wisps race along the photo's streak direction (about 11 deg, up-left),
-    //     behind the trees and mountains; 528 x 408 texture, back at the start after 66 s
     property <bool> streaks: !root.rust-sky && root.theme < 3 && (root.mood == 6 || ((root.mood == 0 || root.mood == 1) && root.wind >= 35));
     property <length> wsx: -Math.mod(root.t * 32, 528) * 1px;
     property <length> wsy: -Math.mod(root.t * 408 / 66, 408) * 1px;
     property <float> streak-k: root.streaks ? 1 : 0;
     animate streak-k { duration: 2s; easing: ease-in-out; }
-    if root.streak-k > 0.001: Rectangle {
-        for c in 4: Image {
-            x: -24px + root.wsx + Math.mod(c, 2) * 528px; y: root.wsy + Math.floor(c / 2) * 408px;
-            width: 528px; height: 408px; source: @image-url("wx/wind-streaks.png");
-            opacity: 0.9 * root.streak-k;
-        }
-    }
-
-    // 4. far mist, behind the trees
-    // (mockup loop: the far copy B, one loop-distance further right, takes over while A fades)
     property <float> m1a: Math.mod(root.tl * 5, 1056);
     property <float> m1b: Math.mod((root.tl - root.sky-loop) * 5 + 4224, 1056);
     property <float> m2a: Math.mod(root.tl * 11 + 400, 1056);
     property <float> m2b: Math.mod((root.tl - root.sky-loop) * 11 + 400 + 4224, 1056);
-    if root.misty: Image { x: -root.m1a * 1px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * (1 - root.wb); }
-    if root.misty: Image { x: -root.m1a * 1px + 1056px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * (1 - root.wb); }
-    if root.misty && root.wb > 0.004: Image { x: -root.m1b * 1px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * root.wb; }
-    if root.misty && root.wb > 0.004: Image { x: -root.m1b * 1px + 1056px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * root.wb; }
+    // 0-4: everything behind the land, drawn only above the rows where the land is opaque
+    Rectangle {
+        y: 0; height: root.land * 1px + root.sy;
+        clip: true;
+        // 0. drawn themes: still backdrop (sky gradient, sun or moon, stars) under the drifting clouds
+        if root.vector: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.back(root.theme, root.mood); }
+        if root.vector && root.has-grade && root.dk > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dk; source: root.gback(root.theme, root.mood, 0); }
+        if root.vector && root.has-grade && root.dn > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.dn; source: root.gback(root.theme, root.mood, 1); }
+        if root.vector && root.nmix > 0: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; opacity: root.nmix; source: root.back(root.theme, root.nmood); }
 
-    // 5. foreground cut-out
-    Image { x: root.fx; y: root.fy; width: 528px; height: 528px; source: root.fg(root.theme, root.mood); }
+        // 0b. sun (behind the clouds and the land, so it sets behind the hills / skyline)
+        if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 230) * 1px; y: root.sy + (root.sun-py - 230) * 1px; width: 460px; height: 460px;
+            source: (root.light-variant ? @image-url("wx-light/vsun-glow-light.png") : @image-url("wx/vsun-glow.png")); opacity: root.sa * (1 - root.low) * root.sglow; }
+        if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 210) * 1px; y: root.sy + (root.sun-py - 210) * 1px; width: 420px; height: 420px;
+            source: (root.light-variant ? @image-url("wx-light/vsun-glow-low-light.png") : @image-url("wx/vsun-glow-low.png")); opacity: root.sa * root.low * root.sglow; }
+        if root.sun-on && root.theme != 7 && root.low < 1: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
+            source: (root.light-variant ? @image-url("wx-light/vsun-disc-light.png") : @image-url("wx/vsun-disc.png")); opacity: root.sa * (1 - root.low) * root.sdisc; }
+        if root.sun-on && root.theme != 7 && root.low > 0: Image { x: root.sx + (root.sun-px - 36) * 1px; y: root.sy + (root.sun-py - 36) * 1px; width: 72px; height: 72px;
+            source: (root.light-variant ? @image-url("wx-light/vsun-disc-low-light.png") : @image-url("wx/vsun-disc-low.png")); opacity: root.sa * root.low * root.sdisc; }
+        // line theme: an accent ring with two sets of short rays crossfading (a slow shimmer);
+        // the rays fade when the sun is low
+        if root.sun-on && root.theme == 7: Image { x: root.sx + (root.sun-px - 28) * 1px; y: root.sy + (root.sun-py - 28) * 1px; width: 56px; height: 56px;
+            source: (root.light-variant ? @image-url("wx-light/vline-sun-light.png") : @image-url("wx/vline-sun.png")); colorize: root.line-acc; opacity: root.sa * 0.85 * root.sdisc; }
+        if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
+            source: (root.light-variant ? @image-url("wx-light/vline-rays-a-light.png") : @image-url("wx/vline-rays-a.png")); colorize: root.line-acc; opacity: root.ra * (0.5 + 0.5 * Math.sin(root.t * 60deg)); }
+        if root.sun-on && root.theme == 7 && root.ra > 0: Image { x: root.sx + (root.sun-px - 48) * 1px; y: root.sy + (root.sun-py - 48) * 1px; width: 96px; height: 96px;
+            source: (root.light-variant ? @image-url("wx-light/vline-rays-b-light.png") : @image-url("wx/vline-rays-b.png")); colorize: root.line-acc; opacity: root.ra * (0.5 - 0.5 * Math.sin(root.t * 60deg)); }
+
+        // 0c. moon with its real phase
+        if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 120) * 1px; y: root.sy + (root.moon-py - 120) * 1px; width: 240px; height: 240px;
+            source: (root.light-variant ? @image-url("wx-light/vmoon-glow-light.png") : @image-url("wx/vmoon-glow.png")); opacity: root.moon-a * (0.25 + 0.75 * Math.sin(root.moon-phase * 180deg)) * root.mdisc; }
+        if root.moon-on && root.theme != 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
+            source: (root.light-variant ? @image-url("wx-light/vmoon-light.png") : @image-url("wx/vmoon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
+        if root.moon-on && root.theme == 7: Image { x: root.sx + (root.moon-px - 22) * 1px; y: root.sy + (root.moon-py - 22) * 1px; width: 44px; height: 44px;
+            source: (root.light-variant ? @image-url("wx-light/vline-moon-light.png") : @image-url("wx/vline-moon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
+
+        // 1. sky photo: seamless 792 px tile, two copies, plus the sub-pixel copies
+        if !root.rust-sky: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.rust-sky: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.rust-sky: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
+        if !root.rust-sky: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
+        if root.has-grade && root.dk > 0: Image {
+            x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
+            source: root.gsky(root.theme, root.mood, 0);
+        }
+        if root.has-grade && root.dk > 0: Image {
+            x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
+            source: root.gsky(root.theme, root.mood, 0);
+        }
+        if root.has-grade && root.dn > 0: Image {
+            x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dn * root.gk;
+            source: root.gsky(root.theme, root.mood, 1);
+        }
+        if root.has-grade && root.dn > 0: Image {
+            x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; opacity: root.dn * root.gk;
+            source: root.gsky(root.theme, root.mood, 1);
+        }
+
+        if !root.rust-sky && root.nmix > 0: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
+        if !root.rust-sky && root.nmix > 0: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
+        if root.rust-sky: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.sky-frame; }
+
+        // 2. the photo's own stars twinkle (clear night) and drift with the sky; irregular
+        //    scintillation, a soft glow around a small bright core
+        if root.star-a > 0.01 && root.theme == 0: Rectangle {
+            for s[i] in [{x: 331, y: 91, b: 0.34}, {x: 333, y: 77, b: 0.31}, {x: 204, y: 70, b: 0.28}, {x: 111, y: 57, b: 0.27}, {x: 789, y: 158, b: 0.27}, {x: 229, y: 77, b: 0.24}, {x: 786, y: 93, b: 0.24}, {x: 219, y: 69, b: 0.24}, {x: 219, y: 68, b: 0.24}, {x: 281, y: 21, b: 0.22}, {x: 109, y: 150, b: 0.22}, {x: 224, y: 18, b: 0.21}, {x: 300, y: 19, b: 0.20}, {x: 685, y: 18, b: 0.20}, {x: 389, y: 112, b: 0.20}, {x: 650, y: 152, b: 0.20}, {x: 186, y: 0, b: 0.20}, {x: 576, y: 226, b: 0.20}, {x: 555, y: 38, b: 0.20}, {x: 248, y: 98, b: 0.19}, {x: 182, y: 128, b: 0.19}, {x: 708, y: 103, b: 0.19}, {x: 161, y: 50, b: 0.19}, {x: 708, y: 5, b: 0.18}, {x: 199, y: 26, b: 0.18}, {x: 255, y: 16, b: 0.18}, {x: 319, y: 26, b: 0.18}, {x: 756, y: 37, b: 0.17}, {x: 213, y: 50, b: 0.17}, {x: 216, y: 77, b: 0.17}, {x: 269, y: 61, b: 0.17}, {x: 170, y: 158, b: 0.16}, {x: 587, y: 29, b: 0.16}, {x: 432, y: 88, b: 0.16}, {x: 39, y: 4, b: 0.16}, {x: 129, y: 124, b: 0.15}, {x: 746, y: 49, b: 0.15}, {x: 318, y: 21, b: 0.15}, {x: 321, y: 5, b: 0.15}, {x: 192, y: 164, b: 0.15}, {x: 732, y: 4, b: 0.15}, {x: 773, y: 158, b: 0.15}, {x: 195, y: 20, b: 0.15}, {x: 390, y: 31, b: 0.15}, {x: 389, y: 31, b: 0.15}, {x: 267, y: 21, b: 0.15}, {x: 549, y: 199, b: 0.14}, {x: 296, y: 41, b: 0.14}, {x: 191, y: 183, b: 0.14}, {x: 239, y: 52, b: 0.14}, {x: 210, y: 25, b: 0.14}, {x: 77, y: 68, b: 0.14}, {x: 644, y: 215, b: 0.14}, {x: 242, y: 86, b: 0.14}, {x: 119, y: 90, b: 0.14}, {x: 154, y: 23, b: 0.14}, {x: 715, y: 14, b: 0.14}, {x: 295, y: 24, b: 0.14}, {x: 281, y: 41, b: 0.14}, {x: 663, y: 25, b: 0.13}, {x: 144, y: 9, b: 0.13}, {x: 362, y: 91, b: 0.13}, {x: 203, y: 115, b: 0.13}, {x: 785, y: 167, b: 0.13}, {x: 766, y: 33, b: 0.13}, {x: 765, y: 86, b: 0.13}, {x: 395, y: 19, b: 0.13}, {x: 533, y: 172, b: 0.13}, {x: 123, y: 27, b: 0.12}, {x: 328, y: 163, b: 0.12}, {x: 202, y: 101, b: 0.12}, {x: 500, y: 20, b: 0.12}, {x: 499, y: 20, b: 0.12}, {x: 2, y: 67, b: 0.12}, {x: 551, y: 54, b: 0.12}, {x: 440, y: 147, b: 0.12}, {x: 197, y: 92, b: 0.12}, {x: 237, y: 7, b: 0.12}, {x: 764, y: 101, b: 0.12}, {x: 363, y: 56, b: 0.12}, {x: 68, y: 87, b: 0.12}, {x: 332, y: 109, b: 0.12}, {x: 26, y: 19, b: 0.12}, {x: 527, y: 60, b: 0.11}, {x: 240, y: 14, b: 0.11}, {x: 207, y: 9, b: 0.11}, {x: 249, y: 9, b: 0.11}, {x: 543, y: 198, b: 0.11}, {x: 222, y: 80, b: 0.11}, {x: 191, y: 85, b: 0.11}, {x: 286, y: 37, b: 0.11}, {x: 615, y: 55, b: 0.11}, {x: 140, y: 168, b: 0.11}, {x: 554, y: 24, b: 0.11}, {x: 314, y: 0, b: 0.11}, {x: 248, y: 45, b: 0.11}, {x: 375, y: 11, b: 0.11}, {x: 728, y: 143, b: 0.11}, {x: 137, y: 131, b: 0.11}, {x: 128, y: 73, b: 0.11}, {x: 436, y: 99, b: 0.11}, {x: 496, y: 149, b: 0.11}, {x: 671, y: 15, b: 0.11}, {x: 173, y: 131, b: 0.11}, {x: 173, y: 130, b: 0.11}, {x: 153, y: 151, b: 0.11}, {x: 232, y: 87, b: 0.11}, {x: 231, y: 40, b: 0.11}, {x: 199, y: 54, b: 0.11}, {x: 213, y: 98, b: 0.10}]: Rectangle {
+                property <length> p1: root.sx + root.dx + s.x * 1px;
+                property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
+                property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
+                                                * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
+                visible: self.p2 > -8px && self.p2 < 488px;
+                x: self.p2 - 3px; y: root.sy + s.y * 1px - 3px; width: 7px; height: 7px;
+                Rectangle { background: @radial-gradient(circle, #ffffffcc 0%, #cfdcff55 35%, #00000000 70%); opacity: min(1, s.b * 3.0) * parent.tw * root.star-a; }
+                Rectangle { x: 2px; y: 2px; width: 3px; height: 3px; border-radius: 1.5px; background: #ffffff; opacity: min(1, s.b * 4.0) * parent.tw * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 1: Rectangle {
+            for s[i] in [{x: 244, y: 95, b: 0.46}, {x: 4, y: 40, b: 0.39}, {x: 199, y: 14, b: 0.36}, {x: 702, y: 64, b: 0.35}, {x: 244, y: 77, b: 0.32}, {x: 780, y: 178, b: 0.32}, {x: 38, y: 140, b: 0.31}, {x: 17, y: 119, b: 0.31}, {x: 169, y: 14, b: 0.30}, {x: 306, y: 14, b: 0.28}, {x: 761, y: 189, b: 0.27}, {x: 762, y: 189, b: 0.27}, {x: 768, y: 35, b: 0.26}, {x: 789, y: 120, b: 0.24}, {x: 765, y: 21, b: 0.24}, {x: 719, y: 35, b: 0.24}, {x: 495, y: 2, b: 0.24}, {x: 177, y: 33, b: 0.23}, {x: 219, y: 17, b: 0.23}, {x: 477, y: 38, b: 0.23}, {x: 170, y: 41, b: 0.23}, {x: 559, y: 98, b: 0.22}, {x: 505, y: 8, b: 0.22}, {x: 192, y: 10, b: 0.22}, {x: 643, y: 208, b: 0.22}, {x: 503, y: 27, b: 0.22}, {x: 92, y: 81, b: 0.21}, {x: 191, y: 38, b: 0.21}, {x: 151, y: 16, b: 0.21}, {x: 49, y: 172, b: 0.21}, {x: 367, y: 80, b: 0.21}, {x: 231, y: 22, b: 0.20}, {x: 14, y: 129, b: 0.20}, {x: 250, y: 186, b: 0.20}, {x: 319, y: 114, b: 0.19}, {x: 563, y: 231, b: 0.18}, {x: 139, y: 115, b: 0.18}, {x: 278, y: 47, b: 0.18}, {x: 277, y: 47, b: 0.18}, {x: 459, y: 99, b: 0.18}, {x: 111, y: 89, b: 0.18}, {x: 247, y: 118, b: 0.18}, {x: 604, y: 12, b: 0.17}, {x: 788, y: 56, b: 0.17}, {x: 133, y: 10, b: 0.17}, {x: 751, y: 207, b: 0.17}, {x: 328, y: 135, b: 0.17}, {x: 282, y: 18, b: 0.17}, {x: 218, y: 12, b: 0.17}, {x: 159, y: 66, b: 0.17}, {x: 608, y: 118, b: 0.16}, {x: 579, y: 20, b: 0.16}, {x: 8, y: 7, b: 0.16}, {x: 583, y: 150, b: 0.16}, {x: 748, y: 122, b: 0.15}, {x: 536, y: 10, b: 0.15}, {x: 625, y: 34, b: 0.15}, {x: 640, y: 131, b: 0.15}, {x: 106, y: 92, b: 0.15}, {x: 524, y: 127, b: 0.15}, {x: 235, y: 83, b: 0.15}, {x: 468, y: 46, b: 0.15}, {x: 551, y: 39, b: 0.15}, {x: 730, y: 91, b: 0.15}, {x: 240, y: 101, b: 0.15}, {x: 386, y: 152, b: 0.15}, {x: 28, y: 62, b: 0.15}, {x: 220, y: 80, b: 0.14}, {x: 501, y: 86, b: 0.14}, {x: 671, y: 77, b: 0.14}, {x: 146, y: 115, b: 0.14}, {x: 98, y: 95, b: 0.14}, {x: 767, y: 54, b: 0.14}, {x: 527, y: 203, b: 0.14}, {x: 511, y: 120, b: 0.14}, {x: 257, y: 30, b: 0.14}, {x: 244, y: 38, b: 0.14}, {x: 126, y: 102, b: 0.14}, {x: 233, y: 71, b: 0.14}, {x: 756, y: 179, b: 0.14}, {x: 25, y: 85, b: 0.14}, {x: 178, y: 50, b: 0.14}, {x: 61, y: 199, b: 0.14}, {x: 770, y: 131, b: 0.14}, {x: 0, y: 68, b: 0.14}, {x: 186, y: 16, b: 0.14}, {x: 711, y: 126, b: 0.13}, {x: 319, y: 8, b: 0.13}, {x: 259, y: 63, b: 0.13}, {x: 232, y: 54, b: 0.13}, {x: 293, y: 44, b: 0.13}, {x: 769, y: 82, b: 0.13}, {x: 571, y: 67, b: 0.13}, {x: 146, y: 3, b: 0.13}, {x: 263, y: 178, b: 0.13}, {x: 126, y: 119, b: 0.13}, {x: 733, y: 109, b: 0.13}, {x: 563, y: 3, b: 0.13}, {x: 472, y: 27, b: 0.13}, {x: 245, y: 112, b: 0.12}, {x: 719, y: 29, b: 0.12}, {x: 4, y: 174, b: 0.12}, {x: 55, y: 114, b: 0.12}, {x: 43, y: 124, b: 0.12}, {x: 333, y: 1, b: 0.12}, {x: 157, y: 87, b: 0.12}, {x: 764, y: 162, b: 0.12}, {x: 454, y: 147, b: 0.12}, {x: 168, y: 134, b: 0.12}, {x: 136, y: 174, b: 0.12}]: Rectangle {
+                property <length> p1: root.sx + root.dx + s.x * 1px;
+                property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
+                property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
+                                                * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
+                visible: self.p2 > -8px && self.p2 < 488px;
+                x: self.p2 - 3px; y: root.sy + s.y * 1px - 3px; width: 7px; height: 7px;
+                Rectangle { background: @radial-gradient(circle, #ffffffcc 0%, #cfdcff55 35%, #00000000 70%); opacity: min(1, s.b * 3.0) * parent.tw * root.star-a; }
+                Rectangle { x: 2px; y: 2px; width: 3px; height: 3px; border-radius: 1.5px; background: #ffffff; opacity: min(1, s.b * 4.0) * parent.tw * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 2: Rectangle {
+            for s[i] in [{x: 707, y: 38, b: 0.07}, {x: 303, y: 42, b: 0.07}, {x: 688, y: 108, b: 0.06}]: Rectangle {
+                property <length> p1: root.sx + root.dx + s.x * 1px;
+                property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
+                property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
+                                                * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
+                visible: self.p2 > -8px && self.p2 < 488px;
+                x: self.p2 - 3px; y: root.sy + s.y * 1px - 3px; width: 7px; height: 7px;
+                Rectangle { background: @radial-gradient(circle, #ffffffcc 0%, #cfdcff55 35%, #00000000 70%); opacity: min(1, s.b * 3.0) * parent.tw * root.star-a; }
+                Rectangle { x: 2px; y: 2px; width: 3px; height: 3px; border-radius: 1.5px; background: #ffffff; opacity: min(1, s.b * 4.0) * parent.tw * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 3: Rectangle {
+            for s[i] in [{x: 93, y: 88, b: 0.47, k: 0}, {x: 259, y: 128, b: 0.71, k: 0}, {x: 304, y: 7, b: 0.59, k: 0}, {x: 57, y: 162, b: 0.55, k: 0}, {x: 381, y: 57, b: 0.53, k: 0}, {x: 316, y: 168, b: 0.66, k: 0}, {x: 353, y: 106, b: 0.72, k: 0}, {x: 318, y: 71, b: 0.71, k: 0}, {x: 333, y: 168, b: 0.44, k: 0}, {x: 183, y: 1, b: 0.39, k: 0}, {x: 417, y: 122, b: 0.70, k: 0}, {x: 298, y: 33, b: 0.78, k: 0}, {x: 416, y: 41, b: 1.00, k: 0}, {x: 294, y: 142, b: 0.47, k: 0}, {x: 498, y: 83, b: 0.59, k: 0}, {x: 59, y: 86, b: 0.47, k: 0}, {x: 320, y: 130, b: 0.63, k: 0}, {x: 27, y: 145, b: 0.40, k: 0}, {x: 92, y: 103, b: 0.62, k: 0}, {x: 22, y: 55, b: 0.38, k: 0}, {x: 54, y: 42, b: 0.60, k: 0}, {x: 50, y: 5, b: 0.74, k: 0}, {x: 448, y: 20, b: 0.57, k: 0}, {x: 45, y: 129, b: 1.00, k: 1}, {x: 154, y: 208, b: 1.00, k: 1}, {x: 316, y: 47, b: 1.00, k: 1}, {x: 446, y: 181, b: 1.00, k: 1}, {x: 348, y: 249, b: 1.00, k: 1}, {x: 198, y: 37, b: 1.00, k: 1}, {x: 511, y: 66, b: 1.00, k: 1}]: st3 := Rectangle {
+                // twinkle down to nothing and back (these stars are not painted on the backdrop)
+                property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
+                                                     * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
+                // hero stars: a short sparkle every 5..9 s
+                property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
+                x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
+                if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st3.tw * (0.55 + 0.45 * s.b) * root.star-a; }
+                if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st3.tw * s.b * root.star-a; }
+                if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st3.tw) * root.star-a; }
+                if s.k == 1 && st3.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st3.fl * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 4: Rectangle {
+            for s[i] in [{x: 517, y: 18, b: 0.63, k: 0}, {x: 500, y: 189, b: 0.46, k: 0}, {x: 416, y: 139, b: 0.40, k: 0}, {x: 115, y: 66, b: 0.42, k: 0}, {x: 419, y: 50, b: 0.69, k: 0}, {x: 440, y: 26, b: 1.00, k: 0}, {x: 33, y: 30, b: 0.79, k: 0}, {x: 194, y: 3, b: 0.59, k: 0}, {x: 267, y: 62, b: 0.70, k: 0}, {x: 224, y: 51, b: 0.47, k: 0}, {x: 91, y: 65, b: 0.87, k: 0}, {x: 161, y: 111, b: 0.53, k: 0}, {x: 171, y: 142, b: 0.74, k: 0}, {x: 303, y: 101, b: 0.51, k: 0}, {x: 246, y: 86, b: 0.47, k: 0}, {x: 381, y: 161, b: 0.38, k: 0}, {x: 419, y: 135, b: 0.49, k: 0}, {x: 345, y: 29, b: 1.00, k: 0}, {x: 335, y: 68, b: 0.59, k: 0}, {x: 59, y: 107, b: 0.60, k: 0}, {x: 113, y: 191, b: 0.58, k: 0}, {x: 321, y: 112, b: 0.57, k: 0}, {x: 13, y: 52, b: 0.55, k: 0}, {x: 213, y: 107, b: 0.60, k: 0}, {x: 358, y: 30, b: 0.83, k: 0}, {x: 299, y: 98, b: 0.70, k: 0}, {x: 321, y: 139, b: 0.61, k: 0}, {x: 463, y: 123, b: 0.54, k: 0}, {x: 521, y: 96, b: 0.57, k: 0}, {x: 263, y: 120, b: 0.57, k: 0}, {x: 57, y: 188, b: 0.48, k: 0}, {x: 145, y: 100, b: 1.00, k: 1}, {x: 63, y: 266, b: 1.00, k: 1}, {x: 324, y: 100, b: 1.00, k: 1}, {x: 442, y: 176, b: 1.00, k: 1}, {x: 417, y: 247, b: 1.00, k: 1}, {x: 177, y: 48, b: 1.00, k: 1}, {x: 483, y: 39, b: 1.00, k: 1}]: st4 := Rectangle {
+                // twinkle down to nothing and back (these stars are not painted on the backdrop)
+                property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
+                                                     * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
+                // hero stars: a short sparkle every 5..9 s
+                property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
+                x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
+                if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st4.tw * (0.55 + 0.45 * s.b) * root.star-a; }
+                if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st4.tw * s.b * root.star-a; }
+                if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st4.tw) * root.star-a; }
+                if s.k == 1 && st4.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st4.fl * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 5: Rectangle {
+            for s[i] in [{x: 438, y: 10, b: 1.00, k: 0}, {x: 363, y: 102, b: 0.79, k: 0}, {x: 340, y: 118, b: 0.45, k: 0}, {x: 323, y: 149, b: 0.71, k: 0}, {x: 220, y: 12, b: 0.53, k: 0}, {x: 143, y: 164, b: 0.42, k: 0}, {x: 230, y: 119, b: 0.41, k: 0}, {x: 138, y: 44, b: 0.56, k: 0}, {x: 343, y: 18, b: 0.53, k: 0}, {x: 125, y: 181, b: 0.51, k: 0}, {x: 232, y: 17, b: 1.00, k: 0}, {x: 426, y: 37, b: 0.61, k: 0}, {x: 432, y: 20, b: 0.93, k: 0}, {x: 522, y: 78, b: 0.51, k: 0}, {x: 498, y: 28, b: 0.60, k: 0}, {x: 484, y: 28, b: 0.68, k: 0}, {x: 81, y: 52, b: 0.38, k: 0}, {x: 299, y: 40, b: 0.80, k: 0}, {x: 3, y: 85, b: 0.51, k: 0}, {x: 282, y: 58, b: 0.67, k: 0}, {x: 205, y: 27, b: 0.72, k: 0}, {x: 269, y: 124, b: 0.57, k: 0}, {x: 482, y: 59, b: 0.47, k: 0}, {x: 37, y: 4, b: 1.00, k: 0}, {x: 340, y: 5, b: 1.00, k: 0}, {x: 493, y: 13, b: 0.61, k: 0}, {x: 426, y: 77, b: 0.51, k: 0}, {x: 152, y: 27, b: 0.71, k: 0}, {x: 137, y: 45, b: 0.39, k: 0}, {x: 103, y: 95, b: 0.54, k: 0}, {x: 151, y: 136, b: 0.57, k: 0}, {x: 115, y: 36, b: 0.66, k: 0}, {x: 99, y: 98, b: 1.00, k: 1}, {x: 96, y: 246, b: 1.00, k: 1}, {x: 325, y: 42, b: 1.00, k: 1}, {x: 487, y: 164, b: 1.00, k: 1}, {x: 419, y: 239, b: 1.00, k: 1}, {x: 181, y: 37, b: 1.00, k: 1}, {x: 513, y: 61, b: 1.00, k: 1}]: st5 := Rectangle {
+                // twinkle down to nothing and back (these stars are not painted on the backdrop)
+                property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
+                                                     * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
+                // hero stars: a short sparkle every 5..9 s
+                property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
+                x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
+                if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st5.tw * (0.55 + 0.45 * s.b) * root.star-a; }
+                if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st5.tw * s.b * root.star-a; }
+                if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st5.tw) * root.star-a; }
+                if s.k == 1 && st5.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st5.fl * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 6: Rectangle {
+            for s[i] in [{x: 189, y: 107, b: 0.43, k: 0}, {x: 338, y: 15, b: 0.63, k: 0}, {x: 367, y: 173, b: 0.42, k: 0}, {x: 369, y: 81, b: 0.74, k: 0}, {x: 159, y: 106, b: 0.48, k: 0}, {x: 87, y: 110, b: 0.48, k: 0}, {x: 221, y: 1, b: 0.41, k: 0}, {x: 63, y: 101, b: 0.63, k: 0}, {x: 127, y: 96, b: 0.75, k: 0}, {x: 137, y: 121, b: 0.60, k: 0}, {x: 123, y: 159, b: 0.70, k: 0}, {x: 480, y: 104, b: 0.56, k: 0}, {x: 138, y: 52, b: 0.52, k: 0}, {x: 439, y: 145, b: 0.57, k: 0}, {x: 219, y: 20, b: 0.73, k: 0}, {x: 339, y: 52, b: 0.62, k: 0}, {x: 240, y: 99, b: 0.86, k: 0}, {x: 293, y: 93, b: 0.43, k: 0}, {x: 491, y: 137, b: 0.41, k: 0}, {x: 317, y: 2, b: 0.73, k: 0}, {x: 181, y: 35, b: 0.54, k: 0}, {x: 479, y: 83, b: 0.83, k: 0}, {x: 60, y: 22, b: 0.63, k: 0}, {x: 463, y: 116, b: 0.64, k: 0}, {x: 17, y: 112, b: 0.48, k: 0}, {x: 355, y: 29, b: 0.93, k: 0}, {x: 451, y: 53, b: 0.78, k: 0}, {x: 53, y: 60, b: 0.54, k: 0}, {x: 414, y: 176, b: 0.38, k: 0}, {x: 310, y: 173, b: 0.46, k: 0}, {x: 192, y: 16, b: 0.82, k: 0}, {x: 85, y: 143, b: 0.58, k: 0}, {x: 68, y: 55, b: 0.50, k: 0}, {x: 44, y: 77, b: 1.00, k: 1}, {x: 62, y: 228, b: 1.00, k: 1}, {x: 342, y: 77, b: 1.00, k: 1}, {x: 480, y: 241, b: 1.00, k: 1}, {x: 396, y: 222, b: 1.00, k: 1}, {x: 210, y: 34, b: 1.00, k: 1}, {x: 462, y: 31, b: 1.00, k: 1}]: st6 := Rectangle {
+                // twinkle down to nothing and back (these stars are not painted on the backdrop)
+                property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
+                                                     * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
+                // hero stars: a short sparkle every 5..9 s
+                property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
+                x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
+                if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vstar-dot-light.png") : @image-url("wx/vstar-dot.png")); opacity: st6.tw * (0.55 + 0.45 * s.b) * root.star-a; }
+                if s.k == 0: Rectangle { x: -1px; y: -1px; width: 2px; height: 2px; background: #ffffff; opacity: st6.tw * s.b * root.star-a; }
+                if s.k == 1: Image { x: -15px; y: -15px; width: 31px; height: 31px; source: (root.light-variant ? @image-url("wx-light/vstar-glint-light.png") : @image-url("wx/vstar-glint.png")); opacity: (0.5 + 0.5 * st6.tw) * root.star-a; }
+                if s.k == 1 && st6.fl > 0.01: Image { x: -30px; y: -30px; width: 61px; height: 61px; source: (root.light-variant ? @image-url("wx-light/vstar-flare-light.png") : @image-url("wx/vstar-flare.png")); opacity: st6.fl * root.star-a; }
+            }
+        }
+        if root.star-a > 0.01 && root.theme == 7: Rectangle {
+            for s[i] in [{x: 170, y: 47, b: 0.83, k: 0}, {x: 38, y: 167, b: 0.68, k: 0}, {x: 30, y: 158, b: 0.52, k: 0}, {x: 228, y: 21, b: 0.55, k: 0}, {x: 224, y: 257, b: 0.56, k: 0}, {x: 117, y: 195, b: 0.97, k: 0}, {x: 304, y: 123, b: 0.99, k: 0}, {x: 24, y: 267, b: 0.64, k: 0}, {x: 76, y: 36, b: 0.65, k: 0}, {x: 430, y: 56, b: 0.79, k: 0}, {x: 337, y: 116, b: 0.77, k: 0}, {x: 33, y: 18, b: 0.60, k: 0}, {x: 359, y: 133, b: 0.66, k: 0}, {x: 309, y: 141, b: 0.65, k: 0}, {x: 419, y: 218, b: 0.62, k: 0}, {x: 303, y: 163, b: 0.94, k: 0}, {x: 385, y: 89, b: 0.99, k: 0}, {x: 62, y: 130, b: 0.88, k: 0}, {x: 80, y: 152, b: 0.52, k: 0}, {x: 352, y: 238, b: 0.79, k: 0}, {x: 462, y: 97, b: 0.85, k: 0}, {x: 313, y: 180, b: 0.73, k: 0}, {x: 443, y: 294, b: 0.74, k: 0}, {x: 350, y: 18, b: 0.85, k: 0}, {x: 341, y: 309, b: 0.91, k: 0}, {x: 150, y: 120, b: 0.83, k: 0}, {x: 11, y: 144, b: 0.58, k: 0}, {x: 61, y: 18, b: 0.88, k: 0}, {x: 68, y: 77, b: 0.70, k: 0}, {x: 460, y: 25, b: 0.72, k: 0}, {x: 290, y: 275, b: 0.91, k: 0}, {x: 456, y: 86, b: 0.71, k: 0}, {x: 189, y: 275, b: 0.98, k: 0}, {x: 79, y: 54, b: 0.62, k: 0}, {x: 80, y: 96, b: 1.00, k: 1}, {x: 176, y: 200, b: 1.00, k: 1}, {x: 330, y: 62, b: 1.00, k: 1}, {x: 470, y: 210, b: 1.00, k: 1}, {x: 60, y: 260, b: 1.00, k: 1}]: st7 := Rectangle {
+                // twinkle down to nothing and back (these stars are not painted on the backdrop)
+                property <float> tw: max(0, min(1, 0.5 + 0.62 * Math.sin((root.t * (1.3 + Math.mod(i * 7, 11) / 5) + i * 0.71) * 1rad)
+                                                     * (0.7 + 0.3 * Math.sin((root.t * (0.5 + Math.mod(i * 5, 7) / 9) + i * 1.3) * 1rad))));
+                // hero stars: a short sparkle every 5..9 s
+                property <float> fl: s.k == 1 ? Math.pow(max(0, Math.sin((root.t * 360 / (5 + Math.mod(i * 3, 5)) + i * 121) * 1deg)), 40) : 0;
+                x: root.sx + s.x * 1px; y: root.sy + s.y * 1px; width: 1px; height: 1px;
+                if s.k == 0: Image { x: -4px; y: -4px; width: 9px; height: 9px; source: (root.light-variant ? @image-url("wx-light/vline-plus-light.png") : @image-url("wx/vline-plus.png")); opacity: st7.tw * s.b * root.star-a; }
+                if s.k == 1: Image { x: -10px; y: -10px; width: 21px; height: 21px; source: (root.light-variant ? @image-url("wx-light/vline-plus-big-light.png") : @image-url("wx/vline-plus-big.png")); opacity: (0.45 + 0.55 * max(st7.tw, st7.fl)) * root.star-a; }
+            }
+        }
+
+        // drawn and line themes: a shooting star every 17 s (0.8 s long), from a different place each time
+        if root.vector && root.star-a > 0.8 && root.mt < 0.8: Image {
+            x: root.sx + (300 + Math.mod(root.mn * 137, 180) - root.mt * 300) * 1px;
+            y: root.sy + (24 + Math.mod(root.mn * 61, 80) + root.mt * 110) * 1px;
+            width: 160px; height: 64px; source: (root.light-variant ? @image-url("wx-light/vstar-meteor-light.png") : @image-url("wx/vstar-meteor.png"));
+            opacity: Math.sin(root.mt / 0.8 * 180deg);
+        }
+        // 3. distant lightning bolt, behind the mountains
+        if root.stormy && root.bolts && root.pulse > 0.2: Image {
+            x: root.sx + (90 + Math.mod(root.lc * 173, 300)) * 1px; y: root.sy + 20px;
+            width: 220px; height: 300px;
+            source: root.theme == 7 ? (Math.mod(root.lc, 2) == 0 ? (root.light-variant ? @image-url("wx-light/vline-bolt0-light.png") : @image-url("wx/vline-bolt0.png")) : (root.light-variant ? @image-url("wx-light/vline-bolt1-light.png") : @image-url("wx/vline-bolt1.png")))
+                : Math.mod(root.lc, 2) == 0 ? @image-url("wx/bolt0.png") : @image-url("wx/bolt1.png");
+            opacity: min(1, root.pulse * 1.2);
+        }
+
+        // 3b. wind: thin cloud wisps race along the photo's streak direction (about 11 deg, up-left),
+        //     behind the trees and mountains; 528 x 408 texture, back at the start after 66 s
+        if root.streak-k > 0.001: Rectangle {
+            for c in 4: Image {
+                x: -24px + root.wsx + Math.mod(c, 2) * 528px; y: root.wsy + Math.floor(c / 2) * 408px;
+                width: 528px; height: 408px; source: @image-url("wx/wind-streaks.png");
+                opacity: 0.9 * root.streak-k;
+            }
+        }
+
+        // 4. far mist, behind the trees
+        // (mockup loop: the far copy B, one loop-distance further right, takes over while A fades)
+        if root.misty: Image { x: -root.m1a * 1px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * (1 - root.wb); }
+        if root.misty: Image { x: -root.m1a * 1px + 1056px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * (1 - root.wb); }
+        if root.misty && root.wb > 0.004: Image { x: -root.m1b * 1px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * root.wb; }
+        if root.misty && root.wb > 0.004: Image { x: -root.m1b * 1px + 1056px; y: 40px; width: 1056px; height: 528px; source: root.theme == 7 ? (root.light-variant ? @image-url("wx-light/vline-fog-light.png") : @image-url("wx/vline-fog.png")) : @image-url("wx/mist.png"); opacity: 0.55 * root.wb; }
+    }
+
+    // 5. foreground cut-out (its rows from land-top to land-bot)
+    property <int> land-h: root.land-bot - root.land-top;
+    Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; source: root.fg(root.theme, root.mood);
+        source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
     if root.has-grade && root.dk > 0: Image {
-        x: root.fx; y: root.fy; width: 528px; height: 528px; opacity: root.dk;
-        source: root.gfg(root.theme, root.mood, 0);
+        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.dk;
+        source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h;
     }
     if root.has-grade && root.dn > 0: Image {
-        x: root.fx; y: root.fy; width: 528px; height: 528px; opacity: root.dn;
-        source: root.gfg(root.theme, root.mood, 1);
+        x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.dn;
+        source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h;
     }
-    if root.nmix > 0: Image { x: root.fx; y: root.fy; width: 528px; height: 528px; opacity: root.nmix; source: root.fg(root.theme, root.nmood); }
+    if root.nmix > 0: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; opacity: root.nmix;
+        source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
     // city windows lit one by one (the app draws them over the unlit art): the lit layer, a window
-    // coming on fading in, a window going off fading out (0.9 s)
-    if root.win-on: Image { x: root.fx; y: root.fy; width: 528px; height: 528px; source: root.win-base; }
+    // coming on fading in, a window going off fading out (0.9 s); the lit windows all lie in the land's rows
+    if root.win-on: Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.land-h * 1px; source: root.win-base;
+        source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.land-h; }
     if root.win-on && root.win-in-k > 0.001: Image {
         x: root.fx + root.win-in-rect.x * 1px; y: root.fy + root.win-in-rect.y * 1px; width: root.win-in-rect.w * 1px; height: root.win-in-rect.h * 1px;
         source: root.win-in; opacity: root.win-in-k; }
