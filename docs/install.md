@@ -6,7 +6,7 @@ This guide takes you from a stock NSPanel Pro to PanelOS step by step. You do no
 
 ## What you need
 
-- A **Sonoff NSPanel Pro, 86 model** (the square 86 × 86 mm one), on its stock firmware, set up in the eWeLink app and **connected to your Wi-Fi**. PanelOS takes over this Wi-Fi network. It has been tested on stock firmware 3.0.0.
+- A **Sonoff NSPanel Pro, 86 model** (the square 86 × 86 mm one), on its stock firmware, set up in the eWeLink app and **connected to your Wi-Fi**. PanelOS takes over this Wi-Fi network: with several saved networks, the one the panel is connected to. Password-protected (WPA/WPA2 personal), open and hidden networks work; WEP and enterprise (802.1X) networks are not taken over. It has been tested on stock firmware 3.0.0.
 - A **computer**: Windows 10/11, Linux, or a Mac (see [Mac](#mac)), with about **20 GB free disk space** (64 GB for the Mac virtual machine) and internet access. The first build takes a long time (it builds a whole Linux system); later builds take a few minutes.
 - **Home Assistant** on the same network, and a phone with a camera.
 - The **IP address of Home Assistant** (for example `192.168.1.10`; in Home Assistant: Settings → System → Network). The panel cannot use names like `homeassistant.local`.

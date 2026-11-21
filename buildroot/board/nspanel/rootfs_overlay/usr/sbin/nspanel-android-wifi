@@ -1,0 +1,356 @@
+#!/bin/sh
+# Turns the stock Android's saved Wi-Fi networks into a wpa_supplicant config.
+#
+#   nspanel-android-wifi <WifiConfigStore.xml> <wpa_supplicant.conf>
+#
+# On success the config is written (mode 600) and one line naming the network
+# goes to standard output. Otherwise the reason goes there, nothing is written
+# and the exit status is 1. Called by S40wifi on the first start; it runs on
+# the panel's busybox (ash, awk, sed, printf) and on a PC with sh and awk
+# (tools/test_wifi_import.sh).
+#
+# What it relies on in the stock Android 8.1 store (/data/misc/wifi/
+# WifiConfigStore.xml, written by NetworkListStoreData with Android's
+# FastXmlSerializer):
+# - Each saved network is one <Network> block holding a <WifiConfiguration>
+#   section; every block is read on its own, so a name is only ever paired
+#   with its own password. A <WifiConfiguration> without a <Network> around it
+#   counts as a block too.
+# - In that section: <string name="SSID">, <string name="PreSharedKey"> (or
+#   <null name="PreSharedKey" />), <boolean name="HiddenSSID" value="true" />,
+#   <int name="Status" value="..." />, <byte-array name="AllowedKeyMgmt">
+#   (bit 0 NONE, 1 WPA_PSK, 2 WPA_EAP, 3 IEEE8021X, ...) and
+#   <string-array name="WEPKeys"> when the network has WEP keys. An
+#   enterprise network has a <WifiEnterpriseConfiguration> section.
+# - Status 0 is WifiConfiguration.Status.CURRENT: Android sets it when it
+#   connects to a network and puts it back to 2 (ENABLED) when it disconnects,
+#   saving the store each time. That network is taken; when no complete network
+#   has it, the first complete one is.
+# - The SSID is "quoted" text (UTF-8) or, unquoted, hex digits of the raw
+#   bytes. The PreSharedKey is a "quoted" passphrase or 64 hex digits (the raw
+#   key). The text is XML-escaped: &quot; &amp; &lt; &gt; and &#N; for control
+#   characters; &apos; and &#xH; are decoded too.
+#
+# Complete means: a name of 1..32 bytes, and either a passphrase of 8..63
+# bytes without control characters (what wpa_passphrase accepts) or a raw key
+# (WPA/WPA2 personal), or no key, no WEP keys, no enterprise section and only
+# NONE in the key management (an open network). WEP (this wpa_supplicant is
+# built without it) and enterprise networks are skipped.
+#
+# The config is written the way the panel app writes its own (app/src/wifi.rs):
+# ssid="name" when the name is printable ASCII without " or \, else ssid=<hex>;
+# scan_ssid=1 for a hidden network; psk=<64 hex digits> or key_mgmt=NONE. The
+# passphrase never shows on a command line or in a log: wpa_passphrase reads
+# it on its standard input and only its psk= line is kept.
+
+LC_ALL=C
+export LC_ALL
+
+xml=$1
+out=$2
+if [ -z "$xml" ] || [ -z "$out" ]; then
+	echo "usage: nspanel-android-wifi <WifiConfigStore.xml> <wpa_supplicant.conf>"
+	exit 1
+fi
+if [ ! -r "$xml" ]; then
+	echo "cannot read $xml"
+	exit 1
+fi
+
+# The parser prints "key value" lines: nets (blocks read), and for the chosen
+# network choice, kind (psk, rawpsk, open), hidden, ssid_line, name (for the
+# log), ssid_oct and secret_oct (octal escapes for printf, psk), secret (rawpsk).
+parsed=$(awk '
+BEGIN {
+	RS = "<"
+	for (i = 1; i < 256; i++)
+		BYTES = BYTES sprintf("%c", i)
+	HEX = "0123456789abcdef"
+}
+
+function hex2(n) {
+	return substr(HEX, int(n / 16) + 1, 1) substr(HEX, n % 16 + 1, 1)
+}
+
+# Byte i (from 1) of a lowercase hex string.
+function byte_at(h, i) {
+	return (index(HEX, substr(h, 2 * i - 1, 1)) - 1) * 16 + index(HEX, substr(h, 2 * i, 1)) - 1
+}
+
+# A code point as the hex of its UTF-8 bytes.
+function utf8(n) {
+	if (n < 128)
+		return hex2(n)
+	if (n < 2048)
+		return hex2(192 + int(n / 64)) hex2(128 + n % 64)
+	if (n < 65536)
+		return hex2(224 + int(n / 4096)) hex2(128 + int(n / 64) % 64) hex2(128 + n % 64)
+	return hex2(240 + int(n / 262144)) hex2(128 + int(n / 4096) % 64) hex2(128 + int(n / 64) % 64) hex2(128 + n % 64)
+}
+
+function entity(e,    n, k) {
+	if (e == "amp") return "26"
+	if (e == "lt") return "3c"
+	if (e == "gt") return "3e"
+	if (e == "quot") return "22"
+	if (e == "apos") return "27"
+	if (e ~ /^#[0-9]+$/)
+		return utf8(substr(e, 2) + 0)
+	if (e ~ /^#[xX][0-9a-fA-F]+$/) {
+		n = 0
+		for (k = 3; k <= length(e); k++)
+			n = n * 16 + index(HEX, tolower(substr(e, k, 1))) - 1
+		return utf8(n)
+	}
+	return ""
+}
+
+# XML text, entities decoded, as the hex of its bytes.
+function text_hex(s,    out, i, n, c, j, v) {
+	out = ""
+	n = length(s)
+	for (i = 1; i <= n; i++) {
+		c = substr(s, i, 1)
+		if (c == "&") {
+			j = index(substr(s, i + 1, 10), ";")
+			if (j > 1) {
+				v = entity(substr(s, i + 1, j - 1))
+				if (v != "") {
+					out = out v
+					i += j
+					continue
+				}
+			}
+		}
+		out = out hex2(index(BYTES, c))
+	}
+	return out
+}
+
+# The bytes between Android quotes ("..."), or "" when not quoted.
+function unquote(h) {
+	if (length(h) >= 4 && substr(h, 1, 2) == "22" && substr(h, length(h) - 1) == "22")
+		return substr(h, 3, length(h) - 4)
+	return ""
+}
+
+function is_hex(s) {
+	return s != "" && s !~ /[^0-9a-fA-F]/ && length(s) % 2 == 0
+}
+
+# Any byte below 32 or 127 (min = 1), or a zero byte (min = 0).
+function has_bad(h, min,    i, b) {
+	for (i = 1; i <= length(h) / 2; i++) {
+		b = byte_at(h, i)
+		if (b == 0 || (min && (b < 32 || b == 127)))
+			return 1
+	}
+	return 0
+}
+
+function attr(tag, a,    p, rest) {
+	p = index(tag, " " a "=\"")
+	if (p == 0)
+		return ""
+	rest = substr(tag, p + length(a) + 3)
+	return substr(rest, 1, index(rest, "\"") - 1)
+}
+
+function reset() {
+	block = 1
+	ssid_text = ""; has_ssid = 0
+	psk_text = ""; has_psk = 0
+	hidden = 0; status = ""; keymgmt = ""; wep = 0; eap = 0
+}
+
+function finish(    ssid, kind, secret) {
+	if (!block)
+		return
+	block = 0
+	nets++
+	if (!has_ssid)
+		return
+	ssid = unquote(text_hex(ssid_text))
+	if (ssid == "" && is_hex(ssid_text))
+		ssid = tolower(ssid_text)
+	if (ssid == "" || length(ssid) > 64)
+		return
+	kind = ""
+	if (has_psk) {
+		secret = unquote(text_hex(psk_text))
+		if (secret != "") {
+			if (length(secret) >= 16 && length(secret) <= 126 && !has_bad(secret, 1) && !has_bad(ssid, 0))
+				kind = "psk"
+		} else if (length(psk_text) == 64 && is_hex(psk_text)) {
+			kind = "rawpsk"
+			secret = tolower(psk_text)
+		}
+	} else if (!wep && !eap && tolower(keymgmt) ~ /^(0[01])?(00)*$/)
+		kind = "open"
+	if (kind == "")
+		return
+	usable++
+	K[usable] = kind; S[usable] = ssid; X[usable] = secret; H[usable] = hidden
+	if (status == "0" && !current)
+		current = usable
+}
+
+function ssid_line(h,    i, b, s) {
+	s = ""
+	for (i = 1; i <= length(h) / 2; i++) {
+		b = byte_at(h, i)
+		if (b < 32 || b > 126 || b == 34 || b == 92)
+			return "ssid=" h
+		s = s substr(BYTES, b, 1)
+	}
+	return "ssid=\"" s "\""
+}
+
+function display(h,    i, b, s) {
+	s = ""
+	for (i = 1; i <= length(h) / 2; i++) {
+		b = byte_at(h, i)
+		s = s ((b < 32 || b == 127) ? "?" : substr(BYTES, b, 1))
+	}
+	return s
+}
+
+function octal(h,    i, b, s) {
+	s = ""
+	for (i = 1; i <= length(h) / 2; i++) {
+		b = byte_at(h, i)
+		s = s "\\" int(b / 64) (int(b / 8) % 8) (b % 8)
+	}
+	return s
+}
+
+{
+	gt = index($0, ">")
+	if (gt == 0)
+		next
+	tag = substr($0, 1, gt - 1)
+	text = substr($0, gt + 1)
+	gsub(/[\t\r\n]/, " ", tag)
+	if (tag ~ /^[?!]/)
+		next
+	if (substr(tag, 1, 1) == "/") {
+		name = substr(tag, 2)
+		sub(/ .*$/, "", name)
+		if (name == "WifiConfiguration") {
+			in_wc = 0
+			if (!in_net)
+				finish()
+		} else if (name == "Network") {
+			finish()
+			in_net = 0
+		}
+		next
+	}
+	sub(/\/ *$/, "", tag)
+	name = tag
+	sub(/ .*$/, "", name)
+	if (name == "Network") {
+		in_net = 1
+		reset()
+	} else if (name == "WifiConfiguration") {
+		if (!in_net)
+			reset()
+		in_wc = 1
+	} else if (name == "WifiEnterpriseConfiguration") {
+		eap = 1
+	} else if (in_wc) {
+		key = attr(tag, "name")
+		if (key == "SSID") {
+			has_ssid = (name == "string")
+			ssid_text = text
+		} else if (key == "PreSharedKey") {
+			has_psk = (name == "string")
+			psk_text = text
+		} else if (key == "HiddenSSID") {
+			hidden = (attr(tag, "value") == "true")
+		} else if (key == "Status") {
+			status = attr(tag, "value")
+		} else if (key == "AllowedKeyMgmt") {
+			keymgmt = text
+		} else if (key == "WEPKeys") {
+			wep = (name == "string-array")
+		}
+	}
+}
+
+END {
+	print "nets " (nets + 0)
+	pick = current ? current : (usable ? 1 : 0)
+	if (!pick)
+		exit
+	print "choice " (current ? "current" : "first")
+	print "kind " K[pick]
+	print "hidden " H[pick]
+	print "ssid_line " ssid_line(S[pick])
+	print "name " display(S[pick])
+	if (K[pick] == "psk") {
+		print "ssid_oct " octal(S[pick])
+		print "secret_oct " octal(X[pick])
+	} else if (K[pick] == "rawpsk") {
+		print "secret " X[pick]
+	}
+}
+' "$xml")
+
+field() {
+	printf '%s\n' "$parsed" | sed -n "s/^$1 //p"
+}
+
+nets=$(field nets)
+kind=$(field kind)
+if [ -z "$kind" ]; then
+	if [ "${nets:-0}" -eq 0 ]; then
+		echo "no saved network"
+	else
+		echo "none of the $nets saved networks is open or WPA personal with its password"
+	fi
+	exit 1
+fi
+name=$(field name)
+
+case "$kind" in
+psk)
+	# The exact bytes: printf turns the octal escapes back (the dot keeps a
+	# trailing newline of the name).
+	ssid=$(printf "$(field ssid_oct)"; echo .)
+	ssid=${ssid%.}
+	key=$(printf "$(field secret_oct)\n" | wpa_passphrase "$ssid" 2>/dev/null |
+		sed -n 's/^[[:space:]]*psk=\([0-9a-fA-F]\{64\}\)$/\1/p')
+	if [ -z "$key" ]; then
+		echo "wpa_passphrase gave no key for \"$name\""
+		exit 1
+	fi
+	key_line="psk=$key"
+	;;
+rawpsk)
+	key_line="psk=$(field secret)"
+	;;
+*)
+	key_line="key_mgmt=NONE"
+	;;
+esac
+
+umask 077
+{
+	echo "ctrl_interface=/var/run/wpa_supplicant"
+	echo "network={"
+	printf '\t%s\n' "$(field ssid_line)"
+	[ "$(field hidden)" = 1 ] && printf '\tscan_ssid=1\n'
+	printf '\t%s\n' "$key_line"
+	echo "}"
+} > "$out" || exit 1
+
+if [ "$(field choice)" = current ]; then
+	how="in use"
+else
+	how="none in use, the first complete one"
+fi
+[ "$kind" = open ] && how="$how, open"
+[ "$(field hidden)" = 1 ] && how="$how, hidden"
+echo "\"$name\" ($how; $nets saved)"
+exit 0

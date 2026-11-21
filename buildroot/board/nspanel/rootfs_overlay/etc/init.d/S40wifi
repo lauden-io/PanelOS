@@ -3,11 +3,13 @@
 #
 # The system's own Wi-Fi config lives in persistent storage
 # (/mnt/persist/nspanel/wpa_supplicant.conf, see S10persist). If it does not
-# exist yet, it is imported once from the network saved by the stock Android:
-# its userdata partition is mounted read-only, the first saved network with a
-# pre-shared key is turned into a wpa_supplicant config, and the partition is
-# unmounted again. The passphrase never leaves the device and is never logged
-# (wpa_passphrase output is used, its plain-text comment line is removed).
+# exist yet, it is imported once from the networks saved by the stock Android:
+# its userdata partition is mounted read-only, nspanel-android-wifi reads each
+# saved network on its own and turns the one in use (or else the first
+# complete one: WPA personal with its password, or open) into a
+# wpa_supplicant config, and the partition is unmounted again. The passphrase
+# never leaves the device and is never logged (only the key wpa_passphrase
+# computes from it is written).
 #
 # The panel never reboots because of Wi-Fi: wpa_supplicant keeps trying to
 # associate and udhcpc keeps asking for an address, so a router restart or a
@@ -20,12 +22,6 @@ WIFI_TIMEOUT=150
 
 log() { echo "<5>nspanel-wifi: $*" > /dev/kmsg; }
 
-xml_value() {
-	# $1 = name attribute; prints the unquoted, entity-decoded string value
-	sed -n "s/.*<string name=\"$1\">&quot;\(.*\)&quot;<\/string>.*/\1/p" "$CFG" | head -n 1 |
-		sed -e 's/&lt;/</g' -e 's/&gt;/>/g' -e 's/&quot;/"/g' -e "s/&apos;/'/g" -e 's/&amp;/\&/g'
-}
-
 config_from_android() {
 	mkdir -p /mnt/android
 	if ! mount -t ext4 -o ro,noload "$ANDROID_DATA" /mnt/android; then
@@ -33,24 +29,17 @@ config_from_android() {
 		return 1
 	fi
 	CFG=/mnt/android/misc/wifi/WifiConfigStore.xml
-	ssid=""
-	psk=""
+	found=""
+	result="no WifiConfigStore.xml"
 	if [ -r "$CFG" ]; then
-		ssid=$(xml_value SSID)
-		psk=$(xml_value PreSharedKey)
+		result=$(nspanel-android-wifi "$CFG" "$WIFI_CONF") && found=1
 	fi
 	umount /mnt/android
-	if [ -z "$ssid" ] || [ -z "$psk" ]; then
-		log "no saved WPA network found in the stock Android config"
+	if [ -z "$found" ]; then
+		log "no usable saved network found in the stock Android config ($result)"
 		return 1
 	fi
-	umask 077
-	{
-		echo "ctrl_interface=/var/run/wpa_supplicant"
-		wpa_passphrase "$ssid" "$psk" | grep -v '^[[:space:]]*#psk='
-	} > "$WIFI_CONF"
-	unset psk
-	log "using saved network \"$ssid\""
+	log "using saved network $result"
 	return 0
 }
 
