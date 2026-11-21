@@ -124,11 +124,13 @@ component NixieTube inherits Rectangle {
     in property <int> d;
     in property <int> n;                  // which tube (its own flicker)
     in property <bool> steady;            // a running stopwatch: no flicker and no fade (the digits change too fast to see them)
+    in property <bool> live: true;        // the stopwatch tab is on screen: only then the glow flickers (a flicker off screen
+                                          // would keep the whole screen drawing)
     width: 54px; height: 140px;
     property <[string]> nx: ["M18 2 C30 2 34 16 34 36 C34 56 30 70 18 70 C6 70 2 56 2 36 C2 16 6 2 18 2 Z", "M11 13 L19 3 L19 70", "M4 16 C4 6 11 2 18 2 C27 2 32 8 32 17 C32 30 18 40 4 70 L33 70", "M4 4 L31 4 L16 30 C27 29 33 37 33 49 C33 62 26 70 17 70 C9 70 4 66 3 60", "M26 70 L26 2 L3 50 L34 50", "M31 3 L8 3 L5 32 C9 28 13 27 18 27 C28 27 33 35 33 48 C33 62 26 70 17 70 C9 70 4 66 3 60", "M28 6 C25 3 22 2 18 2 C8 2 3 14 3 40 C3 60 9 70 18 70 C27 70 33 62 33 52 C33 42 27 34 18 34 C10 34 4 40 3 48", "M3 3 L33 3 L13 70", "M18 34 C9 34 5 28 5 18 C5 8 11 2 18 2 C25 2 31 8 31 18 C31 28 27 34 18 34 C8 34 3 42 3 52 C3 63 10 70 18 70 C26 70 33 63 33 52 C33 42 28 34 18 34 Z", "M8 66 C11 69 14 70 18 70 C28 70 33 58 33 32 C33 12 27 2 18 2 C9 2 3 10 3 20 C3 30 9 38 18 38 C26 38 32 32 33 24"];
     // the glow's unsteadiness, 12 times a second (not every frame)
     property <float> ft;
-    Timer { interval: 80ms; running: !root.steady; triggered => { root.ft = animation-tick() / 1ms; } }
+    Timer { interval: 80ms; running: root.live && !root.steady; triggered => { root.ft = animation-tick() / 1ms; } }
     // the digit pictures (tools/nixie_digits.py), looked up by their path whenever a digit changes: the image cache then
     // gives every tube the one picture of that digit that is already on the GPU (a picture kept in a list property is a
     // copy of the file that is uploaded again every time it is shown anew)
@@ -1841,6 +1843,7 @@ export component TimersPage inherits Rectangle {
         // stops on its digit; while the tab waits the tubes show 0
         property <bool> ent-cycle: !sw-ent.armed && !sw-ent.calm && sw-ent.ent < 400 && root.sw-w0 > 0;
         for x[i] in [47, 107, 183, 243, 319, 379]: NixieTube { x: x * 1px; y: 124px; n: i; steady: root.watch-running && i >= 4;
+            live: root.on-screen && root.mode == 2 && !root.ringing;
             d: nix.cycling ? Math.mod(Math.floor((animation-tick() - root.fly-t0) / 40ms) + i, 10)
                 : nix.ent-cycle ? Math.mod(Math.floor(sw-ent.ent / 40) + i, 10) : sw-ent.armed ? 0
                 : i == 0 ? Math.floor(nix.mins / 10) : i == 1 ? Math.mod(nix.mins, 10) : i == 2 ? Math.floor(nix.secs / 10) : i == 3 ? Math.mod(nix.secs, 10)
