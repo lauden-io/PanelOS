@@ -3448,7 +3448,7 @@ fn report_device(s: &mut UiState) {
     d.volume = s.settings.volume;
     // one volume: Music Assistant's volume of the panel's Sendspin player is the panel's own
     crate::sendspin::panel_volume(s.settings.volume);
-    d.alarms = serde_json::to_value(&s.settings.alarms).unwrap_or_default();
+    d.alarms = serde_json::to_value(crate::alarms::reported(&s.settings.alarms)).unwrap_or_default();
     d.music_player = media_entity(s);
     d.ready = true;
     let after = (

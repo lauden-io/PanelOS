@@ -136,6 +136,21 @@ impl Alarm {
     }
 }
 
+/// The alarms as the panel reports them to the integration: a sound picked in the panel's editor goes as the designed
+/// sound it rings with (`lib:<id>`), so the PanelOS page shows it and sends it back unchanged; "auto" and the
+/// integration's own sounds go as they were set.
+pub fn reported(list: &[Alarm]) -> Vec<Alarm> {
+    list.iter()
+        .map(|a| {
+            let mut a = a.clone();
+            if a.tone.is_empty() {
+                a.tone = a.ring_tone();
+            }
+            a
+        })
+        .collect()
+}
+
 /// The alarms as the integration set them (the panel keeps them and rings them itself). `cancelled`: the alarms the
 /// change switched off or deleted (a voice assistant's cancel); their snooze ends too, also when the alarm was off
 /// already (a once alarm that rang).
@@ -560,6 +575,27 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_editor_sounds_ring_as_named_and_go_round_unchanged() {
+        // the editor's order: Rise and Shine, Up and At 'Em, Early Bird, Saved by the Bell, Old School, Neon Sunrise
+        let named = ["chimes", "marimba", "birds", "bell", "digital", "synth"];
+        for (i, id) in named.iter().enumerate() {
+            assert_eq!(crate::sounds::alarm_lib(i as i32), *id);
+            assert_eq!(crate::sounds::LIB[i], *id);
+            // picked on the panel → reported as its designed sound → set back by the integration: the same pick
+            let a = Alarm { sound: i as i32, ..Alarm::default() };
+            let out = reported(&[a]);
+            assert_eq!(out[0].tone, format!("lib:{id}"));
+            let back = Alarm::from_integration(&serde_json::to_value(&out[0]).unwrap()).unwrap();
+            assert_eq!(back.sound, i as i32);
+            assert_eq!(back.ring_tone(), format!("lib:{id}"));
+        }
+        // the integration's default ("auto") rings Birds and is reported as it was set
+        let auto = Alarm::from_integration(&serde_json::json!({"h": 7, "m": 0, "tone": "auto"})).unwrap();
+        assert_eq!(auto.ring_tone(), "lib:birds");
+        assert_eq!(reported(&[auto])[0].tone, "auto");
+    }
 
     #[test]
     fn alarm_times() {

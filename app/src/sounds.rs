@@ -169,11 +169,12 @@ pub fn timer_default(look: i32) -> &'static str {
     }
 }
 
-/// The panel's own alarm sounds in its editor's order (index → designed sound).
+/// The panel's own alarm sounds in its editor's order (index → designed sound): Rise and Shine (chimes), Up and At 'Em
+/// (marimba), Early Bird (birds), Saved by the Bell, Old School (digital), Neon Sunrise (synth), as `LIB` lists them.
 pub fn alarm_lib(index: i32) -> &'static str {
     match index {
+        0 => "chimes",
         1 => "marimba",
-        2 => "chimes",
         3 => "bell",
         4 => "digital",
         5 => "synth",
