@@ -26,9 +26,10 @@ integration gives each panel:
 
 Panels follow their settings, show requests and commands with
 ``panelos/subscribe``, so the panel's Home Assistant user does not need to be
-an administrator. The first user that is not an administrator to subscribe for
-a panel is kept as the panel's user; the panel's commands accept only that user
-and administrators.
+an administrator. The panel's commands accept only the panel's user and
+administrators. The panel names its user on its ESPHome device (the "Panel
+user" sensor); a panel that does not keeps the first user that is not an
+administrator to subscribe for it.
 """
 
 from __future__ import annotations
@@ -126,7 +127,7 @@ _OTHER_USER = "Only the panel's own Home Assistant user and administrators may a
 
 def _refusal(hass: HomeAssistant, connection: websocket_api.ActiveConnection, panel_id: str) -> tuple[str, str] | None:
     """Why this connection may not act as the panel (error code, message), None when it may. Administrators always
-    may; another user only for a panel set up here, as the panel's user (the first one becomes it)."""
+    may; another user only for a panel set up here, as the panel's user (see `may_act`)."""
     if connection.user.is_admin:
         return None
     entry = find_entry(hass, panel_id)

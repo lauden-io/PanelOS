@@ -1,8 +1,10 @@
 //! ESPHome native API server (TCP 6053): Home Assistant's built-in ESPHome
 //! integration adds the panel's voice satellite as a device, with its volume,
-//! microphone switch and wake word sensors. The panel's display, settings and
-//! sensors are the PanelOS integration's device (`panel_device.rs`), which
-//! the voice device is connected via.
+//! microphone switch and wake word sensors, and the Home Assistant user the
+//! panel is logged in as (the "Panel user" sensor: the PanelOS integration
+//! takes commands as this panel only from that user). The panel's display,
+//! settings and sensors are the PanelOS integration's device
+//! (`panel_device.rs`), which the voice device is connected via.
 //!
 //! Only Home Assistant's address (and `api_allow` in app.json) may connect.
 //! The connection is encrypted once Home Assistant has handed the panel a key
@@ -76,6 +78,9 @@ pub struct DeviceState {
     pub media_state: i32,
     pub media_volume: f32,
     pub media_muted: bool,
+    /// The id of the Home Assistant user the panel is logged in as ("" until Home Assistant has said it, see
+    /// `set_panel_user`).
+    pub ha_user: String,
 }
 
 /// Requests from Home Assistant, carried out on the UI thread.
@@ -109,6 +114,7 @@ enum Id {
     WakeScore,
     WakeSnr,
     Media,
+    PanelUser,
 }
 
 // Keys and names as since the first version: Home Assistant knows the
@@ -122,6 +128,10 @@ const ENTITIES: &[(Id, u32, &str, &str, &str)] = &[
     (Id::WakeSnr, 22, "wake_snr", "Wake SNR", "mdi:waveform"),
     // Home Assistant and Music Assistant play on the panel's speaker (alarms with music).
     (Id::Media, 23, "media_player", "Media player", "mdi:speaker"),
+    // The Home Assistant user the panel is logged in as (its id): the PanelOS integration accepts commands as this
+    // panel only from that user (and administrators). It comes over this encrypted connection, which no other user
+    // can feed. The integration finds it by its name: keep it.
+    (Id::PanelUser, 24, "panel_user", "Panel user", "mdi:account-key"),
 ];
 
 /// What the media player can do (ESPHome media player feature flags, the same bits as Home
@@ -132,6 +142,23 @@ const MEDIA_FEATURES: u32 = 1 | 4 | 8 | 512 | 4096 | 16384 | 1_048_576;
 static LAST_WAKE: Mutex<Option<(f32, f32, Option<f32>)>> = Mutex::new(None);
 /// Streamed answer audio as the API receives it: last frame, longest wait.
 static TTS_RX: Mutex<(Option<Instant>, Duration)> = Mutex::new((None, Duration::ZERO));
+/// The panel's user changed (set by the Home Assistant client's thread, which has no notify sender): the states are
+/// looked at again.
+static USER_CHANGED: AtomicBool = AtomicBool::new(false);
+
+/// The Home Assistant user the panel is logged in as (Home Assistant's answer to `auth/current_user` on the panel's
+/// own connection): its id becomes the state of the Panel user sensor. True when it changed.
+pub fn set_panel_user(device: &Mutex<DeviceState>, id: &str, name: &str) -> bool {
+    let mut d = device.lock().unwrap_or_else(|e| e.into_inner());
+    if d.ha_user == id {
+        return false;
+    }
+    d.ha_user = id.to_string();
+    drop(d);
+    eprintln!("nspanel-app: logged in to Home Assistant as '{name}' (user {id}): reported as the Panel user sensor");
+    USER_CHANGED.store(true, Ordering::SeqCst);
+    true
+}
 
 const DIAGNOSTIC: i32 = EntityCategory::Diagnostic as i32;
 
@@ -140,6 +167,7 @@ enum Value {
     Float(Option<f32>),
     Bool(bool),
     Media(i32, u32, bool),
+    Text(Option<String>),
 }
 
 fn value_of(id: Id, s: &DeviceState) -> Option<Value> {
@@ -147,6 +175,8 @@ fn value_of(id: Id, s: &DeviceState) -> Option<Value> {
         Id::Volume => Value::Float(Some(s.volume as f32)),
         Id::MicMute => Value::Bool(s.mic_muted),
         Id::Media => Value::Media(if s.media_state == 0 { crate::media::IDLE } else { s.media_state }, (s.media_volume * 100.0).round() as u32, s.media_muted),
+        // unknown until Home Assistant has said who the panel is
+        Id::PanelUser => Value::Text((!s.ha_user.is_empty()).then(|| s.ha_user.clone())),
         // Pushed by the voice thread (forward_voice), not diffed here.
         Id::WakeLevel | Id::WakeScore | Id::WakeSnr => return None,
     })
@@ -197,6 +227,9 @@ fn list_entities(stream: &mut Conn) -> io::Result<()> {
                 unit_of_measurement: "%".into(), mode: NumberMode::Slider as i32, ..Default::default()
             })?,
             Id::MicMute => send(stream, 17, &ListEntitiesSwitchResponse { object_id, key, name, icon, ..Default::default() })?,
+            Id::PanelUser => send(stream, 18, &ListEntitiesTextSensorResponse {
+                object_id, key, name, icon, entity_category: DIAGNOSTIC, ..Default::default()
+            })?,
             Id::Media => {
                 // Home Assistant's media proxy turns any source into this: 48 kHz 16-bit stereo WAV
                 let format = |purpose: MediaPlayerFormatPurpose| MediaPlayerSupportedFormat {
@@ -242,6 +275,9 @@ fn send_state(stream: &mut Conn, id: Id, key: u32, value: &Value) -> io::Result<
         }),
         (Id::WakeLevel | Id::WakeScore | Id::WakeSnr, Value::Float(v)) => send(stream, 25, &SensorStateResponse {
             key, state: v.unwrap_or(0.0), missing_state: v.is_none(), ..Default::default()
+        }),
+        (Id::PanelUser, Value::Text(v)) => send(stream, 27, &TextSensorStateResponse {
+            key, state: v.clone().unwrap_or_default(), missing_state: v.is_none(), ..Default::default()
         }),
         _ => Ok(()),
     }
@@ -586,8 +622,8 @@ fn serve(
             }
         }
         forward_voice(voice, &mut stream, voice_subscribed, subscribed, &mut wake_sent)?;
-        // Push changed states.
-        let changed = notify.try_iter().count() > 0;
+        // Push changed states (the panel's user is set without a notify).
+        let changed = (notify.try_iter().count() > 0) | USER_CHANGED.swap(false, Ordering::SeqCst);
         if subscribed && (changed || sent.is_empty()) {
             let snapshot = state.lock().unwrap().clone();
             for &(id, key, ..) in ENTITIES {
@@ -723,4 +759,36 @@ pub fn spawn(
             });
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn entity_keys_are_unique() {
+        let mut keys: Vec<u32> = ENTITIES.iter().map(|e| e.1).collect();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), ENTITIES.len());
+    }
+
+    #[test]
+    fn panel_user_is_unknown_until_set() {
+        let device = Mutex::new(DeviceState::default());
+        assert_eq!(value_of(Id::PanelUser, &device.lock().unwrap()), Some(Value::Text(None)));
+        assert!(set_panel_user(&device, "0123456789abcdef0123456789abcdef", "Panel"));
+        assert_eq!(
+            value_of(Id::PanelUser, &device.lock().unwrap()),
+            Some(Value::Text(Some("0123456789abcdef0123456789abcdef".into())))
+        );
+        // the same user again (a reconnection) changes nothing
+        assert!(!set_panel_user(&device, "0123456789abcdef0123456789abcdef", "Panel"));
+        // paired again with another user
+        assert!(set_panel_user(&device, "fedcba9876543210fedcba9876543210", "Second panel"));
+        assert_eq!(
+            value_of(Id::PanelUser, &device.lock().unwrap()),
+            Some(Value::Text(Some("fedcba9876543210fedcba9876543210".into())))
+        );
+    }
 }

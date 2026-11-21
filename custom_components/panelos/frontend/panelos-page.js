@@ -4787,8 +4787,11 @@ class PanelOSPage extends HTMLElement {
         this._row("Room", this._btn(this._parea(p) || "None", () => this._openSheet({ kind: "rename", panel: p.entry_id }), { cls: "small", icon: "pencil-outline", disabled: !p.device_id }), { info: "The panel's area in Home Assistant. Quick controls use it." }),
         this._row("Address", h("span", { class: "muted num wrap" }, s.ip_address || "–")),
         this._row("Panel ID", h("span", { class: "muted wrap" }, st.panel_id || "–")),
-        this._row("Home Assistant user", p.panel_user != null ? this._armed(`forget:${p.entry_id}`, "Forget", "Tap again to forget", () => this._forgetUser(p), { cls: "small", icon: "account-remove-outline" }) : h("span", { class: "muted wrap" }, "–"),
-          { sub: p.panel_user || null, info: "Only this user and administrators can connect as this panel. After Forget, the next user that connects as this panel is kept." }),
+        p.panel_user_reported
+          ? this._row("Home Assistant user", h("span", { class: "muted wrap" }, p.panel_user || "–"),
+            { info: "The panel tells Home Assistant which user it is logged in as. Only this user and administrators can connect as this panel. Pairing the panel with another user moves it there." })
+          : this._row("Home Assistant user", p.panel_user != null ? this._armed(`forget:${p.entry_id}`, "Forget", "Tap again to forget", () => this._forgetUser(p), { cls: "small", icon: "account-remove-outline" }) : h("span", { class: "muted wrap" }, "–"),
+            { sub: p.panel_user || null, info: "Only this user and administrators can connect as this panel. After Forget, the next user that connects as this panel is kept." }),
         this._row("What it can do", null, { stack: true, sub: p.caps_reported ? "As the panel reports it" : "Not reported yet: treated as an NSPanel Pro" }),
         h("div", { class: "below muted" }, this._caps(p).map((c) => CAP_NAMES[c] || c).join(" · "))),
       this._card("Wi-Fi", {},

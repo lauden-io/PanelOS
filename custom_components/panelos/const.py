@@ -158,9 +158,10 @@ SIGNAL_SHOW = "panelos_show"
 # the entry so the device is complete before the panel connects.
 CONF_DEVICE = "device"
 
-# The Home Assistant user the panel logs in with ({"id", "name"}): the first user that is not an administrator to
-# subscribe for the panel. Only this user and administrators may act as the panel; forgotten on the PanelOS page (the
-# next subscriber is kept) and when the user is deleted.
+# The Home Assistant user the panel logs in with ({"id", "name"}): the one the panel reports on its ESPHome device (the
+# "Panel user" sensor), or for a panel that reports none, the first user that is not an administrator to subscribe for
+# it. Only this user and administrators may act as the panel; forgotten when the user is deleted, and on the PanelOS
+# page while the panel reports none (the next subscriber is kept).
 CONF_PANEL_USER = "panel_user"
 
 # The panel's own device: its entities are fed by panelos/report and send
