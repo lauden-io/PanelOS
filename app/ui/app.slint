@@ -993,7 +993,8 @@ export component AppWindow inherits Window {
                 z: i == root.warm-page ? -1 : 0;
                 width: root.width;
                 height: root.height;
-                background: Theme.background;
+                // (a weather page's background covers the whole page, opaque)
+                background: self.grid-page ? transparent : Theme.background;
                 // a page's drawing stays on its page (the half cassette's reel slides past its edge)
                 clip: true;
                 // (partly) on screen: a page off screen stands still (its clocks' seconds do not run)

@@ -37,7 +37,7 @@ export component PhotoSky inherits Rectangle {
     property <bool> rust-sky: root.sky-frame.width > 0;
     property <float> t: (animation-tick() - Clock.base) / 1ms / 1000 + root.time-offset;
     clip: true;
-    background: #000000;
+    // (no ground of its own: the backdrop or the sky photo, the land and its strips cover every pixel, opaque)
 
     property <bool> stormy: root.mood == 8 || root.mood == 9;
     property <bool> clear-night: root.mood == 7;
