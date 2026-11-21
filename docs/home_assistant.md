@@ -101,6 +101,7 @@ Each panel is one entry of this integration, found by its Panel ID: the short na
 - Add a further panel on the PanelOS page (**Add a panel**): a panel that already asks Home Assistant for its settings is filled in. **Settings → Devices & services → Add integration → PanelOS** works too.
 - A panel with a name only ever takes its own entry. A panel without one (`nspanel-pro`) also takes a single entry set up with another Panel ID, as before names.
 - Every panel has its own entities, user, timers, alarms, notifications and voice satellite; the voice tools pick a panel by its room or name.
+- For development, `tools/fake_panel.py` talks to Home Assistant as a panel of another name (subscription, device report, keep-alive, commands; no ESPHome device, so no voice satellite and no timers), so two panels can be tried with one.
 
 ### Renaming a panel
 
