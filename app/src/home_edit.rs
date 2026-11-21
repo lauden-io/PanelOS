@@ -850,11 +850,9 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
                 show_free(ui);
             }
         }
-        // the synthwave background's own settings (shared by every page with that background)
-        "home.scene" => {
-            let k = value.parse::<i64>().unwrap_or(0).clamp(0, 3);
-            first_home_option(ui, "scene", json!(k));
-        }
+        // the synthwave background's own settings (shared by every page with that background); the scene is set on the
+        // page that chooses it, the cars on the first custom page
+        "home.scene" => crate::synth::set_scene(ui, value.parse::<i64>().unwrap_or(0)),
         "home.cars" => first_home_option(ui, "cars", json!(value == "1")),
         // the neon letters: every widget of the page at once
         "home.neon" => {
@@ -870,8 +868,7 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
     }
 }
 
-/// A setting of the first weather page (the synthwave scene and its cars): the panel shows it at once and Home
-/// Assistant keeps it.
+/// A setting of the first custom page (the synthwave cars): the panel shows it at once and Home Assistant keeps it.
 fn first_home_option(ui: &AppWindow, key: &str, v: Value) {
     // (the panel's copy of the settings takes it at once)
     let Some(cfg) = crate::with_state(|s| crate::pages::kind_pages(s.panel_config.as_ref(), "home").first().map(|(i, _)| *i)) else { return };

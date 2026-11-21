@@ -155,20 +155,43 @@ fn on_screen(ui: &AppWindow, s: &crate::UiState) -> bool {
     ((p.kind == "home" || p.kind == "weather") && theme == 8) || (p.kind == "timers" && p.variant == 3) || (p.kind == "thermostat" && p.variant == 3)
 }
 
-/// The synthwave scene of the panel (one for every page with the synthwave background): the first custom or weather
-/// details page that has the synthwave background chooses it; else the first custom page's choice, else the old panel
-/// setting.
-fn scene_choice(s: &crate::UiState) -> usize {
-    let pages = s.panel_config.as_ref().and_then(|c| c.get("pages")).and_then(Value::as_array);
-    let own = pages.into_iter().flatten().find(|p| {
-        matches!(p.get("kind").and_then(Value::as_str), Some("home" | "weather"))
-            && p.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64) == Some(8)
-    });
-    own.and_then(|p| p.get("options")?.get("scene")?.as_u64())
-        .or_else(|| crate::first_page_option(s, "home", "scene").and_then(|v| v.as_u64()))
-        .or_else(|| s.panel_config.as_ref().and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
+/// The page that chooses the panel's synthwave scene (its place in the integration's list): the first custom or weather
+/// details page with the synthwave background of its own, else the first custom page.
+fn scene_page(config: Option<&Value>) -> Option<usize> {
+    let pages = crate::pages::config_pages(config);
+    let kind = |p: &Value| p.get("kind").and_then(Value::as_str).map(str::to_string);
+    pages
+        .iter()
+        .find(|(_, p)| {
+            matches!(kind(p).as_deref(), Some("home" | "weather")) && p.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64) == Some(8)
+        })
+        .or_else(|| pages.iter().find(|(_, p)| kind(p).as_deref() == Some("home")))
+        .map(|(i, _)| *i)
+}
+
+/// The synthwave scene of the panel (one for every page with the synthwave background): the scene of the page that
+/// chooses it (`scene_page`); else the first custom page's, else the old panel setting.
+fn scene_of(config: Option<&Value>) -> usize {
+    let option = |i: usize| config?.get("pages")?.get(i)?.get("options")?.get("scene")?.as_u64();
+    let first_home = crate::pages::kind_pages(config, "home").first().map(|(i, _)| *i);
+    scene_page(config)
+        .and_then(option)
+        .or_else(|| first_home.and_then(option))
+        .or_else(|| config.and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
         .unwrap_or(0)
         .min(3) as usize
+}
+
+fn scene_choice(s: &crate::UiState) -> usize {
+    scene_of(s.panel_config.as_ref())
+}
+
+/// A scene picked on the panel (the synthwave background's menu, the thermostat's neon look): set on the page that
+/// chooses the scene, so it shows at once on every page with the synthwave background; Home Assistant keeps it.
+pub fn set_scene(ui: &AppWindow, k: i64) {
+    let Some(cfg) = crate::with_state(|s| scene_page(s.panel_config.as_ref())) else { return };
+    crate::page_set_at(ui, cfg, None, serde_json::json!({ "scene": k.clamp(0, 3) }));
+    crate::refresh_pages(ui);
 }
 
 thread_local! {
@@ -753,6 +776,48 @@ mod tests {
         assert!(!blend_is(0.998, 1.0, 0.004));
         assert!(blend_is(0.502, 0.5, 0.004));
         assert!(!blend_is(0.502, 0.5, 0.0));
+    }
+
+    #[test]
+    fn the_first_page_with_the_synthwave_background_chooses_the_scene() {
+        let config = serde_json::json!({ "pages": [
+            { "kind": "music" },
+            { "kind": "home", "options": { "theme": 2, "scene": 1 } },
+            { "kind": "weather", "options": { "theme": 8, "scene": 3 } },
+            { "kind": "home", "options": { "theme": 8, "scene": 2 } },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(2));
+        assert_eq!(scene_of(Some(&config)), 3);
+        // the custom page measured on the panel: the beach
+        let config = serde_json::json!({ "pages": [
+            { "kind": "home", "options": { "theme": 8, "scene": 2 } },
+            { "kind": "weather", "options": {} },
+            { "kind": "timers", "variant": 3 },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(0));
+        assert_eq!(scene_of(Some(&config)), 2);
+    }
+
+    #[test]
+    fn without_a_scene_of_its_own_the_first_custom_page_chooses() {
+        // the synthwave page has no scene: the first custom page's, where the panel's menus then set it
+        let config = serde_json::json!({ "pages": [
+            { "kind": "home", "options": { "scene": 1 } },
+            { "kind": "weather", "options": { "theme": 8 } },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(1));
+        assert_eq!(scene_of(Some(&config)), 1);
+        // no synthwave background at all (the thermostat's neon look): the first custom page
+        let config = serde_json::json!({ "pages": [
+            { "kind": "thermostat", "variant": 3 },
+            { "kind": "home", "options": { "theme": 0, "scene": 3 } },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(1));
+        assert_eq!(scene_of(Some(&config)), 3);
+        // the old panel setting, else the mountains
+        assert_eq!(scene_of(Some(&serde_json::json!({ "fl_scene": 2 }))), 2);
+        assert_eq!(scene_of(None), 0);
+        assert_eq!(scene_page(None), None);
     }
 
     #[test]

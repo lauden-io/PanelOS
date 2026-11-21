@@ -4277,7 +4277,7 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
         "thermo.settings-close" => ui.set_thermo_settings(false),
         "thermo.look" => page_set(ui, "thermostat", Some(value.parse().unwrap_or(0)), Value::Null),
         // the neon look's scene and cars are the synthwave background's (shared with the home page)
-        "thermo.scene" => page_set(ui, "home", None, json!({ "scene": value.parse::<i64>().unwrap_or(0) })),
+        "thermo.scene" => synth::set_scene(ui, value.parse::<i64>().unwrap_or(0)),
         "thermo.cars" => {
             let on = with_state(|s| first_page_option(s, "home", "cars").and_then(|v| v.as_bool()).unwrap_or(true));
             page_set(ui, "home", None, json!({ "cars": !on }));
