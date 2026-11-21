@@ -24,6 +24,8 @@ export global Act {
     in-out property <length> lock-r1;
     in-out property <float> lock-a0;
     in-out property <float> lock-a1: 360;
+    // counts the rings set, so a page takes away only the ring it set itself (not one another page set since)
+    in-out property <int> lock-serial;
     public pure function locked(x: length, y: length) -> bool {
         let r = Math.sqrt(Math.pow((x - self.lock-cx) / 1px, 2) + Math.pow((y - self.lock-cy) / 1px, 2)) * 1px;
         let a = atan2((y - self.lock-cy) / 1px, (x - self.lock-cx) / 1px) / 1deg;

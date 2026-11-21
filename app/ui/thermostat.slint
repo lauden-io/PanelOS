@@ -116,8 +116,9 @@ component Pill inherits Rectangle {
 // A rotary control (the dial's ring, the wall knob, the neon tube): the finger's turn around the centre turns it by the
 // same angle (relative, so a small move is a small change), 270° over the whole range. Only a press on the ring counts
 // (`r0` … `r1` from the centre, over the arc `a0` … `a1` degrees, 0 = right, clockwise); while turning the pages do not
-// swipe, and the new value is sent when the finger lifts. (The page also tells the pager where its ring is, so a drag
-// that starts on it is never taken for a swipe: `Act.lock-*`.)
+// swipe, and the new value is sent when the finger lifts. A turn the panel calls off while the control still takes
+// touches (a second finger on the glass) sends its value too; a press without a turn sends nothing. (The page also
+// tells the pager where its ring is, so a drag that starts on it is never taken for a swipe: `Act.lock-*`.)
 component RotaryArea inherits TouchArea {
     in property <float> ft;                 // the value now, 0 … 1
     in property <length> r0;
@@ -147,7 +148,8 @@ component RotaryArea inherits TouchArea {
         if (ev.kind == PointerEventKind.up || ev.kind == PointerEventKind.cancel) && self.turning {
             self.turning = false;
             Act.hold-swipe = false;
-            if ev.kind == PointerEventKind.up && Math.abs(self.acc) > 1 {
+            // (a cancel because the control stopped taking touches, e.g. the device went off, sends nothing)
+            if (ev.kind == PointerEventKind.up || self.enabled) && Math.abs(self.acc) > 1 {
                 self.done(self.turn-ft);
             }
         }
@@ -608,13 +610,15 @@ component ThermoWall inherits ThermoBase {
         x: (root.cx + 152 * Math.cos(self.a * 1deg) - 16) * 1px; y: (root.cy + 152 * Math.sin(self.a * 1deg) - 9) * 1px; width: 32px; height: 18px;
         text: root.t0 + i; font-size: 15px; font-weight: 600; color: root.print; horizontal-alignment: center; vertical-alignment: center;
     }
-    // turning the knob like a real one (RotaryArea); the detents click as it passes the steps
+    // turning the knob like a real one (RotaryArea); the detents click as it passes the steps, the drum counter shows
+    // the setting the knob is on
     property <bool> turning: knob.turning;
     property <float> turn-ft: knob.turn-ft;
+    property <float> tv: root.turning ? root.snap(root.turn-ft) : root.d.target;
     knob := RotaryArea {
         x: (root.cx - 112) * 1px; y: (root.cy - 112) * 1px; width: 224px; height: 224px;
         enabled: root.show-t; ft: root.ft; r0: 0px; r1: 112px;
-        done(f) => { Act.act("thermo.target", root.d.tmin + f * (root.d.tmax - root.d.tmin)); }
+        done(f) => { Act.act("thermo.target", root.snap(f)); }
     }
     // the knob: shadow, knurled rim, a domed face, the pointer (it turns: drawn at the target's angle)
     Disc { cx: root.cx; cy: root.cy + 5; r: 108; background: root.dk ? #00000099 : #00000038; }
@@ -655,7 +659,7 @@ component ThermoWall inherits ThermoBase {
         x: 196px; y: 322px; width: 88px; height: 34px; border-radius: 6px; background: #1b1714; border-width: 2px; border-color: root.cap-rim;
         Rectangle { x: 4px; y: 2px; width: parent.width - 8px; height: 7px; background: #00000070; }
         Rectangle { x: 4px; y: parent.height - 9px; width: parent.width - 8px; height: 7px; background: #00000070; }
-        Text { text: root.show-t ? TK.num(root.d.target, root.d.step) + "°" : root.active ? "– –" : "OFF"; font-size: 21px; font-weight: 600;
+        Text { text: root.show-t ? TK.num(root.tv, root.d.step) + "°" : root.active ? "– –" : "OFF"; font-size: 21px; font-weight: 600;
             color: #efe6d2; horizontal-alignment: center; vertical-alignment: center; }
     }
     // slide switches: the modes left, the fan right (or a humidity tube when the device has no fan),
@@ -862,26 +866,47 @@ export component ThermostatPage inherits Rectangle {
     }
     init => {
         if root.shown { root.claim-page-row(); }
+        // made off screen (a new page list): a ring left by a page that is gone goes
+        if !root.lock-on { Act.lock-r1 = 0px; }
         root.publish-lock();
     }
 
     // ---------------------------------------------------------------- the gesture lock
     // a drag that starts on the dial's ring (dial, neon) or on the wall knob never turns the page: the pager reads the
-    // ring from Act at the press (the knob's own press only arrives after the pager's 100 ms hold)
+    // ring from Act at the press (the knob's own press only arrives after the pager's 100 ms hold). A page leaving the
+    // screen takes away only the ring it set itself (`Act.lock-serial`), not one the page coming in has set already.
     property <bool> lock-on: root.shown && root.has-dev && root.m != 0 && root.d.show-target && root.look != 1;
+    property <int> lock-mine: -1;
+    property <bool> relock;
     changed lock-on => { root.publish-lock(); }
+    function set-ring() {
+        Act.lock-cx = 240px;
+        Act.lock-cy = root.look == 2 ? 204px : 196px;
+        Act.lock-r0 = root.look == 2 ? 0px : 84px;
+        Act.lock-r1 = root.look == 2 ? 112px : 144px;
+        Act.lock-a0 = root.look == 2 ? 0 : 128;
+        Act.lock-a1 = root.look == 2 ? 360 : 412;
+        Act.lock-serial += 1;
+        root.lock-mine = Act.lock-serial;
+    }
     function publish-lock() {
         if root.lock-on {
-            Act.lock-cx = 240px;
-            Act.lock-cy = root.look == 2 ? 204px : 196px;
-            Act.lock-r0 = root.look == 2 ? 0px : 84px;
-            Act.lock-r1 = root.look == 2 ? 112px : 144px;
-            Act.lock-a0 = root.look == 2 ? 0 : 128;
-            Act.lock-a1 = root.look == 2 ? 360 : 412;
-        } else {
-            Act.lock-r1 = 0px;
+            root.set-ring();
+            root.relock = true;
+        } else if root.lock-mine >= 0 {
+            if Act.lock-serial == root.lock-mine {
+                Act.lock-r1 = 0px;
+            }
+            root.lock-mine = -1;
+            root.relock = false;
         }
     }
+    // a new page list: the thermostat pages made off screen clear a ring left by a page that is gone (see init), so
+    // the page on screen sets its ring once more a moment later
+    Timer { interval: 50ms; running: root.relock; triggered => {
+        root.relock = false;
+        if root.lock-on { root.set-ring(); }
+    } }
 
     // ---------------------------------------------------------------- a look picked in the settings
     // the menu closes, the new look comes, and its settings open as the new look's menu
