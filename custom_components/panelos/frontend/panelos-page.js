@@ -218,11 +218,12 @@ const SAFETY = {
   safety: { name: "Safety", icon: "alert-octagon-outline" },
 };
 
+// What do not disturb lets through, as ticked on the page. "calls" stays in the stored setting for panel-to-panel calls,
+// which do not exist yet: it is not shown, and nothing reads it.
 const DND_ITEMS = [
   { id: "critical", name: "Critical alerts", locked: true },
   { id: "alarms", name: "Alarms" }, { id: "timers", name: "Timers" }, { id: "status", name: "Status screens" },
   { id: "ring", name: "Doorbell and camera ring" }, { id: "voice", name: "Voice answers when woken" },
-  { id: "calls", name: "Calls and announcements" },
 ];
 const DND_DEFAULT_ALLOW = { alarms: true, timers: true, status: true, ring: true, voice: true, calls: true };
 const DEFAULT_SCREENSAVER = { when: "dark", lux: 3, from: "22:00", to: "06:00", light_entity: "", face: 1, seconds: true, date: true, weather: true, next: true, weight: 600, width: 100, speed: 20, colour: "" };
@@ -4520,7 +4521,7 @@ class PanelOSPage extends HTMLElement {
     });
     const dnd = { ...DEFAULT_DND, ...(this._settings(p).dnd || {}) };
     dnd.allow = { ...DND_DEFAULT_ALLOW, ...(dnd.allow || {}) };
-    const changed = Object.keys(DND_DEFAULT_ALLOW).some((k) => dnd.allow[k] !== DND_DEFAULT_ALLOW[k]);
+    const changed = DND_ITEMS.some((it) => !it.locked && dnd.allow[it.id] !== DND_DEFAULT_ALLOW[it.id]);
     const setDnd = (patch) => this._options(p, { dnd: patch }, { optimistic: (s) => { s.dnd = { ...dnd, ...patch, allow: { ...dnd.allow, ...(patch.allow || {}) } }; } });
     const pops = { ...DEFAULT_POPUPS, ...(this._settings(p).popups || {}) };
     const setPops = (patch) => this._options(p, { popups: patch }, { optimistic: (s) => { s.popups = { ...pops, ...patch }; } });
@@ -4542,7 +4543,7 @@ class PanelOSPage extends HTMLElement {
         info: `A status screen covers the panel while something is going on (toilet occupied, someone sleeping, robot vacuum at work). Each one lists the panels it appears on.${this._has(p, "images") ? "" : ` ${this._pname(p)} shows the text and the colour, without the picture.`}`,
         acts: this._btn("Add", () => this._newStatus(p), { cls: "small", icon: "plus" }),
       }, rules.length ? rules : h("div", { class: "empty" }, "No status screens yet."), h("div", { style: { height: "8px" } })),
-      this._card("Do not disturb", { info: "Critical alerts always come through. What is not ticked here waits quietly; new notifications go into the list without a sound." },
+      this._card("Do not disturb", { info: "Critical alerts always come through. What is not ticked here waits quietly; new notifications go into the list without a sound. Without voice answers the assistant still listens and shows its answer, without its chime and without speaking." },
         this._row("When", this._seg([["off", "Off"], ["on", "On"], ["schedule", "On a schedule"]], dnd.mode, (v) => setDnd({ mode: v }), { label: "Do not disturb" })),
         dnd.mode === "schedule" ? this._row("From – to", this._times(dnd.from, dnd.to, (f, t) => setDnd({ from: f, to: t }))) : null,
         this._row("Comes through", null, { stack: true, sub: changed ? "Changed from the default" : "The default" }),

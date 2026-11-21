@@ -379,12 +379,18 @@ pub fn dnd_setting(s: &UiState) -> bool {
     }
 }
 
-/// What comes through do not disturb (alarms, timers, status, ring, voice, calls; all by default).
-/// Critical alerts always do.
+/// What comes through do not disturb (alarms, timers, status, ring, voice; all by default). Critical alerts always do.
+/// "voice": without it the assistant still listens and answers, without its listening chime and without speaking
+/// the answer (`voice::DND_QUIET`). "calls" is kept in the integration's setting for panel-to-panel calls, which do
+/// not exist yet: nothing asks for it, and the PanelOS page does not show it.
 pub fn dnd_allows(s: &UiState, what: &str) -> bool {
-    !dnd_active(s)
-        || s.panel_config
-            .as_ref()
+    dnd_lets_through(s.panel_config.as_ref(), dnd_active(s), what)
+}
+
+/// `dnd_allows` for a panel configuration and whether do not disturb is on now.
+fn dnd_lets_through(config: Option<&Value>, active: bool, what: &str) -> bool {
+    !active
+        || config
             .and_then(|c| c.get("dnd"))
             .and_then(|d| d.get("allow"))
             .and_then(|a| a.get(what))
@@ -1019,6 +1025,8 @@ fn update_clock(ui: &AppWindow) {
         if ui.get_dnd_on() != dnd {
             ui.set_dnd_on(dnd);
         }
+        // the voice satellite reads it at each wake word: a conversation without its chime and spoken answer
+        voice::DND_QUIET.store(!dnd_allows(s, "voice"), Ordering::Relaxed);
         // Alarms: when the minute turns, the ones due ring; the list's "next" line follows.
         let minute = pages::now() / 60;
         if minute != s.alarm_minute {
@@ -1720,7 +1728,15 @@ fn handle_timer_state(ui: &AppWindow, kind: i32, id: String, name: String, left:
                 };
                 s.timers.insert(
                     id,
-                    pages::Timer { name, active, end: Instant::now() + Duration::from_secs(left as u64), left, total, seq, own: false },
+                    pages::Timer {
+                        name: pages::timer_label(&name),
+                        active,
+                        end: Instant::now() + Duration::from_secs(left as u64),
+                        left,
+                        total,
+                        seq,
+                        own: false,
+                    },
                 );
                 false
             }
@@ -1739,7 +1755,7 @@ fn handle_timer_state(ui: &AppWindow, kind: i32, id: String, name: String, left:
                 let gone = s.timers.remove(&id);
                 let (colourful, own) = timers_colours(page_cfg(s, "timers"));
                 let tint = pages::timer_tint(gone.as_ref().map_or(0, |t| t.seq as u64), accent(s), colourful, &own);
-                let name = gone.map(|t| t.name).unwrap_or(name);
+                let name = gone.map(|t| t.name).unwrap_or_else(|| pages::timer_label(&name));
                 ring_timer(ui, s, name, tint);
                 true
             }
@@ -1957,6 +1973,7 @@ fn ring_timer(ui: &AppWindow, s: &mut UiState, name: String, tint: slint::Color)
 /// A timer started on the panel (a quick start or one of one's own): Home Assistant's timer of the panel (voice
 /// and every other device see it), or the panel's own while it has no Home Assistant.
 fn start_timer(ui: &AppWindow, secs: u32, name: String) {
+    let name = pages::timer_label(&name);
     if HA_LINKED.load(Ordering::SeqCst) && with_state(|s| s.panel_config.is_some()) {
         send(Command::Timer { action: "start".into(), timer_id: String::new(), seconds: secs, name });
         ui.set_timers_quick(false);
@@ -1974,7 +1991,7 @@ fn start_local_timer(ui: &AppWindow, secs: u32, name: String) {
         s.timers.insert(
             format!("panel-{seq}"),
             pages::Timer {
-                name,
+                name: pages::timer_label(&name),
                 active: true,
                 end: Instant::now() + Duration::from_secs(secs as u64),
                 left: secs,
@@ -2462,7 +2479,9 @@ fn handle_voice_ui(ui: &AppWindow, event: voice::VoiceUi) {
         VoiceUi::Idle => {
             follow_up_drain(ui, false);
             if ui.get_voice_on() {
-                hide_after(5);
+                // an answer that was not spoken (do not disturb) stays a little longer for reading
+                let quiet = voice::QUIET_RUN.load(Ordering::Relaxed) && !ui.get_voice_answer().is_empty();
+                hide_after(if quiet { voice::silent_answer_secs(&ui.get_voice_answer()) } else { 5 });
             } else {
                 voice_meter(ui, false);
             }
@@ -3263,7 +3282,7 @@ fn handle_event(ui: &AppWindow, event: Event) {
                             s.timer_seq
                         }
                     };
-                    let name = t["name"].as_str().unwrap_or("").to_string();
+                    let name = pages::timer_label(t["name"].as_str().unwrap_or(""));
                     s.timers.insert(
                         id.to_string(),
                         pages::Timer { name, active, end: Instant::now() + Duration::from_secs(left as u64), left, total, seq, own: false },
@@ -5306,6 +5325,27 @@ mod timers_settings_tests {
         assert_eq!(page["options"]["scene"], json!(2));
         set_option(&mut page, "colourful", json!(false));
         assert_eq!(page["options"], json!({ "scene": 2, "colourful": false }));
+    }
+}
+
+#[cfg(test)]
+mod dnd_tests {
+    use super::dnd_lets_through;
+    use serde_json::json;
+
+    #[test]
+    fn voice_comes_through_unless_unticked_while_on() {
+        let quiet = json!({ "dnd": { "mode": "on", "allow": { "voice": false, "timers": true } } });
+        // on, voice unticked: the assistant answers without sound
+        assert!(!dnd_lets_through(Some(&quiet), true, "voice"));
+        assert!(dnd_lets_through(Some(&quiet), true, "timers"));
+        // off (or the schedule's quiet hours over): everything comes through
+        assert!(dnd_lets_through(Some(&quiet), false, "voice"));
+        // ticked, missing, or no setting at all: it comes through
+        let ticked = json!({ "dnd": { "allow": { "voice": true } } });
+        assert!(dnd_lets_through(Some(&ticked), true, "voice"));
+        assert!(dnd_lets_through(Some(&json!({ "dnd": { "mode": "on" } })), true, "voice"));
+        assert!(dnd_lets_through(None, true, "voice"));
     }
 }
 
