@@ -31,9 +31,16 @@ pub mod proto {
 use proto::*;
 
 pub const PORT: u16 = 6053;
-/// Device identity, the same in the API and in the mDNS announcement.
-pub const DEVICE_NAME: &str = "nspanel-pro";
-pub const FRIENDLY_NAME: &str = "NSPanel Pro Voice";
+/// The device's name, the same in the API and in the mDNS announcement: the panel's ID (`panel_id.rs`), so Home
+/// Assistant's ESPHome entry of the panel has the panel's ID as its device name.
+pub fn device_name() -> &'static str {
+    crate::panel_id::get()
+}
+
+/// The name Home Assistant gives the device: "NSPanel Pro Voice", with the panel's name for a panel that has one.
+fn friendly_name() -> String {
+    crate::panel_id::label("NSPanel Pro Voice")
+}
 pub const ESPHOME_VERSION: &str = "2026.10.0";
 /// "maker.model": Home Assistant shows the device as "Voice satellite by
 /// PanelOS".
@@ -192,11 +199,11 @@ fn send<M: Message>(stream: &mut Conn, msg_type: u32, msg: &M) -> io::Result<()>
 pub fn mdns_service() -> crate::mdns::Service {
     let mac = mac_plain();
     crate::mdns::Service {
-        name: DEVICE_NAME.into(),
+        name: device_name().into(),
         kind: "_esphomelib._tcp".into(),
         port: PORT,
         txt: vec![
-            format!("friendly_name={FRIENDLY_NAME}"),
+            format!("friendly_name={}", friendly_name()),
             format!("version={ESPHOME_VERSION}"),
             format!("mac={mac}"),
             "network=wifi".into(),
@@ -480,8 +487,8 @@ fn forward_voice(
 
 fn device_info() -> DeviceInfoResponse {
     DeviceInfoResponse {
-        name: DEVICE_NAME.into(),
-        friendly_name: FRIENDLY_NAME.into(),
+        name: device_name().into(),
+        friendly_name: friendly_name(),
         mac_address: mac_address(),
         esphome_version: ESPHOME_VERSION.into(),
         compilation_time: env!("NSPANEL_BUILD_TIME").into(),
@@ -529,7 +536,7 @@ fn handle_basic(stream: &mut Conn, kind: u32, payload: &[u8]) -> io::Result<Basi
                 // its Sendspin client for pairing
                 api_version_minor: 15,
                 server_info: format!("nspanel-app {}", env!("CARGO_PKG_VERSION")),
-                name: DEVICE_NAME.into(),
+                name: device_name().into(),
             })?;
         }
         3 => send(stream, 4, &AuthenticationResponse { invalid_password: false })?,
@@ -664,7 +671,7 @@ fn connection(
     main: &Mutex<MainParts>,
     takeover: &AtomicBool,
 ) -> io::Result<()> {
-    let mut conn = Conn::accept(stream, DEVICE_NAME, &mac_plain())?;
+    let mut conn = Conn::accept(stream, device_name(), &mac_plain())?;
     eprintln!(
         "nspanel-app: ESPHome API connection from {} ({})",
         conn.peer(),

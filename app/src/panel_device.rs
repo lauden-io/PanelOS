@@ -53,7 +53,8 @@ fn current_dashboard(s: &DeviceState) -> String {
 /// Who the panel is, for the device in Home Assistant.
 pub fn device_info(mac: &str) -> Value {
     json!({
-        "name": NAME,
+        // a panel with a name of its own carries it: "NSPanel Pro (kitchen)"
+        "name": crate::panel_id::label(NAME),
         "manufacturer": MANUFACTURER,
         "model": MODEL,
         "sw_version": env!("CARGO_PKG_VERSION"),

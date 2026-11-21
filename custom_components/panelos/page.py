@@ -97,7 +97,17 @@ from .const import (
     WAKE_DISTANCES,
 )
 from .house import HOUSE_SCHEMA, House, _tone
-from .panel import KEY_DOMAIN, Panel, find_entry, forget_panel_user, panel_caps, panel_config, panel_user, reported_user
+from .panel import (
+    KEY_DOMAIN,
+    Panel,
+    find_entry,
+    forget_panel_user,
+    panel_caps,
+    panel_config,
+    panel_user,
+    reported_user,
+    waiting_panels,
+)
 
 _LOGGER = logging.getLogger(__name__)
 from .resources import async_resource_list
@@ -458,6 +468,8 @@ def _page_data(hass: HomeAssistant) -> dict[str, Any]:
     house = _house(hass)
     return {
         "panels": panels,
+        # panels that asked for their settings and have no entry yet (the newest first): offered when one is added
+        "waiting_panels": waiting_panels(hass),
         "dashboards": [dict(choice) for choice in dashboard_choices(hass)],
         "tile_domains": list(TILE_DOMAINS),
         "page_kinds": {kind: {"looks": looks, "domains": list(domains), "most": most} for kind, (looks, domains, most) in PAGE_KINDS.items()},

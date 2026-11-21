@@ -67,9 +67,6 @@ pub enum Event {
     Notes { kind: String, notes: Value },
 }
 
-/// The panel's name for the PanelOS integration (its ESPHome name).
-pub const PANEL_ID: &str = "nspanel-pro";
-
 /// Settings the UI thread can change while the client runs.
 #[derive(Default)]
 pub struct Shared {
@@ -274,7 +271,7 @@ fn session(
     // "unknown command" error means it is not installed).
     next_id += 1;
     let mut panel_id = next_id;
-    send_json(&mut ws, &json!({"id": panel_id, "type": "panelos/subscribe", "panel_id": PANEL_ID}))?;
+    send_json(&mut ws, &json!({"id": panel_id, "type": "panelos/subscribe", "panel_id": crate::panel_id::get()}))?;
     // Home Assistant's notifications (the info page).
     next_id += 1;
     let notes_id = next_id;
@@ -346,7 +343,7 @@ fn session(
                 Command::Screen(png) if report.linked => {
                     next_id += 1;
                     let t = Instant::now();
-                    let sent = send_json(&mut ws, &json!({"id": next_id, "type": "panelos/screen", "panel_id": PANEL_ID, "jpeg": png}));
+                    let sent = send_json(&mut ws, &json!({"id": next_id, "type": "panelos/screen", "panel_id": crate::panel_id::get(), "jpeg": png}));
                     crate::SCREEN_SEND_MS.store(t.elapsed().as_millis() as u64, std::sync::atomic::Ordering::SeqCst);
                     crate::SCREENS_SENT.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                     sent?;
@@ -356,7 +353,7 @@ fn session(
                 }
                 Command::Timer { action, timer_id, seconds, name } => {
                     next_id += 1;
-                    let mut msg = json!({"id": next_id, "type": "panelos/timer", "panel_id": PANEL_ID, "action": action});
+                    let mut msg = json!({"id": next_id, "type": "panelos/timer", "panel_id": crate::panel_id::get(), "action": action});
                     if !timer_id.is_empty() {
                         msg["timer_id"] = json!(timer_id);
                     }
@@ -379,7 +376,7 @@ fn session(
                 }
                 Command::Notification { id, answer, button } => {
                     next_id += 1;
-                    let mut msg = json!({"id": next_id, "type": "panelos/notification", "panel_id": PANEL_ID, "notification_id": id, "answer": answer});
+                    let mut msg = json!({"id": next_id, "type": "panelos/notification", "panel_id": crate::panel_id::get(), "notification_id": id, "answer": answer});
                     if let Some(b) = button {
                         msg["button"] = json!(b);
                     }
@@ -389,7 +386,7 @@ fn session(
                 }
                 Command::PageSet { index, variant, options } => {
                     next_id += 1;
-                    let mut msg = json!({"id": next_id, "type": "panelos/page_set", "panel_id": PANEL_ID, "index": index});
+                    let mut msg = json!({"id": next_id, "type": "panelos/page_set", "panel_id": crate::panel_id::get(), "index": index});
                     if let Some(v) = variant {
                         msg["variant"] = json!(v);
                     }
@@ -530,7 +527,7 @@ fn session(
             panel_retry_at = None;
             next_id += 1;
             panel_id = next_id;
-            send_json(&mut ws, &json!({"id": panel_id, "type": "panelos/subscribe", "panel_id": PANEL_ID}))?;
+            send_json(&mut ws, &json!({"id": panel_id, "type": "panelos/subscribe", "panel_id": crate::panel_id::get()}))?;
         }
 
         // Keep-alive, both ways, every second: "panelos/alive" to the integration (which notes it and
@@ -541,7 +538,7 @@ fn session(
         if alive_at.elapsed() >= Duration::from_secs(1) {
             next_id += 1;
             let msg = if report.linked {
-                json!({"id": next_id, "type": "panelos/alive", "panel_id": PANEL_ID})
+                json!({"id": next_id, "type": "panelos/alive", "panel_id": crate::panel_id::get()})
             } else {
                 json!({"id": next_id, "type": "ping"})
             };
@@ -559,7 +556,7 @@ fn session(
             let lines = crate::devlog::take(400);
             if !lines.is_empty() {
                 next_id += 1;
-                send_json(&mut ws, &json!({"id": next_id, "type": "panelos/log", "panel_id": PANEL_ID, "lines": lines}))?;
+                send_json(&mut ws, &json!({"id": next_id, "type": "panelos/log", "panel_id": crate::panel_id::get(), "lines": lines}))?;
                 log_id = next_id;
             }
         }
@@ -635,7 +632,7 @@ impl Report {
         if states.is_empty() && options.is_empty() && dashboard.is_none() && music_player.is_none() && alarms.is_none() && self.device_sent {
             return None;
         }
-        let mut msg = json!({"type": "panelos/report", "panel_id": PANEL_ID});
+        let mut msg = json!({"type": "panelos/report", "panel_id": crate::panel_id::get()});
         if let Some(d) = dashboard {
             msg["dashboard"] = d.clone().into();
             self.dashboard = Some(d);

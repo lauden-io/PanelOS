@@ -5,13 +5,16 @@
         "title": "Add a PanelOS panel",
         "description": "Adds a panel running PanelOS as a device with its display, settings and sensors, and sets what its dashboard and assistant modes show. The panel's voice satellite comes with the ESPHome integration and is shown as connected via this device.",
         "data": {
-          "panel_id": "Panel ID (the panel's network name)",
+          "panel_id": "Panel ID (the panel's name, nspanel-pro for a panel without one)",
           "weather_entity": "Weather",
           "media_player_entity": "Media player",
           "tile_entities": "Quick tiles",
           "show_conversation": "Full-screen conversation"
         }
       }
+    },
+    "error": {
+      "invalid_panel_id": "A panel's name has letters a-z, digits and hyphens, at most 31 characters."
     },
     "abort": {
       "already_configured": "This panel is already set up."

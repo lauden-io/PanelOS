@@ -56,6 +56,7 @@ from .const import (
     CONF_WIFI_ROAMING,
     DEFAULT_CAPS,
     DEFAULT_DND,
+    DEFAULT_PANEL_ID,
     DEFAULT_PAGES,
     DEFAULT_POPUPS,
     DEFAULT_SCREENSAVER,
@@ -69,6 +70,7 @@ from .const import (
     THEME_AUTO_BY,
     WAKE_DISTANCES,
     ENTITY_KEYS,
+    PANEL_ID_MAX,
     ESPHOME_ENTITIES,
     REPORTING,
     SIGNAL_CONFIG_UPDATED,
@@ -130,13 +132,73 @@ def link_gone(hass: HomeAssistant, connection_id: int) -> bool:
     return seen is not None and time.monotonic() - seen > ALIVE_TIMEOUT
 
 
+# A panel's ID: the short name given to it at installation (letters a-z, digits and hyphens, no hyphen at either end;
+# the same rule as on the panel), `nspanel-pro` for a panel without one.
+_PANEL_ID = re.compile(rf"[a-z0-9](?:[a-z0-9-]{{0,{PANEL_ID_MAX - 2}}}[a-z0-9])?")
+
+
+def checked_panel_id(value: Any) -> str | None:
+    """A Panel ID as the panel uses it (upper-case letters as lower case, spaces around it left out), None when it is
+    not one."""
+    if not isinstance(value, str):
+        return None
+    panel_id = value.strip().lower()
+    return panel_id if _PANEL_ID.fullmatch(panel_id) else None
+
+
 def find_entry(hass: HomeAssistant, panel_id: str) -> ConfigEntry | None:
-    """The entry of a panel; a single entry also serves a panel without an id."""
+    """The entry of a panel. A panel without a name of its own (`nspanel-pro`, or no id at all) also finds a single
+    entry set up with another Panel ID; a panel with a name finds only its own entry, never another panel's."""
     entries = hass.config_entries.async_entries(DOMAIN)
     for entry in entries:
         if {**entry.data, **entry.options}.get(CONF_PANEL_ID) == panel_id:
             return entry
-    return entries[0] if len(entries) == 1 else None
+    if panel_id in ("", DEFAULT_PANEL_ID) and len(entries) == 1:
+        return entries[0]
+    return None
+
+
+def serves(hass: HomeAssistant, panel_id: str, target: str) -> bool:
+    """Whether a request for the panel `target` ("" = every panel) is for the panel that subscribed as `panel_id`: the
+    same id, or the panel whose entry that is (a panel without a name of its own on a single entry with another id)."""
+    if not target or target == panel_id:
+        return True
+    entry = find_entry(hass, panel_id)
+    return entry is not None and {**entry.data, **entry.options}.get(CONF_PANEL_ID) == target
+
+
+# Panels that asked for their settings without an entry here (panel id → when, the last time): the PanelOS page offers
+# the newest one when a panel is added. Kept this long, at most this many.
+WAITING_FOR = 600.0
+_WAITING_MAX = 8
+
+
+def waiting(hass: HomeAssistant) -> dict[str, float]:
+    return hass.data.setdefault(DOMAIN, {}).setdefault("waiting", {})
+
+
+@callback
+def note_waiting(hass: HomeAssistant, panel_id: str) -> None:
+    """A panel subscribed without an entry (a valid id only)."""
+    if checked_panel_id(panel_id) != panel_id:
+        return
+    known = waiting(hass)
+    new = panel_id not in known
+    known[panel_id] = time.monotonic()
+    while len(known) > _WAITING_MAX:
+        del known[min(known, key=known.get)]
+    if new:
+        async_dispatcher_send(hass, SIGNAL_PAGE)
+
+
+def waiting_panels(hass: HomeAssistant) -> list[str]:
+    """The panels that asked for their settings in the last ten minutes and still have no entry, the newest first."""
+    now = time.monotonic()
+    ids = {panel_config(e)["panel_id"] for e in hass.config_entries.async_entries(DOMAIN)}
+    known = waiting(hass)
+    for panel_id in [p for p, seen in known.items() if now - seen > WAITING_FOR or p in ids]:
+        del known[panel_id]
+    return sorted(known, key=known.get, reverse=True)
 
 
 def panel_user(entry: ConfigEntry) -> dict[str, str] | None:
@@ -167,11 +229,30 @@ _USER_SENSOR_IDS = ("/text_sensor/Panel user", "-text_sensor-panel_user")
 _USER_ID = re.compile(r"[0-9a-f]{32}")
 
 
-def voice_entry(hass: HomeAssistant, panel_id: str) -> ConfigEntry | None:
-    """The panel's ESPHome entry (voice satellite): same device name."""
+def _plain_mac(value: Any) -> str | None:
+    """A MAC address as 12 lower-case hex digits; None for anything else."""
+    if not isinstance(value, str):
+        return None
+    plain = value.replace(":", "").replace("-", "").lower()
+    return plain if len(plain) == 12 and all(c in "0123456789abcdef" for c in plain) else None
+
+
+def panel_mac(entry: ConfigEntry) -> str | None:
+    """The MAC address the panel reported (None until it did)."""
+    device = entry.data.get(CONF_DEVICE)
+    return device.get("mac") if isinstance(device, dict) else None
+
+
+def voice_entry(hass: HomeAssistant, panel_id: str, mac: str | None = None) -> ConfigEntry | None:
+    """The panel's ESPHome entry (voice satellite): the one with the panel id as its device name. Once the panel has
+    reported its MAC address, an ESPHome entry of another device with that name is not it."""
+    wanted = _plain_mac(mac)
     for entry in hass.config_entries.async_entries("esphome"):
-        if entry.data.get(_ESPHOME_DEVICE_NAME) == panel_id:
-            return entry
+        if entry.data.get(_ESPHOME_DEVICE_NAME) != panel_id:
+            continue
+        if wanted and (theirs := _plain_mac(entry.unique_id)) and theirs != wanted:
+            continue
+        return entry
     return None
 
 
@@ -186,7 +267,7 @@ def _user_sensor_of(hass: HomeAssistant, voice: ConfigEntry | None) -> str | Non
 
 def user_sensor(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
     """The entity id of the panel's "Panel user" sensor (a text sensor of its ESPHome device), None without one."""
-    return _user_sensor_of(hass, voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, "")))
+    return _user_sensor_of(hass, voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""), panel_mac(entry)))
 
 
 def reported_user(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
@@ -194,7 +275,7 @@ def reported_user(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
     says none: an older panel, the sensor missing, disabled, unavailable or empty, or an ESPHome entry without a key.
     Only an ESPHome entry with a key counts: the sensor's state then comes over the encrypted connection that only the
     panel can answer (over Home Assistant's API only administrators can set an entity's state)."""
-    voice = voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""))
+    voice = voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""), panel_mac(entry))
     if voice is None or not voice.data.get(_ESPHOME_KEY):
         return None
     entity_id = _user_sensor_of(hass, voice)
@@ -974,7 +1055,7 @@ class Panel:
 
     def _voice_entry(self) -> ConfigEntry | None:
         """The panel's ESPHome entry (voice satellite): same device name."""
-        return voice_entry(self.hass, self.panel_id)
+        return voice_entry(self.hass, self.panel_id, panel_mac(self.entry))
 
     def _register_device(self, info: dict[str, str]) -> None:
         connections = {(dr.CONNECTION_NETWORK_MAC, dr.format_mac(info["mac"]))} if info.get("mac") else set()
