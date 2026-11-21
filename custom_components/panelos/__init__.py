@@ -46,6 +46,7 @@ from homeassistant.auth import EVENT_USER_REMOVED
 from homeassistant.components import websocket_api
 from homeassistant.components.intent.const import TIMER_DATA
 from homeassistant.config_entries import SIGNAL_CONFIG_ENTRY_CHANGED, ConfigEntry, ConfigEntryChange
+from homeassistant.const import EVENT_CORE_CONFIG_UPDATE
 from homeassistant.core import Event, HomeAssistant, ServiceCall, callback
 from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import config_validation as cv
@@ -83,6 +84,7 @@ from .players import async_register_players_view
 from .sounds import async_register_views
 from .page import async_hide_page, async_setup_page, async_show_page, checked_page, split_quick_pages
 from .panel import Panel, alive, find_entry, link_gone, links, may_act, panel_config, panel_user, set_panel_user, voice_player
+from .timezone import time_zone
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -171,6 +173,9 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     def send_config() -> None:
         entry = find_entry(hass, panel_id)
         config = panel_config(entry) if entry else {}
+        if config and (zone := hass.data.get(DOMAIN, {}).get("time_zone")):
+            # Home Assistant's time zone (its POSIX rule: the panel has no zone database)
+            config["time_zone"] = zone
         connection.send_message(websocket_api.event_message(msg["id"], {"config": config}))
 
     @callback
@@ -449,8 +454,33 @@ async def _setup_voice_intents(hass: HomeAssistant) -> None:
     async_setup_voice_intents(hass)
 
 
+async def _async_time_zone(hass: HomeAssistant) -> dict[str, str] | None:
+    """Home Assistant's time zone as the panels get it (`timezone.py`); None when its rule cannot be read (said once
+    in the log, the panels keep the zone they have)."""
+    name = str(hass.config.time_zone or "UTC")
+    zone = await hass.async_add_executor_job(time_zone, name)
+    if zone is None and hass.data.get(DOMAIN, {}).get("time_zone_missing") != name:
+        _LOGGER.warning("No POSIX rule found for the time zone %s: the panels keep the zone they have", name)
+    hass.data.setdefault(DOMAIN, {})["time_zone_missing"] = name if zone is None else None
+    return zone
+
+
 async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     """Register the websocket commands, the actions and the sidebar page's files once."""
+    # Home Assistant's time zone for the panels' clocks (they get it with their settings)
+    hass.data.setdefault(DOMAIN, {})["time_zone"] = await _async_time_zone(hass)
+
+    async def zone_check(_arg: Any) -> None:
+        # a new rule (the zone set again in Home Assistant, or a zone sent as its offset that changed): every panel
+        # gets its settings again with it
+        zone = await _async_time_zone(hass)
+        if zone != hass.data[DOMAIN].get("time_zone"):
+            hass.data[DOMAIN]["time_zone"] = zone
+            async_dispatcher_send(hass, SIGNAL_CONFIG_UPDATED, "")
+
+    hass.bus.async_listen(EVENT_CORE_CONFIG_UPDATE, zone_check)
+    async_track_time_interval(hass, zone_check, timedelta(hours=1), cancel_on_shutdown=True)
+
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_report)
     websocket_api.async_register_command(hass, ws_alive)
