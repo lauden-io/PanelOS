@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.0.7 (in development)
+## 0.0.7
 
 **Upgrading from 0.0.6**: put the new UI bundle (new fonts and pictures) and the new web bundle on the panel and update the integration, then restart Home Assistant ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-006)).
 
