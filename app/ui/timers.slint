@@ -127,8 +127,11 @@ component NixieTube inherits Rectangle {
     // the glow's unsteadiness, 12 times a second (not every frame)
     property <float> ft;
     Timer { interval: 80ms; running: !root.steady; triggered => { root.ft = animation-tick() / 1ms; } }
-    property <[image]> glow: [@image-url("timers/nixie/digit-0.png"), @image-url("timers/nixie/digit-1.png"), @image-url("timers/nixie/digit-2.png"), @image-url("timers/nixie/digit-3.png"), @image-url("timers/nixie/digit-4.png"), @image-url("timers/nixie/digit-5.png"), @image-url("timers/nixie/digit-6.png"), @image-url("timers/nixie/digit-7.png"), @image-url("timers/nixie/digit-8.png"), @image-url("timers/nixie/digit-9.png")];
-    property <[image]> core: [@image-url("timers/nixie/digit-0-core.png"), @image-url("timers/nixie/digit-1-core.png"), @image-url("timers/nixie/digit-2-core.png"), @image-url("timers/nixie/digit-3-core.png"), @image-url("timers/nixie/digit-4-core.png"), @image-url("timers/nixie/digit-5-core.png"), @image-url("timers/nixie/digit-6-core.png"), @image-url("timers/nixie/digit-7-core.png"), @image-url("timers/nixie/digit-8-core.png"), @image-url("timers/nixie/digit-9-core.png")];
+    // the digit pictures (tools/nixie_digits.py), looked up by their path whenever a digit changes: the image cache then
+    // gives every tube the one picture of that digit that is already on the GPU (a picture kept in a list property is a
+    // copy of the file that is uploaded again every time it is shown anew)
+    pure function glow(k: int) -> image { k == 1 ? @image-url("timers/nixie/digit-1.png") : k == 2 ? @image-url("timers/nixie/digit-2.png") : k == 3 ? @image-url("timers/nixie/digit-3.png") : k == 4 ? @image-url("timers/nixie/digit-4.png") : k == 5 ? @image-url("timers/nixie/digit-5.png") : k == 6 ? @image-url("timers/nixie/digit-6.png") : k == 7 ? @image-url("timers/nixie/digit-7.png") : k == 8 ? @image-url("timers/nixie/digit-8.png") : k == 9 ? @image-url("timers/nixie/digit-9.png") : @image-url("timers/nixie/digit-0.png") }
+    pure function core(k: int) -> image { k == 1 ? @image-url("timers/nixie/digit-1-core.png") : k == 2 ? @image-url("timers/nixie/digit-2-core.png") : k == 3 ? @image-url("timers/nixie/digit-3-core.png") : k == 4 ? @image-url("timers/nixie/digit-4-core.png") : k == 5 ? @image-url("timers/nixie/digit-5-core.png") : k == 6 ? @image-url("timers/nixie/digit-6-core.png") : k == 7 ? @image-url("timers/nixie/digit-7-core.png") : k == 8 ? @image-url("timers/nixie/digit-8-core.png") : k == 9 ? @image-url("timers/nixie/digit-9-core.png") : @image-url("timers/nixie/digit-0-core.png") }
     property <float> f: 0.94 + 0.06 * Math.abs(Math.sin(1rad * (root.ft / 37 + root.n * 1.7)) * Math.sin(1rad * (root.ft / 91 + root.n)));
     // a digit change (25.T9): the old cathode dies over 120 ms while the new one lights over 60 ms
     property <int> cur: -1;
@@ -153,12 +156,12 @@ component NixieTube inherits Rectangle {
             for g[i] in root.nx: Path { x: 9px; y: 30px; width: 36px; height: 72px; viewbox-width: 36; viewbox-height: 72;
                 stroke: #7a6655; stroke-width: 1.5px; stroke-line-cap: round; stroke-line-join: round; opacity: 0.32; commands: g; } }
         // the digit going out (the same pictures as the lit one)
-        if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow[root.old]; opacity: root.old-k * root.f; }
-        if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.old]; opacity: root.old-k; }
+        if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow(root.old); opacity: root.old-k * root.f; }
+        if root.old-k > 0: Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core(root.old); opacity: root.old-k; }
         // the lit digit: its glow (flickering) and its core, pictures of the four strokes (tools/nixie_digits.py): a
         // textured quad each, where four wide strokes per digit and frame kept the running stopwatch under 30 fps
-        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow[root.lit]; opacity: root.steady ? 1 : root.new-k * root.f; }
-        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core[root.lit]; opacity: root.steady ? 1 : root.new-k; }
+        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.glow(root.lit); opacity: root.steady ? 1 : root.new-k * root.f; }
+        Image { x: 3px; y: 24px; width: 48px; height: 84px; source: root.core(root.lit); opacity: root.steady ? 1 : root.new-k; }
         // the anode mesh and the glass highlights in front: drawn once
         Rectangle { cache-rendering-hint: true;
         Path { x: 0; y: 0; width: 54px; height: 132px; viewbox-width: 54; viewbox-height: 132; stroke: #b08a6a; stroke-width: 0.6px; opacity: 0.32;
