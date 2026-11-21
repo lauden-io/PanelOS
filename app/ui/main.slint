@@ -270,8 +270,8 @@ export component MainWindow inherits Window {
     in property <float> home-fl-t;
     in property <[SwCar]> home-fl-cars;
     in property <bool> home-fl-cars-on: true;
-    in property <image> home-fl-palm-l;
-    in property <image> home-fl-palm-r;
+    in property <int> home-fl-palm-il: 16;
+    in property <int> home-fl-palm-ir: 16;
     in property <bool> home-fl-neon;
     in property <bool> home-bg-sheet;
     in property <HomeMusic> home-music;
@@ -365,8 +365,8 @@ export component MainWindow inherits Window {
     in property <image> timers-sw-floor;
     in property <float> timers-sw-t;
     in property <[SwCar]> timers-sw-cars;
-    in property <image> timers-sw-palm-l;
-    in property <image> timers-sw-palm-r;
+    in property <int> timers-sw-palm-il: 16;
+    in property <int> timers-sw-palm-ir: 16;
     in property <bool> timers-edit;
     in property <bool> timers-edit-new: true;
     in property <int> timers-edit-h: 6;
@@ -717,7 +717,7 @@ export component MainWindow inherits Window {
             hg-sand-mask: root.timers-hg-sand-mask; hg-sand-shade: root.timers-hg-sand-shade; hg-peak: root.timers-hg-peak;
             hg-stream-mask: root.timers-hg-stream-mask; hg-stream-shade: root.timers-hg-stream-shade;
             sw-scene: root.timers-sw-scene; sw-choice: root.timers-sw-choice; sw-back: root.timers-sw-back; sw-floor: root.timers-sw-floor; sw-t: root.timers-sw-t;
-            sw-cars: root.timers-sw-cars; sw-palm-l: root.timers-sw-palm-l; sw-palm-r: root.timers-sw-palm-r;
+            sw-cars: root.timers-sw-cars; sw-palm-il: root.timers-sw-palm-il; sw-palm-ir: root.timers-sw-palm-ir;
             edit: root.timers-edit; edit-new: root.timers-edit-new; edit-h: root.timers-edit-h; edit-m: root.timers-edit-m; edit-days: root.timers-edit-days;
             edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; edit-keyboard: root.timers-edit-keyboard;
             edit-info: root.timers-edit-info; edit-tint: root.timers-edit-tint;
@@ -725,7 +725,7 @@ export component MainWindow inherits Window {
         if root.panel == "thermostat" && root.thermo-look == 3: FastLane {
             scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
             mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars;
-            palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r;
+            palm-il: root.home-fl-palm-il; palm-ir: root.home-fl-palm-ir;
         }
         if root.panel == "quick": QuickPage {
             look: root.quick-look; tiles: root.quick-tiles; title: root.quick-title; mood: root.quick-mood; placard: root.quick-placard;
@@ -854,7 +854,7 @@ export component MainWindow inherits Window {
         if root.panel == "home" && root.weather.theme == 8: FastLane {
             scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
             mix: root.home-fl-mix; grid: root.home-fl-grid; star-k: root.home-fl-star; t: root.home-fl-t; cars: root.home-fl-cars;
-            palm-l: root.home-fl-palm-l; palm-r: root.home-fl-palm-r;
+            palm-il: root.home-fl-palm-il; palm-ir: root.home-fl-palm-ir;
             HomeGrid {
                 items: root.home-items;
                 data: root.weather;

@@ -421,6 +421,13 @@ component AlarmChips inherits Rectangle {
         y: root.height - 22px; height: 22px; background: @linear-gradient(180deg, root.fade-to.with-alpha(0) 0%, root.fade-to 100%); }
 }
 
+// The palms' pictures (each palm's 33 frames in one picture), loaded once and kept, so a scene coming back never loads
+// them again.
+global SwPalms {
+    out property <image> l: @image-url("timers/sw/palms-l.png");
+    out property <image> r: @image-url("timers/sw/palms-r.png");
+}
+
 // The synthwave scene: sky, floor with lines gliding towards the viewer, a shooting star now and then
 // (stars scene), pixel cars pulling away, swaying palms (beach). Used by the timers page and, with a
 // day / night crossfade, by the home page background.
@@ -437,10 +444,8 @@ export component SynthScene inherits Rectangle {
     in property <color> grid;              // the moving floor lines
     in property <float> t;                 // seconds (the floor glides 1.2 line spacings per second)
     in property <[SwCar]> cars;
-    in property <image> palm-l;
-    in property <image> palm-r;
-    in property <image> palm-l2;           // the next frame, over the first at the fraction (smooth sway)
-    in property <image> palm-r2;
+    in property <int> palm-il: 16;         // each palm's frame (0 full left lean … 16 upright … 32 full right lean); the next
+    in property <int> palm-ir: 16;         // frame lies over it at the fraction (smooth sway)
     in property <float> palm-lk;
     in property <float> palm-rk;
     in property <float> star-k: 1;         // shooting star strength (home page: only at night)
@@ -591,11 +596,23 @@ export component SynthScene inherits Rectangle {
             }
         }
     }
-    // swaying palms (beach)
-    if root.scene == 2: Image { x: -34px; y: 112px; width: 210px; height: 300px; source: root.palm-l; }
-    if root.scene == 2: Image { x: -34px; y: 112px; width: 210px; height: 300px; source: root.palm-l2; opacity: root.palm-lk; }
-    if root.scene == 2: Image { x: 304px; y: 112px; width: 210px; height: 300px; source: root.palm-r; }
-    if root.scene == 2: Image { x: 304px; y: 112px; width: 210px; height: 300px; source: root.palm-r2; opacity: root.palm-rk; }
+    // swaying palms (beach). Each palm's 33 frames are one picture: two rows (frames 0-16 and 17-32) of 188 x 300 px
+    // cells (the columns any frame uses, 2 clear ones on both sides) with each frame's top and bottom rows repeated
+    // 2 px above and below; a new frame only moves the window into the picture, so nothing is made or sent to the GPU
+    // anew. The lower frame takes the kept picture; the upper one reads it again when it is first drawn, and so gets
+    // the copy the lower one has just put on the GPU.
+    if root.scene == 2: Image { x: -20px; y: 112px; width: 188px; height: 300px;
+        source: SwPalms.l;
+        source-clip-x: Math.mod(root.palm-il, 17) * 188; source-clip-y: Math.floor(root.palm-il / 17) * 304 + 2; source-clip-width: 188; source-clip-height: 300; }
+    if root.scene == 2: Image { x: -20px; y: 112px; width: 188px; height: 300px; opacity: root.palm-lk;
+        source: root.scene == 2 ? @image-url("timers/sw/palms-l.png") : @image-url("");
+        source-clip-x: Math.mod(root.palm-il + 1, 17) * 188; source-clip-y: Math.floor((root.palm-il + 1) / 17) * 304 + 2; source-clip-width: 188; source-clip-height: 300; }
+    if root.scene == 2: Image { x: 312px; y: 112px; width: 188px; height: 300px;
+        source: SwPalms.r;
+        source-clip-x: Math.mod(root.palm-ir, 17) * 188; source-clip-y: Math.floor(root.palm-ir / 17) * 304 + 2; source-clip-width: 188; source-clip-height: 300; }
+    if root.scene == 2: Image { x: 312px; y: 112px; width: 188px; height: 300px; opacity: root.palm-rk;
+        source: root.scene == 2 ? @image-url("timers/sw/palms-r.png") : @image-url("");
+        source-clip-x: Math.mod(root.palm-ir + 1, 17) * 188; source-clip-y: Math.floor((root.palm-ir + 1) / 17) * 304 + 2; source-clip-width: 188; source-clip-height: 300; }
 }
 
 // One timer's menu (spec 34): where the plain and synthwave grids show several timers, a tap on one opens it over its
@@ -716,10 +733,8 @@ export component TimersPage inherits Rectangle {
     in property <image> sw-floor;
     in property <float> sw-t;             // seconds
     in property <[SwCar]> sw-cars;
-    in property <image> sw-palm-l;
-    in property <image> sw-palm-r;
-    in property <image> sw-palm-l2;
-    in property <image> sw-palm-r2;
+    in property <int> sw-palm-il: 16;
+    in property <int> sw-palm-ir: 16;
     in property <float> sw-palm-lk;
     in property <float> sw-palm-rk;
     // alarm editor (new alarm or a tap on one) and its keyboard for the label
@@ -1165,7 +1180,7 @@ export component TimersPage inherits Rectangle {
     if root.synth: syn := Rectangle {
         SynthScene { back: root.sw-back; floor: root.sw-floor; scene: root.sw-scene; grid: root.grid; t: root.sw-t; cars: root.sw-cars;
             pulse-t: root.pre-ring && root.ring-theme == 3 ? root.ring-t : -1;
-            palm-l: root.sw-palm-l; palm-r: root.sw-palm-r; palm-l2: root.sw-palm-l2; palm-r2: root.sw-palm-r2; palm-lk: root.sw-palm-lk; palm-rk: root.sw-palm-rk; }
+            palm-il: root.sw-palm-il; palm-ir: root.sw-palm-ir; palm-lk: root.sw-palm-lk; palm-rk: root.sw-palm-rk; }
 
         // one timer: a big tube, the controls at the bottom
         if root.n == 1 && !root.quick: Rectangle {

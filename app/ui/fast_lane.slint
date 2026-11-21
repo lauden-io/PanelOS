@@ -22,17 +22,15 @@ export component FastLane inherits Rectangle {
     in property <float> star-k;           // shooting star: how much night it is
     in property <float> t;                // seconds, for the floor lines and the shooting star
     in property <[SwCar]> cars;           // empty when the cars are switched off
-    in property <image> palm-l;
-    in property <image> palm-r;
-    in property <image> palm-l2;
-    in property <image> palm-r2;
-    in property <float> palm-lk;
+    in property <int> palm-il: 16;        // each palm's frame (0 full left lean … 16 upright … 32 full right lean) …
+    in property <int> palm-ir: 16;
+    in property <float> palm-lk;          // … and how far it is on its way to the next one
     in property <float> palm-rk;
-    background: #07020f;
+    // (no ground of its own: the sky and the floor pictures cover it, opaque)
 
     SynthScene {
         back: root.back-a; floor: root.floor-a; back2: root.back-b; floor2: root.floor-b; mix: root.mix; back3: root.back-c; floor3: root.floor-c; mix3: root.mix-c;
-        scene: root.scene; grid: root.grid; t: root.t; cars: root.cars; palm-l: root.palm-l; palm-r: root.palm-r; palm-l2: root.palm-l2; palm-r2: root.palm-r2; palm-lk: root.palm-lk; palm-rk: root.palm-rk;
+        scene: root.scene; grid: root.grid; t: root.t; cars: root.cars; palm-il: root.palm-il; palm-ir: root.palm-ir; palm-lk: root.palm-lk; palm-rk: root.palm-rk;
         star-k: root.star-k;
         taps: true;
     }
