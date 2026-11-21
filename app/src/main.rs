@@ -490,6 +490,24 @@ fn apply_music_hold(s: &mut UiState, player: &str, music: &mut HomeMusic) {
     }
 }
 
+/// Play or pause pressed on the panel for `player` (the play key, the turntable's arm): the glyph turns at once on every
+/// page and widget of that player; the player's next state confirms it, or after 3 s the views show its real state
+/// again. A pause holds the position of this moment (taken from the player's state now, as every view counts it).
+fn hold_play_state(ui: &AppWindow, player: &str, playing: bool) {
+    with_state(|s| {
+        let pos = pages::home_music(&s.states, player, None, slint::Color::default()).pos;
+        s.music_hold = Some((player.to_string(), playing, Instant::now(), pos));
+        s.music_skip = None;
+        update_music(ui, s, false);
+    });
+    let weak = ui.as_weak();
+    slint::Timer::single_shot(Duration::from_secs(3), move || {
+        if let Some(ui) = weak.upgrade() {
+            refresh_pages(&ui);
+        }
+    });
+}
+
 /// Next / previous pressed on the panel: for up to 3 s the page keeps the play state it had (a player between two
 /// tracks says paused or buffering for a moment), and once the new track has shown, the old one does not come back
 /// (a player may report the old track again for a moment while it changes).
@@ -695,12 +713,11 @@ fn update_music(ui: &AppWindow, s: &mut UiState, full: bool) -> Vec<(String, Opt
             d.dur = music.dur;
             d.player = music.player.clone();
             d.has_art = music.has_art;
-            if let Some(img) = &art.img {
-                d.art = img.clone();
-            }
-            if let Some(bg) = &art.bg {
-                d.art_bg = bg.clone();
-            }
+            // the cover and its blurred copy are the shown player's: a player without one (or before its cover has
+            // come) leaves none of the player shown before (the plain look's and the cassette's backdrops show it
+            // without asking has_art)
+            d.art = art.img.clone().unwrap_or_default();
+            d.art_bg = if art.img.is_some() { art.bg.clone().unwrap_or_default() } else { slint::Image::default() };
             // the music page takes the cover's colour (the record, the accents), else the panel's
             d.accent = if music.has_art { cover } else { panel_accent };
             // the record: the cover's own colour as it is
@@ -1417,6 +1434,9 @@ fn apply_panel_config(ui: &AppWindow) {
         let same = shown.row_count() == slots.len() && slots.iter().enumerate().all(|(i, p)| shown.row_data(i).as_ref() == Some(p));
         if !same && s.temp_page.is_none() {
             ui.set_pages(ModelRc::new(VecModel::from(slots.clone())));
+            // a drag a page held for itself (a slider, the turntable's arm) ends with the page it was on: the pages
+            // swipe again
+            ui.global::<Act>().set_hold_swipe(false);
             rewarm(ui);
         }
         if current as usize >= slots.len() {
@@ -2867,7 +2887,8 @@ pub fn page_set(ui: &AppWindow, kind: &str, variant: Option<i32>, options: Value
 
 /// The same for the page at `cfg` in the integration's list: the pager's slot takes the look at once, the panel's copy
 /// of the settings the look and the options (so every view made from them shows the change before the integration's
-/// answer), and the integration keeps them.
+/// answer), and the integration keeps them. Until the integration's settings carry it, the change holds over older
+/// copies that come back meanwhile (`keep_page_sets`); development settings over Home Assistant's take it too.
 pub fn page_set_at(ui: &AppWindow, cfg: usize, variant: Option<i32>, options: Value) {
     let pages = ui.get_pages();
     if let Some(v) = variant {
@@ -2879,11 +2900,86 @@ pub fn page_set_at(ui: &AppWindow, cfg: usize, variant: Option<i32>, options: Va
         }
     }
     with_state(|s| {
-        if let Some(page) = s.panel_config.as_mut().and_then(|c| c.get_mut("pages")).and_then(Value::as_array_mut).and_then(|a| a.get_mut(cfg)) {
+        if let Some(page) = config_page_mut(s.panel_config.as_mut(), cfg) {
+            apply_page_set(page, variant, &options);
+            let kind = page.get("kind").and_then(Value::as_str).unwrap_or("").to_string();
+            PAGE_SETS.with(|p| p.borrow_mut().push(HeldPageSet { cfg, kind, variant, options: options.clone(), at: Instant::now() }));
+        }
+        if let Some(page) = config_page_mut(s.dev_config.as_mut(), cfg) {
             apply_page_set(page, variant, &options);
         }
     });
     send(Command::PageSet { index: cfg, variant, options });
+}
+
+/// The page at `cfg` in a copy of the integration's settings.
+fn config_page_mut(config: Option<&mut Value>, cfg: usize) -> Option<&mut Value> {
+    config?.get_mut("pages")?.as_array_mut()?.get_mut(cfg)
+}
+
+/// How long a page setting made on the panel holds over Home Assistant's settings that do not carry it yet.
+const PAGE_SET_HOLD: Duration = Duration::from_secs(10);
+
+/// A page setting made on the panel, sent to Home Assistant and not seen back yet.
+struct HeldPageSet {
+    /// The page's place in the integration's list, and its kind (another page there now does not take it).
+    cfg: usize,
+    kind: String,
+    variant: Option<i32>,
+    options: Value,
+    at: Instant,
+}
+
+thread_local! {
+    static PAGE_SETS: RefCell<Vec<HeldPageSet>> = const { RefCell::new(Vec::new()) };
+    /// The integration's settings as the panel last kept them (`panel-config.json`).
+    static SAVED_PANEL_CONFIG: RefCell<Option<Value>> = const { RefCell::new(None) };
+}
+
+/// Settings from Home Assistant: page settings made on the panel a moment ago and not in them yet stay (a copy sent
+/// before the integration had them, or one a new connection got before the old one's request arrived, must not take
+/// the page back to what it was); once a setting is in, or after `PAGE_SET_HOLD`, it is not held any more.
+fn keep_page_sets(config: &mut Option<Value>) {
+    PAGE_SETS.with(|held| {
+        let mut held = held.borrow_mut();
+        held.retain(|h| h.at.elapsed() < PAGE_SET_HOLD);
+        let Some(pages) = config.as_mut().and_then(|c| c.get_mut("pages")).and_then(Value::as_array_mut) else { return };
+        held.retain(|h| {
+            let Some(page) = pages.get_mut(h.cfg).filter(|p| p.get("kind").and_then(Value::as_str) == Some(h.kind.as_str())) else {
+                // the list changed meanwhile: that page is not there any more
+                return false;
+            };
+            if page_carries(page, h.variant, &h.options) {
+                return false;
+            }
+            eprintln!("nspanel-app: page {} ({}): the setting made on the panel kept over older settings from Home Assistant", h.cfg, h.kind);
+            apply_page_set(page, h.variant, &h.options);
+            true
+        });
+    });
+}
+
+/// Whether a page's settings already have a `page_set` (the look, the entities, the options; null: the option gone).
+fn page_carries(page: &Value, variant: Option<i32>, options: &Value) -> bool {
+    // numbers by value (3 and 3.0 are the same setting)
+    let same = |a: &Value, b: &Value| match (a.as_f64(), b.as_f64()) {
+        (Some(x), Some(y)) => x == y,
+        _ => a == b,
+    };
+    if variant.is_some_and(|v| pages::variant_of(page) != v) {
+        return false;
+    }
+    options.as_object().map_or(true, |o| {
+        o.iter().all(|(key, value)| {
+            if key == "entities" {
+                page.get("entities").is_some_and(|e| same(e, value))
+            } else if value.is_null() {
+                pages::option_of(page, key).is_none()
+            } else {
+                pages::option_of(page, key).is_some_and(|v| same(v, value))
+            }
+        })
+    })
 }
 
 /// A page's settings with a `page_set` applied: the look, and the options (null removes one).
@@ -3132,13 +3228,16 @@ fn handle_event(ui: &AppWindow, event: Event) {
                     s.settings.save();
                 }
                 if let Some(c) = &config {
-                    if s.panel_config.as_ref() != Some(c) {
+                    // (compared with the copy kept last: the panel's own copy may already have a change made on it)
+                    if SAVED_PANEL_CONFIG.with(|k| k.borrow().as_ref() != Some(c)) {
                         settings::save_panel_config(c);
+                        SAVED_PANEL_CONFIG.with(|k| *k.borrow_mut() = Some(c.clone()));
                     }
                 }
                 s.panel_config = config;
-                // widgets changed on the panel a moment ago stay until Home Assistant has them
+                // widgets and page settings changed on the panel a moment ago stay until Home Assistant has them
                 home_edit::keep_pending(&mut s.panel_config);
+                keep_page_sets(&mut s.panel_config);
                 // Development settings stay on top of what Home Assistant sends.
                 if let Some(dev) = s.dev_config.clone() {
                     overlay(&mut s.panel_config, &dev);
@@ -4212,28 +4311,17 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
             match what {
                 "music.play" => {
                     call("media_player", "media_play_pause", &entity, json!({}));
-                    // the glyph turns at once; the player's next state confirms it, or after 3 s the
-                    // views show its real state again. A pause holds the position of this moment (the widget's
-                    // struct keeps the one of its last full refresh: the running time has its own property).
-                    let playing = !shown.playing;
-                    let pos = with_state(|s| pages::home_music(&s.states, &entity, None, shown.accent).pos);
-                    let held = (entity.clone(), playing, Instant::now(), pos);
-                    with_state(|s| {
-                        s.music_hold = Some(held);
-                        s.music_skip = None;
-                        // every page and widget of that player shows it at once
-                        update_music(ui, s, false);
-                    });
-                    let weak = ui.as_weak();
-                    slint::Timer::single_shot(Duration::from_secs(3), move || {
-                        if let Some(ui) = weak.upgrade() {
-                            refresh_pages(&ui);
-                        }
-                    });
+                    hold_play_state(ui, &entity, !shown.playing);
                 }
                 // the turntable's arm: dropped on its rest pauses, dropped on the record plays
-                "music.pause" => call("media_player", "media_pause", &entity, json!({})),
-                "music.resume" => call("media_player", "media_play", &entity, json!({})),
+                "music.pause" => {
+                    call("media_player", "media_pause", &entity, json!({}));
+                    hold_play_state(ui, &entity, false);
+                }
+                "music.resume" => {
+                    call("media_player", "media_play", &entity, json!({}));
+                    hold_play_state(ui, &entity, true);
+                }
                 "music.next" | "music.prev" => {
                     call("media_player", if what == "music.next" { "media_next_track" } else { "media_previous_track" }, &entity, json!({}));
                     let playing = shown.playing;
@@ -4574,7 +4662,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             wake_words: wake_words.clone(),
             player: player.clone(),
             voice_hide_at: None,
-            panel_config: settings::load_panel_config(),
+            panel_config: {
+                let stored = settings::load_panel_config();
+                SAVED_PANEL_CONFIG.with(|k| *k.borrow_mut() = stored.clone());
+                stored
+            },
             linked_at: None,
             held_states: HashMap::new(),
             forecast_hourly: Vec::new(),
@@ -5264,6 +5356,73 @@ mod tests {
         apply_page_set(page, None, &json!({ "groups": null, "entities": ["light.c"] }));
         assert!(config["pages"][0]["options"].get("groups").is_none());
         assert_eq!(config["pages"][0]["entities"], json!(["light.c"]));
+    }
+
+    fn hold(cfg: usize, kind: &str, variant: Option<i32>, options: Value, ago: Duration) -> Option<HeldPageSet> {
+        let at = Instant::now().checked_sub(ago)?;
+        Some(HeldPageSet { cfg, kind: kind.into(), variant, options, at })
+    }
+
+    #[test]
+    fn a_player_picked_on_the_panel_holds_over_older_settings() {
+        PAGE_SETS.with(|p| p.borrow_mut().clear());
+        // "Play on" on the second music page (the list's third page): b instead of a
+        let held = hold(2, "music", None, json!({ "entities": ["media_player.b"] }), Duration::ZERO).unwrap();
+        PAGE_SETS.with(|p| p.borrow_mut().push(held));
+        let older = || {
+            Some(json!({ "pages": [
+                { "kind": "home", "entities": ["media_player.a"] },
+                { "kind": "music", "entities": ["media_player.a"] },
+                { "kind": "music", "entities": ["media_player.a"] },
+            ] }))
+        };
+        // a copy from before the integration had it (or one a new connection got first): the pick stays, on its page only
+        let mut config = older();
+        keep_page_sets(&mut config);
+        assert_eq!(config.as_ref().unwrap()["pages"][2]["entities"], json!(["media_player.b"]));
+        assert_eq!(config.as_ref().unwrap()["pages"][1]["entities"], json!(["media_player.a"]));
+        assert_eq!(config.as_ref().unwrap()["pages"][0]["entities"], json!(["media_player.a"]));
+        assert_eq!(PAGE_SETS.with(|p| p.borrow().len()), 1);
+        // the integration's settings with it: nothing is held any more, a later change there counts again
+        let mut config = older();
+        config.as_mut().unwrap()["pages"][2]["entities"] = json!(["media_player.b"]);
+        keep_page_sets(&mut config);
+        assert_eq!(PAGE_SETS.with(|p| p.borrow().len()), 0);
+        let mut config = older();
+        keep_page_sets(&mut config);
+        assert_eq!(config.as_ref().unwrap()["pages"][2]["entities"], json!(["media_player.a"]));
+    }
+
+    #[test]
+    fn a_held_page_setting_goes_with_another_page_or_after_its_time() {
+        PAGE_SETS.with(|p| p.borrow_mut().clear());
+        let held = hold(1, "music", Some(3), Value::Null, Duration::ZERO).unwrap();
+        PAGE_SETS.with(|p| p.borrow_mut().push(held));
+        // the list changed in the integration: another kind is at that place now, it keeps its own look
+        let mut config = Some(json!({ "pages": [{ "kind": "home" }, { "kind": "timers", "variant": 1 }] }));
+        keep_page_sets(&mut config);
+        assert_eq!(config.as_ref().unwrap()["pages"][1]["variant"], 1);
+        assert_eq!(PAGE_SETS.with(|p| p.borrow().len()), 0);
+        // an answer that never comes: Home Assistant's settings count again after the hold
+        if let Some(old) = hold(1, "music", Some(3), Value::Null, PAGE_SET_HOLD + Duration::from_secs(1)) {
+            PAGE_SETS.with(|p| p.borrow_mut().push(old));
+            let mut config = Some(json!({ "pages": [{ "kind": "home" }, { "kind": "music", "variant": 0 }] }));
+            keep_page_sets(&mut config);
+            assert_eq!(config.as_ref().unwrap()["pages"][1]["variant"], 0);
+            assert_eq!(PAGE_SETS.with(|p| p.borrow().len()), 0);
+        }
+    }
+
+    #[test]
+    fn a_page_carries_a_setting_by_value() {
+        let page = json!({ "kind": "music", "variant": 3, "entities": ["media_player.b"], "options": { "scroll_speed": 3.0, "scroll": true } });
+        assert!(page_carries(&page, Some(3), &json!({ "entities": ["media_player.b"] })));
+        assert!(!page_carries(&page, Some(2), &Value::Null));
+        assert!(!page_carries(&page, None, &json!({ "entities": ["media_player.a"] })));
+        // 3 and 3.0 are the same setting; an option set to null is carried by its absence
+        assert!(page_carries(&page, None, &json!({ "scroll_speed": 3, "cover_blur": null })));
+        assert!(!page_carries(&page, None, &json!({ "scroll": null })));
+        assert!(!page_carries(&page, None, &json!({ "holds": 1 })));
     }
 
     #[test]

@@ -104,6 +104,106 @@ component Bar inherits Rectangle {
     }
 }
 
+// The cassette's volume: a press held still for half a second takes the bar (its thumb grows meanwhile); then the
+// thumb follows the finger left and right, as the touch slider's (28.2), and the pages do not turn until the finger
+// lifts. A tap anywhere on the bar sets that point. A press that moves before the half second is a page swipe (or
+// nothing): it never changes the volume. The value goes when the finger lifts; the bar keeps it until the player
+// follows (or 3 s), then eases out like the other bars.
+component HoldBar inherits Rectangle {
+    in property <float> value;
+    in property <color> fill;
+    in property <color> track;
+    in property <color> knob;
+    callback done(float);
+    property <float> drag-v;
+    // the bar is held (after the half second), or the press moved first (not the bar's)
+    property <bool> armed;
+    property <bool> moved-off;
+    property <duration> press-t;
+    property <bool> holding;
+    property <float> v0;
+    property <float> off;
+    property <duration> off-t;
+    property <bool> easing;
+    property <float> off-p: root.easing ? Math.min(1, (animation-tick() - root.off-t) / 300ms) : 1;
+    property <float> eased: root.value + root.off * (1 - Root-ease.f(root.off-p));
+    function let-go() {
+        root.off = root.drag-v - root.value;
+        root.off-t = animation-tick();
+        root.easing = true;
+        root.holding = false;
+    }
+    function set-at(v: float) {
+        root.drag-v = v;
+        root.v0 = root.value;
+        root.holding = true;
+        root.done(v);
+    }
+    changed value => { if root.holding && Math.abs(root.value - root.v0) > 0.004 { root.let-go(); } }
+    Timer { interval: 3s; running: root.holding; triggered => { root.let-go(); } }
+    Timer { interval: 50ms; running: root.easing; triggered => { if root.off-p >= 1 { root.easing = false; } } }
+    // the pager hands a still press over after 100 ms: 400 ms more make the half second from the touch
+    Timer {
+        interval: 400ms;
+        running: touch.pressed && !root.armed && !root.moved-off;
+        triggered => {
+            root.armed = true;
+            Act.hold-swipe = true;
+            root.easing = false;
+            root.gliding = true;
+            root.drag-v = root.at(touch.mouse-x);
+        }
+    }
+    // taking the bar and a tap glide the thumb to the finger (180 ms, as the touch slider's first touch); a drag follows
+    // it at once
+    property <bool> gliding;
+    Timer { interval: 200ms; running: root.gliding; triggered => { root.gliding = false; } }
+    property <float> shown-raw: root.armed || root.holding ? root.drag-v : root.eased;
+    out property <float> shown: root.shown-raw;
+    animate shown { duration: root.gliding ? 180ms : 0ms; easing: cubic-bezier(0.33, 1, 0.68, 1); }
+    pure function at(x: length) -> float { max(0, min(1, (x - 10px) / root.width)) }
+    height: 4px; border-radius: 2px; background: root.track;
+    Rectangle { x: 0; width: parent.width * root.shown; border-radius: 2px; background: root.fill; }
+    // the thumb grows from 0 to 12 px over the hold (no thumb at rest, M14), stays while held and after the release
+    property <float> arm-p: !touch.pressed || root.moved-off ? 0 : root.armed ? 1 : Math.min(1, (animation-tick() - root.press-t) / 400ms);
+    property <length> ks-rest: root.armed || root.holding ? 12px : 0px;
+    animate ks-rest { duration: 140ms; easing: ease-out; }
+    property <length> ks: max(root.ks-rest, 12px * root.arm-p);
+    if root.ks > 0.5px: Rectangle { x: parent.width * root.shown - root.ks / 2; y: 2px - root.ks / 2; width: root.ks; height: root.ks; border-radius: root.ks / 2; background: root.knob; }
+    touch := TouchArea {
+        x: -10px; y: -16px; width: parent.width + 20px; height: parent.height + 32px;
+        pointer-event(ev) => {
+            if ev.kind == PointerEventKind.down {
+                root.armed = false;
+                root.moved-off = false;
+                root.press-t = animation-tick();
+            } else if ev.kind == PointerEventKind.up {
+                if root.armed {
+                    Act.hold-swipe = false;
+                    root.armed = false;
+                    root.set-at(root.drag-v);
+                } else if !root.moved-off && max(Math.abs((self.mouse-x - self.pressed-x) / 1px), Math.abs((self.mouse-y - self.pressed-y) / 1px)) <= 8 {
+                    // a tap: the volume of the point touched
+                    root.easing = false;
+                    root.gliding = true;
+                    root.set-at(root.at(self.pressed-x));
+                }
+            } else if ev.kind == PointerEventKind.cancel {
+                if root.armed { Act.hold-swipe = false; }
+                root.armed = false;
+            }
+        }
+        moved => {
+            if root.armed {
+                root.gliding = false;
+                root.drag-v = root.at(self.mouse-x);
+            } else if !root.moved-off && max(Math.abs((self.mouse-x - self.pressed-x) / 1px), Math.abs((self.mouse-y - self.pressed-y) / 1px)) > 8 {
+                root.moved-off = true;
+            }
+        }
+    }
+}
+
 // [elapsed][—— bar ——][remaining] and [speaker 37 %][—— bar ——]: both bars equally long.
 component BarRows inherits Rectangle {
     in property <float> pos;
@@ -774,19 +874,27 @@ export component MusicPage inherits Rectangle {
         Rectangle { x: (cs.ox + 4.6 * cs.k) * 1px; y: (cs.oy + 20.1 * cs.k) * 1px; width: min(cs.label-r - self.x, 91.2 * cs.k * 1px); height: 0.8 * cs.k * 1px; background: root.acc.darker(0.3); }
         Rectangle { x: (cs.ox + 4.6 * cs.k) * 1px; y: (cs.oy + 21.5 * cs.k) * 1px; width: min(cs.label-r - self.x, 91.2 * cs.k * 1px); height: 0.8 * cs.k * 1px; background: root.acc.brighter(0.35); }
 
-        // full cassette: times + controls + volume below
-        if !cs.half: BarRows { pos: root.pos-live; dur: 0; volume: root.volume; row1: -100px; row2: 443px;
-            fill: root.acc; vol-fill: #ffffffcc; track: #ffffff33; knob: #ffffff; ink: #ffffff; soft: #ffffff9e; }
-        if !cs.half && !root.live: Text { x: 20px; y: 376px; width: 64px; height: 20px; text: self.mmss(root.pos-live); font-size: 13px; color: #ffffff9e; horizontal-alignment: right; vertical-alignment: center;
+        // full cassette: times + controls + volume below, clear of the page dots (y 458): the keys' row centred at
+        // y 376, the volume row at y 432 (its touch reaches y 450)
+        if !cs.half && !root.live: Text { x: 20px; y: 366px; width: 64px; height: 20px; text: self.mmss(root.pos-live); font-size: 13px; color: #ffffff9e; horizontal-alignment: right; vertical-alignment: center;
             pure function two(n: int) -> string { (n < 10 ? "0" : "") + n }
             pure function mmss(t: float) -> string { t >= 3600 ? Math.floor(t / 3600) + ":" + self.two(Math.mod(Math.floor(t / 60), 60)) + ":" + self.two(Math.mod(Math.floor(t), 60)) : Math.floor(t / 60) + ":" + self.two(Math.mod(Math.floor(t), 60)) }
         }
-        if !cs.half && !root.live: Text { x: 396px; y: 376px; width: 64px; height: 20px; text: "−" + self.mmss(max(0, root.dur - root.pos-live)); font-size: 13px; color: #ffffff9e; vertical-alignment: center;
+        if !cs.half && !root.live: Text { x: 396px; y: 366px; width: 64px; height: 20px; text: "−" + self.mmss(max(0, root.dur - root.pos-live)); font-size: 13px; color: #ffffff9e; vertical-alignment: center;
             pure function two(n: int) -> string { (n < 10 ? "0" : "") + n }
             pure function mmss(t: float) -> string { t >= 3600 ? Math.floor(t / 3600) + ":" + self.two(Math.mod(Math.floor(t / 60), 60)) + ":" + self.two(Math.mod(Math.floor(t), 60)) : Math.floor(t / 60) + ":" + self.two(Math.mod(Math.floor(t), 60)) }
         }
-        if !cs.half: Controls { y: 354px; width: root.width; height: 64px; play: 64px; spacing: 12px; playing: root.playing; key: true; shuffle: root.shuffle; repeat: root.repeat; live: root.live;
+        if !cs.half: Controls { y: 344px; width: root.width; height: 64px; play: 64px; spacing: 12px; playing: root.playing; key: true; shuffle: root.shuffle; repeat: root.repeat; live: root.live;
             accent: root.acc.mix(#ffffff, 0.8); play-bg: root.acc; }
+        // [speaker][—— bar ——][37 %] with the plain look's columns (BarRows); the bar is held before it drags
+        if !cs.half: Rectangle {
+            property <length> vrow: 432px;
+            // M15: the shade's speaker (27.3) and the value follow the finger while the bar is held
+            VolumeIcon { x: 62px; y: parent.vrow - 11px; width: 22px; height: 22px; v: vbar.shown; ink: #ffffff9e; }
+            vbar := HoldBar { x: 96px; y: parent.vrow - 2px; width: 288px; value: root.volume; fill: #ffffffcc; track: #ffffff33; knob: #ffffff;
+                done(v) => { Act.act("music.volume", v); } }
+            Text { x: 396px; y: parent.vrow - 10px; width: 64px; height: 20px; text: Math.round(vbar.shown * 100) + "%"; font-size: 13px; color: #ffffff9e; vertical-alignment: center; }
+        }
 
         // half cassette: the right half slides under the control panel
         if cs.half: Rectangle {
@@ -806,12 +914,16 @@ export component MusicPage inherits Rectangle {
             }
             Rectangle {
                 x: (parent.width - 72px) / 2; y: 158px; width: 72px; height: 72px; border-radius: 36px; background: root.acc;
+                opacity: half-play.pressed ? 0.75 : 1;
                 PlayGlyph { width: parent.width; height: parent.height; playing: root.playing; ink: #ffffff; }
+                half-play := TouchArea { clicked => { Act.act("music.play", ""); } }
             }
-            Ctl { x: parent.width / 2 - 56px; y: 246px; size: 48px; icon-size: 34px; icon: "\u{F04AE}"; }
-            Ctl { x: parent.width / 2 + 8px; y: 246px; size: 48px; icon-size: 34px; icon: "\u{F04AD}"; }
-            Ctl { x: parent.width / 2 - 52px; y: 306px; size: 40px; icon-size: 22px; icon: "\u{F049F}"; toggle: true; on: root.shuffle; accent: root.acc.mix(#ffffff, 0.8); opacity: root.live ? 0 : 1; }
-            Ctl { x: parent.width / 2 + 12px; y: 306px; size: 40px; icon-size: 22px; icon: root.repeat == 2 ? "\u{F0458}" : "\u{F0456}"; toggle: true; on: root.repeat > 0; accent: root.acc.mix(#ffffff, 0.8); opacity: root.live ? 0 : 1; }
+            Ctl { x: parent.width / 2 - 56px; y: 246px; size: 48px; icon-size: 34px; icon: "\u{F04AE}"; act: "music.prev"; }
+            Ctl { x: parent.width / 2 + 8px; y: 246px; size: 48px; icon-size: 34px; icon: "\u{F04AD}"; act: "music.next"; }
+            Ctl { x: parent.width / 2 - 52px; y: 306px; size: 40px; icon-size: 22px; icon: "\u{F049F}"; toggle: true; on: root.shuffle; accent: root.acc.mix(#ffffff, 0.8); opacity: root.live ? 0 : 1;
+                act: root.live ? "" : "music.shuffle"; }
+            Ctl { x: parent.width / 2 + 12px; y: 306px; size: 40px; icon-size: 22px; icon: root.repeat == 2 ? "\u{F0458}" : "\u{F0456}"; toggle: true; on: root.repeat > 0; accent: root.acc.mix(#ffffff, 0.8); opacity: root.live ? 0 : 1;
+                act: root.live ? "" : "music.repeat"; }
             Icon { x: 8px; y: 370px; width: 20px; height: 20px; text: root.volume <= 0 ? "\u{F0581}" : root.volume > 0.6 ? "\u{F057E}" : root.volume > 0.25 ? "\u{F0580}" : "\u{F057F}"; font-size: 18px; color: #ffffff9e; }
             Bar { x: 36px; y: 378px; width: parent.width - 36px - 46px; value: root.volume; fill: #ffffffcc; track: #ffffff33; knob: #ffffff; grow: true;
                 done(v) => { Act.act("music.volume", v); } }

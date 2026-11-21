@@ -301,7 +301,14 @@ fn session(
     let mut report = Report::default();
     // timer starts asked of Home Assistant: request id -> (seconds, name), so a refused one runs on the panel
     let mut timer_starts: std::collections::HashMap<u64, (u32, String)> = std::collections::HashMap::new();
+    // page settings sent and not answered yet (request ids): a new session asked for meanwhile waits for their answers
+    // (at most 2 s), so a setting made on the panel just before is not lost with this connection
+    let mut page_sets: Vec<u64> = Vec::new();
+    let mut reload_at: Option<Instant> = None;
     loop {
+        if reload_at.is_some_and(|t| page_sets.is_empty() || Instant::now() >= t) {
+            return Ok(());
+        }
         while let Ok(cmd) = commands.try_recv() {
             match cmd {
                 Command::CallService { domain, service, entity_id, data } => {
@@ -318,7 +325,10 @@ fn session(
                     msg["id"] = json!(next_id);
                     send_json(&mut ws, &msg)?;
                 }
-                Command::Reload => return Ok(()),
+                Command::Reload if page_sets.is_empty() => return Ok(()),
+                Command::Reload => {
+                    reload_at.get_or_insert(Instant::now() + Duration::from_secs(2));
+                }
                 Command::ListDashboards => {
                     next_id += 1;
                     dashboards_request = Some(next_id);
@@ -385,6 +395,7 @@ fn session(
                         }
                     }
                     send_json(&mut ws, &msg)?;
+                    page_sets.push(next_id);
                 }
             }
         }
@@ -451,6 +462,12 @@ fn session(
                                 eprintln!("nspanel-app: Home Assistant did not start the timer ({}): the panel runs it", msg["error"]["message"]);
                                 emit(Event::TimerRefused { seconds, name });
                             }
+                        }
+                    }
+                    Some("result") if msg["id"].as_u64().is_some_and(|id| page_sets.contains(&id)) => {
+                        page_sets.retain(|id| msg["id"].as_u64() != Some(*id));
+                        if msg["success"] != true {
+                            eprintln!("nspanel-app: page setting not accepted: {}", msg["error"]["message"]);
                         }
                     }
                     Some("event") if msg["id"] == notes_id => {
