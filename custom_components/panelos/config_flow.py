@@ -10,6 +10,7 @@ from homeassistant.config_entries import ConfigEntry, ConfigFlow, ConfigFlowResu
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import selector
 
+from .panel import checked_panel_id
 from .resources import async_resources
 
 from .const import (
@@ -121,17 +122,23 @@ class PanelOSConfigFlow(ConfigFlow, domain=DOMAIN):
     VERSION = 1
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            panel_id = user_input[CONF_PANEL_ID].strip()
-            await self.async_set_unique_id(panel_id)
-            self._abort_if_unique_id_configured()
-            data = {CONF_PANEL_ID: panel_id}
-            options = {k: v for k, v in user_input.items() if k != CONF_PANEL_ID}
-            return self.async_create_entry(title=f"PanelOS ({panel_id})", data=data, options=options)
-        schema = vol.Schema({vol.Required(CONF_PANEL_ID, default=DEFAULT_PANEL_ID): str}).extend(
-            _assistant_schema({}).schema
-        )
-        return self.async_show_form(step_id="user", data_schema=schema)
+            # the panel's ID: the name it was given at installation (`nspanel-pro` without one)
+            panel_id = checked_panel_id(user_input[CONF_PANEL_ID])
+            if panel_id is None:
+                errors[CONF_PANEL_ID] = "invalid_panel_id"
+            else:
+                await self.async_set_unique_id(panel_id)
+                self._abort_if_unique_id_configured()
+                data = {CONF_PANEL_ID: panel_id}
+                options = {k: v for k, v in user_input.items() if k != CONF_PANEL_ID}
+                return self.async_create_entry(title=f"PanelOS ({panel_id})", data=data, options=options)
+        # the old fixed ID while no panel uses it, else empty: every further panel has a name of its own
+        used = {entry.data.get(CONF_PANEL_ID) for entry in self._async_current_entries(include_ignore=False)}
+        default = (user_input or {}).get(CONF_PANEL_ID) or ("" if DEFAULT_PANEL_ID in used else DEFAULT_PANEL_ID)
+        schema = vol.Schema({vol.Required(CONF_PANEL_ID, default=default): str}).extend(_assistant_schema({}).schema)
+        return self.async_show_form(step_id="user", data_schema=schema, errors=errors)
 
     @staticmethod
     @callback

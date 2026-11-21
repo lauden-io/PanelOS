@@ -82,7 +82,20 @@ from .notes import Notes
 from .players import async_register_players_view
 from .sounds import async_register_views
 from .page import async_hide_page, async_setup_page, async_show_page, checked_page, split_quick_pages
-from .panel import Panel, alive, find_entry, link_gone, links, may_act, panel_config, panel_user, set_panel_user, voice_player
+from .panel import (
+    Panel,
+    alive,
+    find_entry,
+    link_gone,
+    links,
+    may_act,
+    note_waiting,
+    panel_config,
+    panel_user,
+    serves,
+    set_panel_user,
+    voice_player,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -156,6 +169,9 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
     user and administrators may subscribe (see `_refusal`)."""
     panel_id = msg["panel_id"]
     key = hash((id(connection), msg["id"]))
+    if find_entry(hass, panel_id) is None:
+        # a panel not added yet: the PanelOS page offers its id when a panel is added
+        note_waiting(hass, panel_id)
     if why := _refusal(hass, connection, panel_id):
         connection.send_error(msg["id"], *why)
         return
@@ -175,7 +191,7 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
     @callback
     def config_changed(changed_panel: str) -> None:
-        if not panel_id or changed_panel in (panel_id, ""):
+        if not panel_id or serves(hass, panel_id, changed_panel):
             # the entry removed or added again: asked again as on a new subscription
             if why := _refusal(hass, connection, panel_id):
                 end(*why)
@@ -191,11 +207,8 @@ def ws_subscribe(hass: HomeAssistant, connection: websocket_api.ActiveConnection
 
     @callback
     def show(target: str, request: dict[str, Any]) -> None:
-        # A target is a panel id; a panel that subscribed without one is the
-        # only entry's panel.
-        if not target or target == panel_id or (
-            (entry := find_entry(hass, panel_id)) is not None and panel_config(entry)["panel_id"] == target
-        ):
+        # a target is a panel id ("" = every panel)
+        if serves(hass, panel_id, target):
             connection.send_message(websocket_api.event_message(msg["id"], {"show": request}))
 
     @callback
@@ -524,7 +537,9 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     async def handle_show(call: ServiceCall) -> None:
         request = dict(call.data)
         target = request.pop(CONF_PANEL_ID, "")
+        # the connected panels, by the id they subscribed with and by their entry's
         panels = {pid for pid, _, _ in links(hass).values()}
+        panels |= {panel_config(entry)["panel_id"] for pid in list(panels) if (entry := find_entry(hass, pid)) is not None}
         if not panels or (target and target not in panels):
             raise HomeAssistantError(
                 f"No PanelOS panel is connected{f' as {target}' if target else ''} (connected: {sorted(panels) or 'none'})"

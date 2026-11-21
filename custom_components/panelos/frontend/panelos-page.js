@@ -20,6 +20,8 @@ const ALL_PICTURES_EVERY_MS = 10000;
 const PREVIEW_IDLE_MS = 60000;
 const USE_EVENTS = ["pointermove", "pointerdown", "wheel", "keydown", "touchstart"];
 const SYNC_FALLBACK_MS = 3000;
+// a Panel ID that is not a panel's name (the integration's rule)
+const PANEL_ID_RULE = "A panel's name has letters a-z, digits and hyphens, at most 31 characters.";
 
 const DEFAULT_CAPS = ["touch", "images", "web", "video", "mic", "speaker", "proximity", "light"];
 const CAP_NAMES = {
@@ -6022,12 +6024,29 @@ class PanelOSPage extends HTMLElement {
 
   _startAdd() {
     const used = new Set(this._panels.map((x) => x.settings?.panel_id));
-    this._openSheet({ kind: "add", step: 1, panelId: used.has("nspanel-pro") ? "" : "nspanel-pro", start: "defaults", copyFrom: this._panels[0]?.entry_id || null, error: null, busy: false });
+    // a panel that already asks for its settings, else the ID of a panel without a name while no panel uses it
+    const asking = (this._data.waiting_panels || []).find((id) => !used.has(id));
+    const panelId = asking || (used.has("nspanel-pro") ? "" : "nspanel-pro");
+    this._openSheet({ kind: "add", step: 1, panelId, start: "defaults", copyFrom: this._panels[0]?.entry_id || null, error: null, busy: false });
+  }
+
+  // the Panel ID as the panel uses it (the integration's rule), null when it is not one
+  _panelIdOf(text) {
+    const id = String(text || "").trim().toLowerCase();
+    return /^[a-z0-9](?:[a-z0-9-]{0,29}[a-z0-9])?$/.test(id) ? id : null;
+  }
+
+  _addNext(sh) {
+    if (!sh.panelId.trim()) return;
+    if (!this._panelIdOf(sh.panelId)) { sh.error = PANEL_ID_RULE; this._renderLayer(); return; }
+    sh.error = null;
+    sh.step = 2;
+    this._renderLayer();
   }
 
   async _finishAdd(sh) {
-    const panelId = sh.panelId.trim();
-    if (!panelId) { sh.error = "Enter the panel's ID."; this._renderLayer(); return; }
+    const panelId = this._panelIdOf(sh.panelId);
+    if (!panelId) { sh.error = PANEL_ID_RULE; sh.step = 1; this._renderLayer(); return; }
     sh.busy = true;
     sh.error = null;
     this._renderLayer();
@@ -6036,6 +6055,7 @@ class PanelOSPage extends HTMLElement {
       let result = flow;
       if (flow.type === "form") result = await this._hass.callApi("POST", `config/config_entries/flow/${flow.flow_id}`, { panel_id: panelId });
       if (result.type === "abort") throw new Error(result.reason === "already_configured" ? "This panel is already set up." : `Not added (${result.reason}).`);
+      if (result.type === "form" && result.errors?.panel_id) throw new Error(PANEL_ID_RULE);
       if (result.type !== "create_entry") throw new Error("Home Assistant asked for more than this page can answer; add the panel in Settings → Devices and services.");
       const entryId = result.result?.entry_id;
       this._ui.sheet = null;
@@ -6063,10 +6083,11 @@ class PanelOSPage extends HTMLElement {
     let foot;
     if (sh.step === 1) {
       body = [steps,
-        h("div", { class: "sec" }, h("h3", null, "Panel ID", h("span", { class: "rinfo" }, this._infoBtn("add:id", "The panel's network name, as its PanelOS settings show it. The panel then finds its settings here by this name."))),
-          h("input", { class: "inp", value: sh.panelId, maxlength: 64, "aria-label": "Panel ID", oninput: (e) => { sh.panelId = e.target.value; const nb = this._layer.querySelector("[data-next]"); if (nb) nb.disabled = !sh.panelId.trim(); }, onkeydown: (e) => { if (e.key === "Enter" && sh.panelId.trim()) { sh.step = 2; this._renderLayer(); } } })),
-        h("p", { class: "note", style: { margin: 0 } }, "Start PanelOS on the panel and connect it to Wi-Fi and Home Assistant first.")];
-      foot = [this._btn("Cancel", () => this._closeSheet(), { cls: "ghost" }), this._btn("Next", () => { if (sh.panelId.trim()) { sh.step = 2; this._renderLayer(); } }, { cls: "primary", disabled: !sh.panelId.trim(), attrs: { "data-next": "1" } })];
+        h("div", { class: "sec" }, h("h3", null, "Panel ID", h("span", { class: "rinfo" }, this._infoBtn("add:id", "The name the panel was given at installation, as its settings show it under About (nspanel-pro for a panel without one). The panel finds its settings here by this name."))),
+          h("input", { class: "inp", value: sh.panelId, maxlength: 31, "aria-label": "Panel ID", oninput: (e) => { sh.panelId = e.target.value; const nb = this._layer.querySelector("[data-next]"); if (nb) nb.disabled = !sh.panelId.trim(); }, onkeydown: (e) => { if (e.key === "Enter") this._addNext(sh); } })),
+        h("p", { class: "note", style: { margin: 0 } }, "Start PanelOS on the panel and connect it to Wi-Fi and Home Assistant first."),
+        sh.error ? h("p", { class: "note", role: "alert", style: { margin: 0, color: "var(--bad)" } }, sh.error) : null];
+      foot = [this._btn("Cancel", () => this._closeSheet(), { cls: "ghost" }), this._btn("Next", () => this._addNext(sh), { cls: "primary", disabled: !sh.panelId.trim(), attrs: { "data-next": "1" } })];
     } else {
       body = [steps,
         h("div", { class: "sec" }, h("h3", null, "Start with"), h("div", { class: "group" },
@@ -6074,7 +6095,7 @@ class PanelOSPage extends HTMLElement {
           this._panels.length ? h("label", { class: "opt" }, h("input", { type: "radio", name: "start", checked: sh.start === "copy", onchange: () => { sh.start = "copy"; this._renderLayer(); } }), this._ckBox(sh.start === "copy", "A copy of another panel", { round: true }), h("span", { class: "t" }, h("span", null, "A copy of another panel"), h("small", null, "Pages, display, voice, do not disturb, notifications, dashboard"))) : null)),
         sh.start === "copy" ? h("div", { class: "sec" }, h("h3", null, "Copy from"), this._choice(this._panels.map((x) => [x.entry_id, this._pname(x)]), sh.copyFrom, (v) => { sh.copyFrom = v; this._renderLayer(); }, { label: "Copy from" })) : null,
         sh.error ? h("p", { class: "note", role: "alert", style: { margin: 0, color: "var(--bad)" } }, sh.error) : null];
-      foot = [this._btn("Back", () => { sh.step = 1; this._renderLayer(); }, { cls: "ghost" }), this._btn(sh.busy ? "Adding…" : `Add ${sh.panelId.trim()}`, () => this._finishAdd(sh), { cls: "primary", icon: "check", disabled: sh.busy })];
+      foot = [this._btn("Back", () => { sh.step = 1; sh.error = null; this._renderLayer(); }, { cls: "ghost" }), this._btn(sh.busy ? "Adding…" : `Add ${this._panelIdOf(sh.panelId) || sh.panelId.trim()}`, () => this._finishAdd(sh), { cls: "primary", icon: "check", disabled: sh.busy })];
     }
     return this._sheetFrame("Add a panel", body, foot, { center: true });
   }

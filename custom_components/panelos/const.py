@@ -44,7 +44,9 @@ REPORTING = {
     CONF_WIFI_SIGNAL_CHANGE: (3, 1, 20, 1, "dB"),
 }
 
+# A panel without a name of its own; a name is at most as long as an ESPHome device name may be.
 DEFAULT_PANEL_ID = "nspanel-pro"
+PANEL_ID_MAX = 31
 
 # Entities the assistant mode's quick tiles can show.
 TILE_DOMAINS = ("light", "switch", "cover", "fan", "input_boolean", "scene", "script", "sensor", "climate")
