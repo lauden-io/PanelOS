@@ -76,6 +76,7 @@ from .const import (
     SIGNAL_PANEL_USER,
     SIGNAL_SHOW,
     VIEWS,
+    timer_label,
 )
 from .house import House
 from .notes import Notes
@@ -400,7 +401,8 @@ def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
         vol.Required("action"): vol.In(["start", "pause", "resume", "add", "remove", "cancel"]),
         vol.Optional("timer_id"): vol.All(str, vol.Length(max=64)),
         vol.Optional("seconds"): vol.All(int, vol.Range(min=1, max=86400)),
-        vol.Optional("name"): vol.All(str, vol.Length(max=60)),
+        # cut to TIMER_LABEL_MAX characters (None when empty), never refused for its length
+        vol.Optional("name"): vol.All(str, timer_label),
     }
 )
 @callback
@@ -423,7 +425,7 @@ def ws_timer(hass: HomeAssistant, connection: websocket_api.ActiveConnection, ms
         if "seconds" not in msg:
             connection.send_error(msg["id"], "invalid_format", "seconds missing")
             return
-        timer_id = manager.start_timer(device_id, None, None, msg["seconds"], hass.config.language, name=msg.get("name") or None)
+        timer_id = manager.start_timer(device_id, None, None, msg["seconds"], hass.config.language, name=msg.get("name"))
         connection.send_result(msg["id"], {"timer_id": timer_id})
         return
     timer = manager.timers.get(msg.get("timer_id", ""))

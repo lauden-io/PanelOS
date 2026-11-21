@@ -945,19 +945,26 @@ pub fn timer_grid(timers: &HashMap<String, Timer>) -> Vec<i32> {
     grid_cells(&list)
 }
 
-/// A timer's label as the panel takes it: up to 60 characters for a timer (Home Assistant takes as many), 32 for an
-/// alarm's.
+/// The longest label the panel takes: 30 characters for a timer (the integration cuts a timer's name to as many),
+/// 32 for an alarm.
 pub fn label_limit(timer: bool) -> usize {
     if timer {
-        60
+        30
     } else {
         32
     }
 }
 
+/// A timer's name as the panel keeps and shows it, wherever it comes from (the keyboard, voice, Home Assistant): the
+/// spaces around it go and it is cut to `label_limit(true)` characters.
+pub fn timer_label(name: &str) -> String {
+    let cut: String = name.trim().chars().take(label_limit(true)).collect();
+    cut.trim_end().to_string()
+}
+
 #[cfg(test)]
 mod grid_tests {
-    use super::{grid_cells, label_limit};
+    use super::{grid_cells, label_limit, timer_label};
 
     #[test]
     fn up_to_four_all_in_order() {
@@ -986,8 +993,23 @@ mod grid_tests {
 
     #[test]
     fn label_limits() {
-        assert_eq!(label_limit(true), 60);
+        assert_eq!(label_limit(true), 30);
         assert_eq!(label_limit(false), 32);
+    }
+
+    #[test]
+    fn a_timer_name_is_cut_to_thirty_characters() {
+        assert_eq!(timer_label("  Pasta "), "Pasta");
+        assert_eq!(timer_label(""), "");
+        let thirty = "a".repeat(30);
+        assert_eq!(timer_label(&thirty), thirty);
+        assert_eq!(timer_label(&format!("{thirty}bcd")), thirty);
+        // characters, not bytes
+        let accents = "árvíztűrő tükörfúrógép és mégis több";
+        assert_eq!(timer_label(accents), "árvíztűrő tükörfúrógép és mégi");
+        assert_eq!(timer_label(accents).chars().count(), 30);
+        // a cut that ends on a space leaves no space at the end
+        assert_eq!(timer_label(&format!("{} tail", "b".repeat(29))), "b".repeat(29));
     }
 }
 

@@ -1728,7 +1728,15 @@ fn handle_timer_state(ui: &AppWindow, kind: i32, id: String, name: String, left:
                 };
                 s.timers.insert(
                     id,
-                    pages::Timer { name, active, end: Instant::now() + Duration::from_secs(left as u64), left, total, seq, own: false },
+                    pages::Timer {
+                        name: pages::timer_label(&name),
+                        active,
+                        end: Instant::now() + Duration::from_secs(left as u64),
+                        left,
+                        total,
+                        seq,
+                        own: false,
+                    },
                 );
                 false
             }
@@ -1747,7 +1755,7 @@ fn handle_timer_state(ui: &AppWindow, kind: i32, id: String, name: String, left:
                 let gone = s.timers.remove(&id);
                 let (colourful, own) = timers_colours(page_cfg(s, "timers"));
                 let tint = pages::timer_tint(gone.as_ref().map_or(0, |t| t.seq as u64), accent(s), colourful, &own);
-                let name = gone.map(|t| t.name).unwrap_or(name);
+                let name = gone.map(|t| t.name).unwrap_or_else(|| pages::timer_label(&name));
                 ring_timer(ui, s, name, tint);
                 true
             }
@@ -1965,6 +1973,7 @@ fn ring_timer(ui: &AppWindow, s: &mut UiState, name: String, tint: slint::Color)
 /// A timer started on the panel (a quick start or one of one's own): Home Assistant's timer of the panel (voice
 /// and every other device see it), or the panel's own while it has no Home Assistant.
 fn start_timer(ui: &AppWindow, secs: u32, name: String) {
+    let name = pages::timer_label(&name);
     if HA_LINKED.load(Ordering::SeqCst) && with_state(|s| s.panel_config.is_some()) {
         send(Command::Timer { action: "start".into(), timer_id: String::new(), seconds: secs, name });
         ui.set_timers_quick(false);
@@ -1982,7 +1991,7 @@ fn start_local_timer(ui: &AppWindow, secs: u32, name: String) {
         s.timers.insert(
             format!("panel-{seq}"),
             pages::Timer {
-                name,
+                name: pages::timer_label(&name),
                 active: true,
                 end: Instant::now() + Duration::from_secs(secs as u64),
                 left: secs,
@@ -3273,7 +3282,7 @@ fn handle_event(ui: &AppWindow, event: Event) {
                             s.timer_seq
                         }
                     };
-                    let name = t["name"].as_str().unwrap_or("").to_string();
+                    let name = pages::timer_label(t["name"].as_str().unwrap_or(""));
                     s.timers.insert(
                         id.to_string(),
                         pages::Timer { name, active, end: Instant::now() + Duration::from_secs(left as u64), left, total, seq, own: false },

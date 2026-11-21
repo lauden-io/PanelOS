@@ -24,7 +24,7 @@ try:  # Home Assistant's schema library since 2026.x
 except ImportError:  # pragma: no cover
     import voluptuous as schema
 
-from .const import DOMAIN, SIGNAL_PAGE
+from .const import DOMAIN, SIGNAL_PAGE, timer_label
 
 PANEL_HELP = "The panel's room: one of the PanelOS panels named in the prompt (in that wording)."
 ALARMS_MAX = 20
@@ -127,7 +127,7 @@ class StartPanelTimer(Tool):
             schema.Optional("hours"): cv.positive_int,
             schema.Optional("minutes"): cv.positive_int,
             schema.Optional("seconds"): cv.positive_int,
-            schema.Optional("name", description="The timer's name, if the user gave one."): cv.string,
+            schema.Optional("name", description="The timer's name, if the user gave one (up to 30 characters)."): cv.string,
         }
     )
     annotations = ToolAnnotations(destructive=False, open_world=False)
@@ -144,7 +144,7 @@ class StartPanelTimer(Tool):
         if total <= 0 or total > 86400:
             return ToolResult(data={"success": False, "error": "The timer needs a length up to 24 hours"}, error=True)
         manager = hass.data[TIMER_DATA]
-        name = str(args.get("name") or "").strip() or None
+        name = timer_label(str(args.get("name") or ""))
         extra: dict[str, Any] = {"name": name}
         if "context" in inspect.signature(manager.start_timer).parameters:  # Home Assistant 2026.11+
             extra["context"] = llm_context.context
@@ -182,8 +182,9 @@ class CancelPanelTimer(Tool):
         if panel is None:
             return _no_panel(said, known)
         timers = _timers(hass, panel)
-        if name := _norm(str(args.get("name") or "")):
-            timers = [t for t in timers if _norm(t.name or "") == name]
+        # names compared as the panel shows them (cut to 30 characters)
+        if name := _norm(timer_label(str(args.get("name") or "")) or ""):
+            timers = [t for t in timers if _norm(timer_label(t.name) or "") == name]
         room = _room(hass, panel)
         if not timers:
             return ToolResult(data={"success": False, "panel": room, "error": "No such timer on the panel"}, error=True)

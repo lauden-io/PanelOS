@@ -2082,13 +2082,13 @@ export component TimersPage inherits Rectangle {
         sound-options: root.edit-ha-sound != "" ? [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5], root.edit-ha-sound]
             : [root.sounds[0], root.sounds[1], root.sounds[2], root.sounds[3], root.sounds[4], root.sounds[5]];
     }
-    // label keyboard (the same block as on the setup screens); a label holds up to 60 characters (a timer's; an alarm's 32):
-    // the count shows under the field, and a key pressed at the limit shakes the field (±4 px, three times in 300 ms); the
-    // end of a long label stays in view
+    // label keyboard (the same block as on the setup screens); a label holds up to `pages::label_limit` characters (a
+    // timer's 30, an alarm's 32): the count shows under the field, and a key pressed at the limit shakes the field (±4 px,
+    // three times in 300 ms); the end of a long label stays in view
     if root.edit && root.edit-keyboard: kbv := Rectangle {
         background: Theme.background;
         TouchArea { }
-        property <int> limit: root.edit-timer ? 60 : 32;
+        property <int> limit: root.edit-timer ? 30 : 32;
         property <int> count: root.edit-label.character-count;
         property <bool> full: kbv.count >= kbv.limit;
         property <bool> shaking;

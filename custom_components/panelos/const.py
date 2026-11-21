@@ -117,6 +117,19 @@ CONF_POPUPS = "popups"
 POPUP_KINDS = ("strip", "card", "off")
 DEFAULT_POPUPS = {"kind": "card", "sound": True, "seconds": 10, "until": False}
 
+# A timer's name takes at most 30 characters, wherever it comes from (the
+# panel's keyboard, a voice assistant's tool, the panel's own requests); a
+# longer one is cut, never refused (the panel cuts the names of Home
+# Assistant's own timers, started by voice, the same way).
+TIMER_LABEL_MAX = 30
+
+
+def timer_label(name: object) -> str | None:
+    """A timer's name as kept: trimmed and cut to TIMER_LABEL_MAX characters; None when there is none."""
+    if not isinstance(name, str):
+        return None
+    return name.strip()[:TIMER_LABEL_MAX].rstrip() or None
+
 # What a panel can do, as it reports it (device report "caps"); until a panel
 # reports them it counts as an NSPanel Pro.
 CONF_CAPS = "caps"
