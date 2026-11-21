@@ -462,13 +462,16 @@ export component PhotoSky inherits Rectangle {
     //     each shifted sideways by a small, smoothly varying amount (more in front, gusts push it
     //     left); sub-pixel shifts drawn twice with opacity = fraction (min 3 %, see the sky)
     property <int> sway-y0: root.theme == 1 ? 400 : root.theme == 3 ? 428 : root.theme == 5 ? 440 : 328;
+    // (the strips down to the bottom edge: rows further down are off the screen)
+    property <int> layer-bottom: min(528, (root.height - root.fy) / 1px);
+    property <int> grass-n: Math.ceil((root.layer-bottom - root.sway-y0) / 8);
     property <float> sway-a: root.theme == 2 || root.theme == 4 || root.theme == 6 || root.theme == 7 ? 0 : root.strong-wind ? 2.6 : root.wind >= 15 ? 1.3 : 0;
     animate sway-a { duration: 5s; easing: ease-in-out; }
     // a gust pushes the grass only as far as the wind lets it sway
     property <float> grass-gust: root.genv * min(1, root.sway-a / 1.3);
     property <float> sheen-a: min(1, root.sway-a / 1.3) * (0.6 + 0.4 * max(0, min(1, (root.sway-a - 1.3) / 1.3)));
     if root.sway-a > 0: Rectangle {
-        for k in 25: Rectangle {
+        for k in root.grass-n: Rectangle {
             property <float> depth: Math.pow((k + 0.5) / ((528 - root.sway-y0) / 8), 1.2);
             property <float> off: (root.sway-a + 1.6 * root.grass-gust) * self.depth * Math.sin((root.t * 360 / 2.75 + k * 13) * 1deg)
                                   - 1.5 * root.grass-gust * self.depth;
@@ -575,10 +578,11 @@ export component PhotoSky inherits Rectangle {
 
     // 5d. city and big city: the river shimmers (water rows shift by a pixel or two, each its own way)
     property <int> wy0: root.theme == 4 ? 405 : 452;
+    property <int> water-n: Math.ceil((root.layer-bottom - root.wy0) / 3);
     property <float> wa: root.theme == 4 || root.theme == 6 ? (root.strong-wind ? 1.7 : root.wind >= 15 ? 1.2 : 0.8) : 0;
     animate wa { duration: 5s; easing: ease-in-out; }
     if root.wa > 0: Rectangle {
-        for k in 42: ws := Rectangle {
+        for k in root.water-n: ws := Rectangle {
             property <float> off: root.wa * Math.sin((root.t * (95 + Math.mod(k * 37, 60)) + k * 67) * 1deg);
             property <float> oi: Math.floor(self.off);
             property <float> of: max(0.03, min(0.97, self.off - self.oi));
