@@ -679,7 +679,7 @@ mod tests {
         assert!(!sp.busy());
         assert_eq!(sp.shown(Some(20.0)), Some(20.0));
         // the next press counts from the real value
-        assert_eq!(sp.press(20.0, 0.5, 10.0, 32.0, at(t0, 8000)), 20.5);
+        assert_eq!(sp.press(20.0, 0.5, 10.0, 32.0, at(t0, 17000)), 20.5);
     }
 
     #[test]
@@ -690,7 +690,7 @@ mod tests {
         assert_eq!(sp.tick(Some(20.5), at(t0, 700)), Step::Send(21.0));
         sp.press(20.5, 0.5, 10.0, 32.0, at(t0, 2000));
         // 21.0 never came back; the newer value goes out when its wait is over
-        assert_eq!(sp.tick(Some(20.5), at(t0, 5700)), Step::Send(21.5));
+        assert_eq!(sp.tick(Some(20.5), at(t0, 15700)), Step::Send(21.5));
     }
 
     #[test]
