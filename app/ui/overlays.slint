@@ -2,7 +2,7 @@
 // pairing (QR login).
 
 import { Theme, Clock, Words } from "theme.slint";
-import { Icon, LogoMark, ThemeSwitch, RoundButton, TextButton, Chip, ChipRow, Toggle, BigSlider, MorseMark } from "widgets.slint";
+import { Icon, LogoMark, ThemeSwitch, RoundButton, TextButton, Chip, ChipRow, Toggle, BigSlider, MorseMark, TapArea } from "widgets.slint";
 import { MorseWrite } from "loading.slint";
 
 export struct MoreInfoData {
@@ -1547,7 +1547,7 @@ component InputField inherits Rectangle {
                 height: 38px;
                 border-radius: 19px;
                 background: st.pressed ? Theme.surface-pressed : transparent;
-                st := TouchArea { clicked => { root.toggle-show(); } }
+                st := TapArea { tapped => { root.toggle-show(); } }
                 Icon { text: root.show ? "\u{F06D1}" : "\u{F06D0}"; font-size: 22px; color: Theme.muted; }
             }
         }

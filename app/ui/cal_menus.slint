@@ -7,7 +7,7 @@
 // Every wrapped text has min-width 0: a wrapped text's narrowest width is its longest word, so one long link in an
 // event's description would make the whole card wider than its place and push its rows out of sight.
 import { Theme, Act, Words, Clock } from "theme.slint";
-import { Icon, MenuHost, Jelly, Segmented, Dropdown, Toggle, CheckBox, TextButton } from "widgets.slint";
+import { Icon, MenuHost, Jelly, Segmented, Dropdown, Toggle, CheckBox, TextButton, TapArea } from "widgets.slint";
 import { Keyboard } from "overlays.slint";
 
 export struct CalEvent {
@@ -224,12 +224,17 @@ component CalDrum inherits Rectangle {
         font-family: root.font; font-size: r == 0 ? root.big : root.small; font-weight: r == 0 ? (root.font == "Caveat" ? 700 : 600) : (root.font == "Caveat" ? 600 : 500);
         color: r == 0 ? root.ink : root.ink.with-alpha(0.35); horizontal-alignment: center; vertical-alignment: center;
     }
+    // a drag (more than 6 px, as the other drums) never also steps on its release
+    property <bool> dragged;
     TouchArea {
-        pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.base = root.value; } }
-        moved => { root.set(Math.mod(root.base + Math.round((self.pressed-y - self.mouse-y) / 40px) + root.n * 4, root.n)); }
+        pointer-event(ev) => { if ev.kind == PointerEventKind.down { root.base = root.value; root.dragged = false; } }
+        moved => {
+            if Math.abs(self.mouse-y - self.pressed-y) > 6px { root.dragged = true; }
+            root.set(Math.mod(root.base + Math.round((self.pressed-y - self.mouse-y) / 40px) + root.n * 4, root.n));
+        }
         clicked => {
             let k = self.mouse-y < 40px ? -1 : self.mouse-y > 80px ? 1 : 0;
-            if k != 0 { root.set(Math.mod(root.value + k + root.n, root.n)); }
+            if k != 0 && !root.dragged { root.set(Math.mod(root.value + k + root.n, root.n)); }
         }
     }
 }
@@ -486,7 +491,7 @@ export component CalMenus inherits Rectangle {
                             pr := Text { min-width: 0px; text: c.name; font-size: 15px; font-weight: c.on ? 600 : 400; color: Theme.text; wrap: word-wrap; vertical-alignment: center;
                                 horizontal-stretch: 1; min-height: 52px; }
                             VerticalLayout { alignment: center; CheckBox { checked: c.on; } } }
-                        TouchArea { clicked => { root.toggle(i, c); } } }
+                        TapArea { tapped => { root.toggle(i, c); } } }
                 }
             }
         }
@@ -523,7 +528,7 @@ export component CalMenus inherits Rectangle {
                             Flap { chars: c.cells; first: 2; cells: 9; ink: c.on ? #ffd23f : gate.dimmed; t: gate.f0 - 50; seed: i + 5; }
                             Flap { chars: c.on ? root.open-cells : root.closed-cells; cells: 6; ink: c.on ? #4cd964 : gate.dimmed;
                                 t: gate.tg ? gate.tgt : gate.f0 - 100; from: gate.tg ? (c.on ? root.closed-cells : root.open-cells) : []; seed: i + 9; } }
-                        TouchArea { clicked => { root.toggle(i, c); } } }
+                        TapArea { tapped => { root.toggle(i, c); } } }
                 }
             }
         }
@@ -563,7 +568,7 @@ export component CalMenus inherits Rectangle {
                                         LineTo { x: 9.2 + 9.8 * Math.max(0, slip.tick * 1.7 - 0.7); y: 16.8 - 10.3 * Math.max(0, slip.tick * 1.7 - 0.7); } } } }
                             VerticalLayout { alignment: center; Rectangle { width: 10px; height: 10px; border-radius: 5px; background: c.tint; } }
                             tn := Text { min-width: 0px; height: self.preferred-height; text: c.name; font-size: 15px; color: #1d1d20; wrap: word-wrap; vertical-alignment: center; horizontal-stretch: 1; } }
-                        TouchArea { clicked => { root.toggle(i, c); } } }
+                        TapArea { tapped => { root.toggle(i, c); } } }
                 }
             }
         }
@@ -603,7 +608,7 @@ export component CalMenus inherits Rectangle {
                             width: (Math.min(parent.width - 54px, wn.preferred-width) + 8px) * line.st; height: 10px;
                             viewbox-width: 100 * line.st; viewbox-height: 10; fill: transparent; stroke: #56565c; stroke-width: 2.2px; stroke-line-cap: round;
                             commands: "M 0 6 C 30 3 60 8 100 4"; }
-                        TouchArea { clicked => { root.toggle(i, c); } } }
+                        TapArea { tapped => { root.toggle(i, c); } } }
                 }
             }
             Pin { x: (parent.width - self.width) / 2; y: -7px; k: parent.pk; }

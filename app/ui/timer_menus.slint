@@ -4,7 +4,7 @@
 // places a menu, dims the page and gives the motion clocks; the frames here draw the object and its motion.
 // Also the time drums (the agreed alarm editor's), the flap card drums and the time whose changed digits roll (M8).
 import { Theme, Act } from "theme.slint";
-import { Icon, RollDigit, Segmented, Dropdown, CheckBox, TextButton } from "widgets.slint";
+import { Icon, RollDigit, Segmented, Dropdown, CheckBox, TextButton, TapArea } from "widgets.slint";
 import { ArcadeScreen, ArcadeBlocks, ArcadeBlock, Arcade } from "arcade.slint";
 
 // A look's menu colours and type (the 28.x controls' tokens and the menu's own texts).
@@ -322,8 +322,8 @@ export component FlapDrum inherits Rectangle {
     property <int> dir: 1;
     FlapDigit { x: 0; digit: Math.floor(root.value / 10); dir: root.dir; intro-delay: root.intro-at; run-intro: root.run-intro; }
     FlapDigit { x: 59px; digit: Math.mod(root.value, 10); dir: root.dir; intro-delay: root.intro-at + 30ms; run-intro: root.run-intro; }
-    TouchArea {
-        clicked => {
+    TapArea {
+        tapped => {
             let add = self.mouse-y >= self.height / 2;
             root.dir = add ? 1 : -1;
             root.value = Math.mod(root.value + (add ? 1 : -1) + root.count, root.count);
@@ -532,7 +532,7 @@ export component ArcToggle inherits Rectangle {
         text: root.text.to-uppercase(); font-family: Arcade.font; font-size: root.font-size; letter-spacing: 0.4px;
         horizontal-alignment: center; vertical-alignment: center; color: root.lit ? Arcade.ink : #ffffffbf;
     }
-    TouchArea { clicked => { root.clicked(); } }
+    TapArea { tapped => { root.clicked(); } }
 }
 
 // A square arcade key outlined 2 px in white 70 % with a white glyph (the timer's cancel, spec 34.0): 48 x 44, radius 2; a
@@ -769,7 +769,7 @@ component SettingsBody inherits Rectangle {
                             toggled => { root.function-toggled(f.k); } } }
                     Text { text: f.t; font-family: root.sk.body-family; font-size: root.sk.body-size; font-weight: root.sk.body-weight; color: root.sk.text;
                         vertical-alignment: center;
-                        TouchArea { clicked => { root.function-toggled(f.k); } } }
+                        TapArea { tapped => { root.function-toggled(f.k); } } }
                 }
         }
         if root.arcade: HorizontalLayout {

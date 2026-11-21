@@ -4,7 +4,7 @@
 // Also the parts the stopwatch tab's settings share (watch_menus.slint): the look colours, the settings rows.
 // Every clock time here follows the panel's time format (Clock.h24); durations never change.
 import { Theme, Act, Clock } from "theme.slint";
-import { Icon, MenuHost, Jelly, Segmented, Dropdown, TextButton, CheckBox, WeekdayRow, GlowText } from "widgets.slint";
+import { Icon, MenuHost, Jelly, Segmented, Dropdown, TextButton, CheckBox, WeekdayRow, GlowText, TapArea } from "widgets.slint";
 import { Seg7, TwinBellClock } from "clocks.slint";
 
 // A time of day in the panel's time format: "6:45" / "18:05" (24-hour, as the alarm looks write it) or "6:45 AM".
@@ -301,7 +301,7 @@ component RadioDays inherits Rectangle {
                 animate background { duration: 150ms; } }
             Text { y: 20px; width: parent.width; height: 18px; text: d; font-size: 11px; font-weight: 700; letter-spacing: 1px; color: #ecece8;
                 horizontal-alignment: center; vertical-alignment: center; } }
-        dta := TouchArea { clicked => { root.toggled(i); } }
+        dta := TapArea { tapped => { root.toggled(i); } }
     }
 }
 
@@ -561,7 +561,7 @@ export component FunctionChecks inherits HorizontalLayout {
             toggled => { Act.act("alarms.functions", f.k); } }
         fl := InkText { x: 30px; y: (parent.height - self.height) / 2; width: self.natural-w + 2px; text: root.caps ? f.c : f.t; ink: root.ink.text; size: 15px; weight: root.caps ? 700 : 400;
             spacing: root.caps ? 1px : 0px; glow: root.ink.glow; }
-        TouchArea { clicked => { Act.act("alarms.functions", f.k); } }
+        TapArea { tapped => { Act.act("alarms.functions", f.k); } }
     }
 }
 

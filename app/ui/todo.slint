@@ -3,7 +3,7 @@
 // picker and the page settings in the look's own menus (todo_menus.slint), adding with the keyboard. Which lists show is set
 // in the HA integration.
 import { Theme, Act, Words, Clock } from "theme.slint";
-import { Icon, GlowText, Segmented, MenuHost, PageMenu } from "widgets.slint";
+import { Icon, GlowText, Segmented, MenuHost, PageMenu, TapArea } from "widgets.slint";
 import { Keyboard } from "overlays.slint";
 import { TodoList, TodoBrandPicker, TodoBrandSettings, TodoReceiptPicker, TodoReceiptSettings, TodoTermPicker, TodoTermSettings,
     TodoTapePicker, TodoTapeSettings, TodoPadPicker, TodoPadSettings } from "todo_menus.slint";
@@ -180,7 +180,7 @@ component TodoReceipt inherits Rectangle {
             Text { height: 22px; text: root.stamp; font-family: "DejaVu Sans Mono"; font-size: 13px; color: root.ink;
                 horizontal-alignment: center; vertical-alignment: center; }
             ReceiptDashes { ink: root.ink; }
-            for it[i] in root.open-items: ReceiptRow { item: it; ink: root.ink; paper: root.paper; TouchArea { clicked => { Act.act("todo.check", i); } } }
+            for it[i] in root.open-items: ReceiptRow { item: it; ink: root.ink; paper: root.paper; TapArea { tapped => { Act.act("todo.check", i); } } }
             if root.open-items.length == 0: Text { height: 60px; text: root.empty; font-family: "DejaVu Sans Mono"; font-size: 15px; font-weight: 700;
                 color: root.ink; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
             ReceiptDashes { ink: root.ink; }
@@ -190,13 +190,13 @@ component TodoReceipt inherits Rectangle {
                     font-weight: 700; color: root.ink; horizontal-alignment: right; vertical-alignment: center; }
             }
             if root.done-items.length > 0: Rectangle { height: 30px;
-                TouchArea { clicked => { Act.act("todo.done-toggle", ""); } }
+                TapArea { tapped => { Act.act("todo.done-toggle", ""); } }
                 Text { x: 0; y: 0; height: parent.height; text: "DONE"; font-family: "DejaVu Sans Mono"; font-size: 14px; color: root.ink; vertical-alignment: center; }
                 Text { x: 0; y: 0; width: parent.width; height: parent.height; text: root.done-items.length + (root.show-done ? "  ▲" : "  ▼");
                     font-family: "DejaVu Sans Mono"; font-size: 14px; font-weight: 700; color: root.ink; horizontal-alignment: right; vertical-alignment: center; }
             }
             if root.show-done: VerticalLayout {
-                for it[i] in root.done-items: ReceiptRow { item: it; ink: root.ink; paper: root.paper; TouchArea { clicked => { Act.act("todo.uncheck", i); } } }
+                for it[i] in root.done-items: ReceiptRow { item: it; ink: root.ink; paper: root.paper; TapArea { tapped => { Act.act("todo.uncheck", i); } } }
             }
             ReceiptDashes { ink: root.ink; }
             Text { height: 34px; text: root.footer; font-family: "DejaVu Sans Mono"; font-size: 13px; color: root.ink;
@@ -273,12 +273,12 @@ component TodoTerminal inherits Rectangle {
         content-y: -root.scroll;
         tl := VerticalLayout {
             x: 20px; y: 0; width: 440px; padding-top: 4px; padding-bottom: 8px; spacing: 0px; alignment: start;
-            for it[i] in root.open-items: TermRow { item: it; g: root.g; dim: root.dim; TouchArea { clicked => { Act.act("todo.check", i); } } }
+            for it[i] in root.open-items: TermRow { item: it; g: root.g; dim: root.dim; TapArea { tapped => { Act.act("todo.check", i); } } }
             if root.open-items.length == 0: TermLine { height: 40px; text: root.empty; ink: root.g; }
             if root.done-items.length > 0: TermLine { height: 36px; ink: root.dim; glow: false;
-                text: "-- " + root.done-items.length + " done (tap to " + (root.show-done ? "hide" : "show") + ") --"; TouchArea { clicked => { Act.act("todo.done-toggle", ""); } } }
+                text: "-- " + root.done-items.length + " done (tap to " + (root.show-done ? "hide" : "show") + ") --"; TapArea { tapped => { Act.act("todo.done-toggle", ""); } } }
             if root.show-done: VerticalLayout {
-                for it[i] in root.done-items: TermRow { item: it; g: root.g; dim: root.dim; TouchArea { clicked => { Act.act("todo.uncheck", i); } } }
+                for it[i] in root.done-items: TermRow { item: it; g: root.g; dim: root.dim; TapArea { tapped => { Act.act("todo.uncheck", i); } } }
             }
         }
     }
@@ -324,18 +324,18 @@ component TodoLabels inherits Rectangle {
                     property <float> pk: self.printing ? clamp((animation-tick() - self.print-t0) / 600ms, 0, 1) : 1;
                     clip: self.printing;
                     Image { x: -self.width * (1 - parent.pk); width: parent.width; height: parent.height; source: it.tape; }
-                    TouchArea { clicked => { Act.act("todo.check", i); } } } }
+                    TapArea { tapped => { Act.act("todo.check", i); } } } }
             if root.open-items.length == 0: VerticalLayout { padding-top: 40px; padding-bottom: 24px; spacing: 10px;
                 HorizontalLayout { alignment: center; Image { width: root.empty-tape.width * 1px; height: root.empty-tape.height * 1px; source: root.empty-tape; } }
                 Text { height: 44px; text: root.empty-sub; font-size: 15px; color: Theme.muted; horizontal-alignment: center; wrap: word-wrap; }
             }
             if root.done-items.length > 0: HorizontalLayout { padding-top: 8px; spacing: 4px; alignment: start;
-                Image { width: root.done-head.width * 1px; height: root.done-head.height * 1px; source: root.done-head; TouchArea { clicked => { Act.act("todo.done-toggle", ""); } } }
+                Image { width: root.done-head.width * 1px; height: root.done-head.height * 1px; source: root.done-head; TapArea { tapped => { Act.act("todo.done-toggle", ""); } } }
                 Icon { width: 22px; text: root.show-done ? "\u{F0143}" : "\u{F0140}"; font-size: 20px; color: Theme.faint; }
             }
             if root.show-done: VerticalLayout { spacing: 2px;
                 for it[i] in root.done-items: HorizontalLayout { alignment: start;
-                    Image { width: it.tape.width * 1px; height: it.tape.height * 1px; source: it.tape; TouchArea { clicked => { Act.act("todo.uncheck", i); } } } }
+                    Image { width: it.tape.width * 1px; height: it.tape.height * 1px; source: it.tape; TapArea { tapped => { Act.act("todo.uncheck", i); } } } }
             }
         }
     }
@@ -385,11 +385,11 @@ component TodoNotepad inherits Rectangle {
                     property <float> wk: self.writing ? clamp((animation-tick() - self.write-t0) / (self.letters * 60ms), 0, 1) : 1;
                     Rectangle { x: 0; y: 0; width: 64px + (parent.width - 64px) * parent.wk; height: parent.height; clip: parent.writing;
                         Image { x: 0; y: 0; width: it.hand.width * 1px; height: it.hand.height * 1px; source: it.hand; } }
-                    TouchArea { clicked => { Act.act("todo.check", i); } } }
+                    TapArea { tapped => { Act.act("todo.check", i); } } }
                 if root.open-items.length == 0: Image { width: root.empty-rows.width * 1px; height: root.empty-rows.height * 1px; source: root.empty-rows; }
-                if root.done-items.length > 0: Image { width: root.done-row.width * 1px; height: root.done-row.height * 1px; source: root.done-row; TouchArea { clicked => { Act.act("todo.done-toggle", ""); } } }
+                if root.done-items.length > 0: Image { width: root.done-row.width * 1px; height: root.done-row.height * 1px; source: root.done-row; TapArea { tapped => { Act.act("todo.done-toggle", ""); } } }
                 if root.show-done: VerticalLayout { spacing: 0px;
-                    for it[i] in root.done-items: Image { width: it.hand.width * 1px; height: it.hand.height * 1px; source: it.hand; TouchArea { clicked => { Act.act("todo.uncheck", i); } } }
+                    for it[i] in root.done-items: Image { width: it.hand.width * 1px; height: it.hand.height * 1px; source: it.hand; TapArea { tapped => { Act.act("todo.uncheck", i); } } }
                 }
             }
         }
@@ -464,7 +464,7 @@ export component TodoPage inherits Rectangle {
                 padding-left: 16px; padding-right: 16px; padding-top: 8px; padding-bottom: 40px; spacing: 0px; alignment: start;
                 for it[i] in root.open-items: VerticalLayout { padding-bottom: 8px * (1 - tr.fold);
                     tr := TodoRow { item: it;
-                        TouchArea { clicked => { if !it.done { Act.act("todo.check", i); } } } } }
+                        TapArea { tapped => { if !it.done { Act.act("todo.check", i); } } } } }
                 // nothing left: a calm empty state (the completed ones stay below)
                 if root.open-items.length == 0: Rectangle { height: 196px + 8px;
                     Icon { x: 0; y: 22px; width: parent.width; height: 72px; text: "\u{F05E1}"; font-size: 64px; color: Theme.faint; }
@@ -474,7 +474,7 @@ export component TodoPage inherits Rectangle {
                         horizontal-alignment: center; wrap: word-wrap; overflow: elide; }
                 }
                 if root.done-items.length > 0: Rectangle { height: 44px;
-                    TouchArea { clicked => { Act.act("todo.done-toggle", ""); } }
+                    TapArea { tapped => { Act.act("todo.done-toggle", ""); } }
                     HorizontalLayout { padding-left: 4px; spacing: 8px; alignment: start;
                         Text { text: "Completed"; font-size: 15px; font-weight: 600; color: Theme.muted; vertical-alignment: center; }
                         Text { text: root.done-items.length; font-size: 15px; color: Theme.faint; vertical-alignment: center; }
@@ -483,7 +483,7 @@ export component TodoPage inherits Rectangle {
                 }
                 if root.show-done: VerticalLayout { spacing: 8px; padding-top: 8px;
                     for it[i] in root.done-items: TodoRow { item: it; completed: true;
-                        TouchArea { clicked => { Act.act("todo.uncheck", i); } } }
+                        TapArea { tapped => { Act.act("todo.uncheck", i); } } }
                 }
             }
         }

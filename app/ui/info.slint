@@ -7,7 +7,7 @@
 // it is held) stand above the notifications in every look, in their own colour: a tap opens the status screen again;
 // "Clear all" and Dismiss leave them (they go when their state ends).
 import { Theme, Act, Words, Clock } from "theme.slint";
-import { Icon, GlowText, Crawl, Dropdown, Segmented, TextButton, MenuHost, PageMenu } from "widgets.slint";
+import { Icon, GlowText, Crawl, Dropdown, Segmented, TextButton, MenuHost, PageMenu, TapArea } from "widgets.slint";
 
 export struct InfoNote {
     title: string,
@@ -212,7 +212,7 @@ component PagerLook inherits Rectangle {
                 font-weight: 700; color: #9aa77f; vertical-alignment: center; }
             if i == root.menu-cur: Text { x: 26px; y: 0; width: parent.width - 32px; height: parent.height; text: i < root.menu-values.length ? root.menu-values[i] : "";
                 font-family: "DejaVu Sans Mono"; font-size: 16px; font-weight: 700; color: #9aa77f; horizontal-alignment: right; vertical-alignment: center; }
-            TouchArea { clicked => { root.menu-line(i); } }
+            TapArea { tapped => { root.menu-line(i); } }
         }
     }
     if root.lcd-free: Rectangle { x: 64px; y: 118px; width: 352px; height: 184px; clip: true;
@@ -721,16 +721,16 @@ export component InfoPage inherits Rectangle {
                     property <color> ink: i == root.osd-cur ? #0b1f4d : #ffffff;
                     property <length> vw: Math.max(130px, vt.preferred-width + 8px);
                     background: i == root.osd-cur ? #f2a51a : transparent;
-                    TouchArea { clicked => { root.osd-change(i, 1); } }
+                    TapArea { tapped => { root.osd-change(i, 1); } }
                     Text { x: 12px; y: 0; height: parent.height; text: l.t; font-size: 15px; font-weight: 800; letter-spacing: 1px; color: parent.ink;
                         vertical-alignment: center; }
                     if i < 2: Icon { x: parent.width - 4px - 44px - parent.vw - 44px; y: 2px; width: 44px; height: 44px; text: "\u{F035E}"; font-size: 24px;
                         color: parent.ink;
-                        TouchArea { clicked => { root.osd-change(i, -1); } } }
+                        TapArea { tapped => { root.osd-change(i, -1); } } }
                     vt := Text { x: parent.width - 4px - 44px - parent.vw; y: 0; width: parent.vw; height: parent.height; text: l.v; font-size: 15px; font-weight: 800;
                         letter-spacing: 1px; color: parent.ink; horizontal-alignment: center; vertical-alignment: center; }
                     if i < 2: Icon { x: parent.width - 4px - 44px; y: 2px; width: 44px; height: 44px; text: "\u{F035F}"; font-size: 24px; color: parent.ink;
-                        TouchArea { clicked => { root.osd-change(i, 1); } } }
+                        TapArea { tapped => { root.osd-change(i, 1); } } }
                 }
             }
         }

@@ -12,6 +12,8 @@
 // - ArcadeText: the pixel font with a soft glow; it wraps.
 // The software renderer draws gradients without rounded corners, so the glass is made of bands and corner pieces.
 
+import { TapArea } from "widgets.slint";
+
 export global Arcade {
     // the rows' own arcade colours (the rooms list), the dark ink on a lit block, the font
     out property <[color]> rows: [#ff4fd8, #ffd23f, #2bffc6, #22d8ff, #c27bff, #ff7a3d, #7dff6a, #ff5c8a];
@@ -269,8 +271,8 @@ export component ArcadeBlocks inherits Rectangle {
             horizontal-alignment: center; vertical-alignment: center;
             color: blk.on ? Arcade.ink : blk.zapped ? #ffffff : #ffffffbf;
         }
-        TouchArea {
-            clicked => {
+        TapArea {
+            tapped => {
                 if i == root.lit && !root.blinking {
                     root.zap = i; root.zap-frame = 0;
                 } else if i != root.lit {

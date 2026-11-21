@@ -3,7 +3,7 @@
 // The layout is edited in Home Assistant; editing on the panel itself is optional (switched on in
 // HA): a long press opens a lock, holding the lock unlocks the edit mode.
 import { Theme, Act, Words, Clock } from "theme.slint";
-import { Icon, Glyph, PlayGlyph, GlowText, Marquee, RollPair, Segmented, Dropdown, Toggle, CheckBox, MenuHost, TextButton, TouchSlider } from "widgets.slint";
+import { Icon, Glyph, PlayGlyph, GlowText, Marquee, RollPair, Segmented, Dropdown, Toggle, CheckBox, MenuHost, TextButton, TouchSlider, TapArea } from "widgets.slint";
 import { WeatherData, ClockData, AnalogDial, FlipClock, AmPm, TimerInfo, Person } from "panels.slint";
 import { ArcadeScreen, ArcadeBlocks } from "arcade.slint";
 import { NixieClock, LcdClock, TwinBellClock } from "clocks.slint";
@@ -1347,7 +1347,7 @@ component WidgetMenu inherits Rectangle {
                         // the chosen one: a white ring with a gap
                         if sw.chosen: Rectangle { x: -4px; y: -4px; width: 42px; height: 42px; border-radius: 21px; border-width: 2px; border-color: #ffffff; }
                         Rectangle { border-radius: 17px; background: c; border-width: 1px; border-color: #ffffff26; }
-                        TouchArea { x: -3px; y: -5px; width: 40px; height: 44px; clicked => { Act.act("home.set", root.index + ":accent:" + (sw.chosen ? "" : "#" + root.hex(c)) + ":1"); } }
+                        TapArea { x: -3px; y: -5px; width: 40px; height: 44px; tapped => { Act.act("home.set", root.index + ":accent:" + (sw.chosen ? "" : "#" + root.hex(c)) + ":1"); } }
                     }
                 }
             }
@@ -1390,7 +1390,7 @@ component WidgetMenu inherits Rectangle {
                                 CheckBox { checked: pb.k < root.person-on.length && root.person-on[pb.k]; tk-knob: EditInk.muted; tk-knob-on: #F5F3EE; } }
                             Text { text: root.person-names[pb.k]; font-size: 15px; color: EditInk.text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                         }
-                        if pb.k < root.person-names.length: TouchArea { clicked => { Act.act("home.set", root.index + ":person:" + pb.k + ":1"); } }
+                        if pb.k < root.person-names.length: TapArea { tapped => { Act.act("home.set", root.index + ":person:" + pb.k + ":1"); } }
                     }
                 }
             }
@@ -1419,7 +1419,7 @@ component WidgetMenu inherits Rectangle {
                                 CheckBox { checked: root.on(Math.pow(2, cb.k)); tk-knob: EditInk.muted; tk-knob-on: #F5F3EE; } }
                             Text { text: root.bit-names[cb.k]; font-size: 15px; color: EditInk.text; vertical-alignment: center; wrap: word-wrap; horizontal-stretch: 1; }
                         }
-                        if cb.k < root.bit-names.length: TouchArea { clicked => { Act.act("home.set", root.index + ":opt:" + Math.pow(2, cb.k) + ":1"); } }
+                        if cb.k < root.bit-names.length: TapArea { tapped => { Act.act("home.set", root.index + ":opt:" + Math.pow(2, cb.k) + ":1"); } }
                     }
                 }
             }
@@ -1858,7 +1858,7 @@ export component HomeGrid inherits Rectangle {
                         weekday-long: root.weekday-long; day-month: root.day-month; year: root.year; week: root.week;
                         sensor-demo: root.sensor-demo; timers: root.pv-timers; people: root.pv-people-list;
                     }
-                    TouchArea { enabled: p.on; clicked => { Act.act("home.pick", p.pick); } }
+                    TapArea { enabled: p.on; tapped => { Act.act("home.pick", p.pick); } }
                 }
                 for t in root.pick-titles: Text {
                     visible: t.on;

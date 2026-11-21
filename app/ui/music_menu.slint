@@ -5,7 +5,7 @@
 //   skin 2, the J-card (cassette, half cassette): a mixtape tracklist in blue pen, the settings its Side B.
 // The host (MenuHost) places the menu, dims the page and runs the motion clocks; this draws the menu and moves it.
 import { Theme, Act } from "theme.slint";
-import { Icon, Dropdown, Segmented, Toggle, TextButton, TouchSlider, Jelly } from "widgets.slint";
+import { Icon, Dropdown, Segmented, Toggle, TextButton, TouchSlider, Jelly, TapArea } from "widgets.slint";
 
 export struct MusicPlayer {
     name: string,       // "Kitchen speaker"
@@ -76,7 +76,7 @@ component RowButton inherits Rectangle {
         color: root.skin == 0 ? (root.signal ? #ffffff : root.ink) : root.filled ? (root.skin == 1 ? root.paper : #ffffff) : root.ink;
     }
     opacity: ta.pressed ? 0.6 : 1;
-    ta := TouchArea { x: (root.d - 44px) / 2; y: (root.d - 44px) / 2; width: 44px; height: 44px; enabled: root.enabled; clicked => { root.tapped(); } }
+    ta := TapArea { x: (root.d - 44px) / 2; y: (root.d - 44px) / 2; width: 44px; height: 44px; enabled: root.enabled; tapped => { root.tapped(); } }
 }
 
 // one player of "Play on": the number (or the speaker), the name (wraps to a second line), what it plays, ⇄ and + / ✓
@@ -108,7 +108,7 @@ component PlayerRow inherits Rectangle {
     border-radius: root.skin == 0 ? 10px : 0px;
     background: root.flash ? (root.skin == 0 ? Theme.surface-pressed : root.skin == 1 ? #2b26201a : #2a4fa014)
         : root.skin == 0 && root.p.active ? #FF4A1C29 : transparent;
-    TouchArea { clicked => { root.tap(); } }
+    TapArea { tapped => { root.tap(); } }
     // the speaker (brand), "A1" (sleeve), "1." (J-card)
     if root.skin == 0: Icon { x: root.pl; y: 0; width: root.no-w; height: root.height; text: root.p.icon; font-size: 22px;
         color: root.p.active ? root.ink : root.muted; }
@@ -409,7 +409,7 @@ export component MusicMenu inherits Rectangle {
                             border-radius: 4px; clip: true; border-width: 1px; border-color: #00000040;
                             Image { width: parent.width; height: parent.height; source: w; image-fit: cover; }
                         }
-                        TouchArea { x: -4px; y: -6px; width: parent.width + 8px; height: parent.height + 12px; clicked => { Act.act("music.wood", i); } }
+                        TapArea { x: -4px; y: -6px; width: parent.width + 8px; height: parent.height + 12px; tapped => { Act.act("music.wood", i); } }
                     }
                 }
                 if root.style == 0 || root.style >= 3: MenuSetRow {

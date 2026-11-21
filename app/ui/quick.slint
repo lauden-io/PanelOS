@@ -4,7 +4,7 @@
 // Texts the app fills in: title, mood (a line: all off / some on / all on), placard (flight deck, may name the panel's
 // room), state words, the deck's group frames.
 import { Theme, Act } from "theme.slint";
-import { Icon, Dropdown, MenuHost, PageMenu, Jelly, Toggle, TouchSlider, TextButton } from "widgets.slint";
+import { Icon, Dropdown, MenuHost, PageMenu, Jelly, Toggle, TouchSlider, TextButton, TapArea } from "widgets.slint";
 
 export struct QuickTile {
     name: string,
@@ -451,7 +451,7 @@ component QuickMenus inherits Rectangle {
                             drop-shadow-blur: root.on-shown ? 12px : 0px; drop-shadow-color: root.tile.tint.with-alpha(0.6);
                             Rectangle { x: 0; y: parent.height - 2px; width: parent.width; height: 2px; background: #00000066; }
                             Text { text: "ON"; font-size: 12px; font-weight: 800; letter-spacing: 1px; color: root.on-shown ? #111111 : #6b6f75; }
-                            on-ta := TouchArea { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; clicked => { root.toggle(); } }
+                            on-ta := TapArea { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px; tapped => { root.toggle(); } }
                             if on-ta.pressed: Rectangle { border-radius: 4px; background: #00000033; }
                             if root.dark(0): Rectangle { border-radius: 4px; background: #000000a6; }
                         }
@@ -479,7 +479,7 @@ component QuickMenus inherits Rectangle {
                                 horizontal-alignment: center; vertical-alignment: center; }
                             Text { y: 24px; width: parent.width; height: 12px; text: "ON"; font-size: 9px; font-weight: 800; letter-spacing: 1px;
                                 color: root.on-shown ? #4cd964 : #3a3d42; horizontal-alignment: center; vertical-alignment: center; }
-                            pwr := TouchArea { clicked => { root.toggle(); } }
+                            pwr := TapArea { tapped => { root.toggle(); } }
                         }
                     }
 
@@ -558,7 +558,7 @@ component QuickMenus inherits Rectangle {
                                 if k == root.col-shown && root.look == 1: Rectangle {
                                     x: -2px; y: -2px; width: 44px; height: 44px; border-radius: 6px; border-width: 2px; border-color: #e9ecef;
                                 }
-                                col-ta := TouchArea { x: -5px; y: -2px; width: parent.width + 10px; height: parent.height + 4px; clicked => { root.pick-colour(k); } }
+                                col-ta := TapArea { x: -5px; y: -2px; width: parent.width + 10px; height: parent.height + 4px; tapped => { root.pick-colour(k); } }
                                 if col-ta.pressed: Rectangle { border-radius: parent.border-radius; background: #0000002e; }
                                 if root.dark(k + 1): Rectangle { border-radius: parent.border-radius; background: #000000a6; }
                             }
@@ -761,9 +761,11 @@ export component QuickPage inherits Rectangle {
             animate background { duration: 120ms; easing: ease-out; }
             opacity: tile-touch.pressed ? 0.8 : 1;
             property <bool> held;
+            property <bool> dragged;             // the finger moved more than 8 px (TapArea's rule): no toggle
             tile-touch := TouchArea {
-                pointer-event(ev) => { if ev.kind == PointerEventKind.down { tile.held = false; } }
-                clicked => { if !tile.held { Act.act("quick.toggle", i); } }
+                pointer-event(ev) => { if ev.kind == PointerEventKind.down { tile.held = false; tile.dragged = false; } }
+                moved => { if Math.abs(self.mouse-x - self.pressed-x) > 8px || Math.abs(self.mouse-y - self.pressed-y) > 8px { tile.dragged = true; } }
+                clicked => { if !tile.held && !tile.dragged { Act.act("quick.toggle", i); } }
             }
             Timer { interval: 500ms; running: tile-touch.pressed && !tile.held; triggered => { tile.held = true; Act.act("quick.details", i); } }
             // the long press fills the border clockwise (0.5 s); it starts after a short touch (90 ms) so a tap shows nothing
@@ -818,8 +820,8 @@ export component QuickPage inherits Rectangle {
             Rectangle { x: 6px; y: 4px; width: 40px; height: 26px; border-radius: 4px; background: t.on ? ch.lit : #2b2f33; border-width: 1px; border-color: #0b0c0d;
                 drop-shadow-blur: t.on ? 10px : 0px; drop-shadow-color: ch.lit.with-alpha(0.8);
                 animate background, drop-shadow-blur { duration: 100ms; easing: ease-out; }
-                TouchArea { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px;
-                    clicked => {
+                TapArea { x: -4px; y: -4px; width: parent.width + 8px; height: parent.height + 8px;
+                    tapped => {
                         if ch.two && !ch.throwing {
                             ch.to-up = !t.on; ch.t0 = animation-tick(); ch.sent = false; ch.throwing = true;
                         } else if !ch.two {
@@ -975,10 +977,15 @@ export component QuickPage inherits Rectangle {
                 opacity: t.gone ? 0.45 : 1; }
             if root.lever-frames.length >= 9: Image { x: (parent.width - 56px) / 2; y: 44px + dk.knock; width: 56px; height: 84px;
                 source: root.lever-frames[dk.frame]; opacity: t.gone ? 0.45 : 1; }
+            property <bool> dragged;
             TouchArea { x: (parent.width - 56px) / 2 - 16px; y: 36px; width: 88px; height: 100px; enabled: !t.gone;
-                clicked => { if !dk.throwing { dk.to-up = !t.on; dk.t0 = animation-tick(); dk.sent = false; dk.throwing = true; } }
+                pointer-event(ev) => { if ev.kind == PointerEventKind.down { dk.dragged = false; } }
+                // a tap throws it; a drag (more than 8 px) that is not the throw below does nothing
+                clicked => { if !dk.throwing && !dk.dragged { dk.to-up = !t.on; dk.t0 = animation-tick(); dk.sent = false; dk.throwing = true; } }
                 // a drag in the throw direction past the middle throws it too
-                moved => { if (!t.on && self.pressed-y - self.mouse-y > 30px) || (t.on && self.mouse-y - self.pressed-y > 30px) { if !dk.throwing { dk.to-up = !t.on; dk.t0 = animation-tick(); dk.sent = false; dk.throwing = true; } } } }
+                moved => {
+                    if Math.abs(self.mouse-x - self.pressed-x) > 8px || Math.abs(self.mouse-y - self.pressed-y) > 8px { dk.dragged = true; }
+                    if (!t.on && self.pressed-y - self.mouse-y > 30px) || (t.on && self.mouse-y - self.pressed-y > 30px) { if !dk.throwing { dk.to-up = !t.on; dk.t0 = animation-tick(); dk.sent = false; dk.throwing = true; } } } }
             Text { x: 0; y: 121px; width: parent.width; text: "OFF"; font-size: 9px; font-weight: 800; color: #eceff1d0; horizontal-alignment: center; letter-spacing: 1px; }
             // the plate: the short name in one line; a long one in smaller letters, then in two lines
             property <string> ptext: (t.label != "" ? t.label : t.name).to-uppercase();

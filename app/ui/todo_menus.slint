@@ -4,7 +4,7 @@
 // on a dark card (every tape drawn by the app's tape drawer), notepad a page of the pad flipping down from its binding.
 // Rows to tap are at least 40 px; long names wrap; past y 468 a menu's rows scroll inside.
 import { Theme, Act, Words, Clock } from "theme.slint";
-import { Icon, Dropdown, Segmented, TextButton } from "widgets.slint";
+import { Icon, Dropdown, Segmented, TextButton, TapArea } from "widgets.slint";
 
 export struct TodoList {
     name: string,
@@ -238,7 +238,7 @@ export component TodoBrandPicker inherits BrandMotion {
                 Text { x: parent.width - 30px - 34px; y: 0; width: 30px; height: parent.height; text: l.open > 0 ? l.open : "";
                     font-size: 15px; color: Theme.muted; horizontal-alignment: right; vertical-alignment: center; }
                 if brow.on: Icon { x: parent.width - 30px; y: 0; width: 26px; height: parent.height; text: "\u{F012C}"; font-size: 20px; color: Theme.accent; }
-                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+                ta := TapArea { tapped => { Act.act("todo.pick", i); } }
             }
         }
     }
@@ -350,7 +350,7 @@ export component TodoReceiptPicker inherits ReceiptSlip {
                     source: @image-url("todo/leader-dot.png"); horizontal-tiling: repeat; }
                 cnt := Text { x: parent.width - 2px - self.preferred-width; y: 8px; text: l.open; font-family: "DejaVu Sans Mono"; font-size: 14px;
                     font-weight: rrow.on ? 700 : 400; color: #2b2a28; }
-                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+                ta := TapArea { tapped => { Act.act("todo.pick", i); } }
             }
         }
     }
@@ -458,7 +458,7 @@ export component TodoTermPicker inherits TermWindow {
                 nm := Phosphor { x: 48px; y: 8px; width: parent.width - 48px - 10px - cnt.text-w - 4px; height: self.text-h; text: l.name;
                     font-weight: trow.on ? 700 : 400; lh: 1.16; }
                 cnt := Phosphor { x: parent.width - 4px - self.text-w; y: 8px; width: self.text-w + 2px; height: 22px; text: l.open; ink: #3dff7499; wrap: no-wrap; }
-                ta := TouchArea { enabled: root.pick < 0; clicked => { root.pick = i; root.p0 = animation-tick(); root.picking = true; } }
+                ta := TapArea { enabled: root.pick < 0; tapped => { root.pick = i; root.p0 = animation-tick(); root.picking = true; } }
             }
         }
     }
@@ -480,30 +480,30 @@ export component TodoTermSettings inherits TermWindow {
         // look  < name >: a tap on the line takes the next one
         Rectangle { height: Math.max(44px, lv.text-h + 22px);
             background: lta.pressed ? #3dff741f : transparent;
-            lta := TouchArea { clicked => { root.step(1); } }
+            lta := TapArea { tapped => { root.step(1); } }
             Phosphor { x: 4px; y: 11px; width: 60px; height: 22px; text: "look"; wrap: no-wrap; }
             Rectangle { x: parent.width - 44px - 200px - 44px; width: 44px; height: 44px;
                 Phosphor { y: 11px; height: 22px; text: "<"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
-                TouchArea { clicked => { root.step(-1); } } }
+                TapArea { tapped => { root.step(-1); } } }
             lv := Phosphor { x: parent.width - 44px - 200px; y: 11px; width: 200px; height: self.text-h; text: root.look-names[root.cur].to-lowercase(); ink: #c8ffd6;
                 horizontal-alignment: center; lh: 1.26; }
             Rectangle { x: parent.width - 44px; width: 44px; height: 44px;
                 Phosphor { y: 11px; height: 22px; text: ">"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
-                TouchArea { clicked => { root.step(1); } } }
+                TapArea { tapped => { root.step(1); } } }
         }
         // time  < 24h >: at once, panel-wide (32.3)
         Rectangle { height: 44px;
             background: tta.pressed ? #3dff741f : transparent;
-            tta := TouchArea { clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } }
+            tta := TapArea { tapped => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } }
             Phosphor { x: 4px; y: 11px; width: 60px; height: 22px; text: "time"; wrap: no-wrap; }
             Rectangle { x: parent.width - 44px - 200px - 44px; width: 44px; height: 44px;
                 Phosphor { y: 11px; height: 22px; text: "<"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
-                TouchArea { clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } } }
+                TapArea { tapped => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } } }
             Phosphor { x: parent.width - 44px - 200px; y: 11px; width: 200px; height: 22px; text: Clock.h24 ? "24h" : "12h"; ink: #c8ffd6;
                 horizontal-alignment: center; wrap: no-wrap; }
             Rectangle { x: parent.width - 44px; width: 44px; height: 44px;
                 Phosphor { y: 11px; height: 22px; text: ">"; font-weight: 700; horizontal-alignment: center; wrap: no-wrap; }
-                TouchArea { clicked => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } } }
+                TapArea { tapped => { Act.act("set.h24", Clock.h24 ? "false" : "true"); } } }
         }
         // [ save & exit ]
         Rectangle { height: 44px;
@@ -556,7 +556,7 @@ export component TodoTapePicker inherits TapeCard {
                 Image { x: 0; y: (parent.height - self.height) / 2; width: l.tape.width * 1px; height: l.tape.height * 1px; source: l.tape; }
                 Image { x: l.tape.width * 1px - 4px; y: (parent.height - self.height) / 2; width: l.count-tape.width * 1px; height: l.count-tape.height * 1px;
                     source: l.count-tape; }
-                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+                ta := TapArea { tapped => { Act.act("todo.pick", i); } }
             }
         }
     }
@@ -656,7 +656,7 @@ export component TodoPadPicker inherits PadPage {
                 }
                 Text { x: parent.width - 2px - 34px; y: parent.height - 40px + 6px; width: 34px; height: 30px; text: l.open > 0 ? l.open : "–";
                     font-family: "Caveat"; font-size: 21px; font-weight: 500; color: #56565c; horizontal-alignment: right; vertical-alignment: center; }
-                ta := TouchArea { clicked => { Act.act("todo.pick", i); } }
+                ta := TapArea { tapped => { Act.act("todo.pick", i); } }
             }
         }
     }
