@@ -30,7 +30,7 @@ const ENUM_SERVICES: &str = "_services._dns-sd._udp.local";
 /// A service this panel announces.
 #[derive(Clone)]
 pub struct Service {
-    /// Instance and host name, e.g. "nspanel-pro".
+    /// Instance and host name: the panel's ID (`panel_id.rs`), e.g. "nspanel-pro" or "kitchen".
     pub name: String,
     /// Service type, e.g. "_esphomelib._tcp".
     pub kind: String,

@@ -38,8 +38,10 @@ const PATH: &str = "/sendspin";
 const STORE: &str = "/mnt/persist/nspanel/sendspin.json";
 const NOISE: &str = "Noise_KKpsk2_25519_ChaChaPoly_SHA256";
 const SUITE: &str = "25519_ChaChaPoly_SHA256";
-/// The player's name in Music Assistant.
-const PLAYER_NAME: &str = "NSPanel Pro";
+/// The player's name in Music Assistant: "NSPanel Pro", with the panel's name for a panel that has one.
+fn player_name() -> String {
+    crate::panel_id::label("NSPanel Pro")
+}
 /// Bytes of outstanding audio the server may send (about 5 s of 48 kHz 16-bit stereo).
 const BUFFER_CAPACITY: u32 = 1_000_000;
 const SAMPLE_US: f64 = 1_000_000.0 / 48_000.0;
@@ -533,10 +535,10 @@ fn mix_into(m: &mut Music, out: &mut [i16], heard_at: i64, target: f32) {
 /// The Sendspin service for the mDNS announcement (the panel waits for Music Assistant to connect).
 pub fn mdns_service() -> crate::mdns::Service {
     crate::mdns::Service {
-        name: crate::esphome::DEVICE_NAME.into(),
+        name: crate::esphome::device_name().into(),
         kind: "_sendspin._tcp".into(),
         port: PORT,
-        txt: vec![format!("path={PATH}"), format!("name={PLAYER_NAME}")],
+        txt: vec![format!("path={PATH}"), format!("name={}", player_name())],
     }
 }
 
@@ -960,7 +962,7 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
             "server/hello" => {
                 let mac = crate::esphome::mac_address().to_lowercase();
                 c.send(&json!({"type": "client/hello", "payload": {
-                    "name": PLAYER_NAME,
+                    "name": player_name(),
                     "device_info": {
                         "product_name": "NSPanel Pro 86",
                         "manufacturer": "PanelOS",

@@ -83,6 +83,8 @@ pub fn fill(ui: &AppWindow) {
         let about = vec![
             info_row("PanelOS", format!("Version {}", env!("CARGO_PKG_VERSION"))),
             info_row("Model", crate::panel_device::MODEL.to_string()),
+            // the name the PanelOS integration knows the panel by (its Panel ID)
+            info_row("Panel ID", crate::panel_id::get().to_string()),
             info_row("Address", ip.unwrap_or_else(|| "–".into())),
             info_row("Home Assistant", if ha.is_empty() { "–".into() } else { ha }),
         ];

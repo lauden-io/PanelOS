@@ -42,6 +42,7 @@ mod pages;
 mod quick;
 mod pairing;
 mod panel_device;
+mod panel_id;
 mod platform;
 mod roam;
 mod sendspin;
