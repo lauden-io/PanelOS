@@ -34,6 +34,7 @@ administrator to subscribe for it.
 
 from __future__ import annotations
 
+import logging
 import time
 from collections.abc import Callable
 from datetime import timedelta
@@ -82,6 +83,8 @@ from .players import async_register_players_view
 from .sounds import async_register_views
 from .page import async_hide_page, async_setup_page, async_show_page, checked_page, split_quick_pages
 from .panel import Panel, alive, find_entry, link_gone, links, may_act, panel_config, panel_user, set_panel_user, voice_player
+
+_LOGGER = logging.getLogger(__name__)
 
 type PanelOSConfigEntry = ConfigEntry[Panel]
 
