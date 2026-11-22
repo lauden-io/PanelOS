@@ -61,7 +61,7 @@ Native Rust app with the Slint UI toolkit. It draws its own interface on the pan
 
 ## Frame rates
 
-Measured on the panel with the app's frame statistics (`{"frame_stats": true}` on the development input, 6–8 s windows after the view settled), the screensaver held off, version 0.0.6. A still view draws no frame at all; "0" below means not one frame in the window. Views that changed after 0.0.6 (the nixie stopwatch, the synthwave scenes, the photo pages with rain on the glass) are not measured again.
+Measured on the panel with the app's frame statistics (`{"frame_stats": true}` on the development input, 6–8 s windows after the view settled), the screensaver held off, version 0.0.6. A still view draws no frame at all; "0" below means not one frame in the window. The nixie stopwatch, the synthwave scenes and the drawn scenes changed later and were measured again with 0.0.8 (the second table); the photo pages with rain on the glass were not.
 
 | View | Frames a second | Slowest frame |
 |---|---|---|
@@ -83,9 +83,23 @@ Measured on the panel with the app's frame statistics (`{"frame_stats": true}` o
 | Synthwave timers: one / two / three running | 43.2 / 30.0 / 33.6 | 62.5 ms |
 | Stopwatch, nixie tubes, running | 45.2 | 32.7 ms |
 
+Measured again with 0.0.8 (ranges of several windows):
+
+| View | Frames a second |
+|---|---|
+| Custom page with widgets, drawn countryside: clear day / clear night / storm at night / strong wind | 44.5–49.0 / 35.4–43.1 / 30.8–34.1 / 28.0–30.9 |
+| Custom page with widgets, drawn city: clear day / clear night / storm / strong wind | 37.1–40.5 / 29.1–33.4 / 31.2–36.9 / 26.8–32.1 |
+| Weather details, drawn scenes at night, calm / storm / strong wind: big city, city, countryside | 40.1 / 44.9 / 37.1, 40.9 / 41.3 / 38.2, 54.6 / 43.0 / 38.5 |
+| Custom page with widgets, synthwave city | 48.7–49.1 |
+| Synthwave beach: busy traffic / no cars / at dawn | 40.9–44.8 / 45.1–47.6 / 42.1–44.5 |
+| Synthwave at dawn, a new sun value gliding in | 40.3–42.5 (three frames of about 150 ms) |
+| Stopwatch, nixie tubes, running | 43.2–55.1 |
+| Any other page while the stopwatch has the nixie look | 0 |
+
 Known limits:
 
 - Synthwave timers page: with two or more timers running, one frame a second takes 40–60 ms, so the page does not hold 60 fps.
+- Drawn countryside and city behind widgets: in strong wind, and the drawn city at night, windows of 27–33 fps.
 
 Heat: the SoC temperature after eight minutes in each view, one after the other at night, with the app's CPU share. The SoC's first trip point is at 70 °C, but no cooling is bound to it: the CPU is slowed from 85 °C. The GPU runs only at the top of its frequency range: the logic rail's voltage limits leave out its lower operating points.
 
