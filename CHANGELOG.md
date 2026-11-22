@@ -30,6 +30,7 @@
 - Slint 1.19.0 (before 1.18.1). Among its fixes: a text drawn once into a layer no longer stops updating when the text cache drops it, which caused a timer digit to stand still. The renderer keeps the PanelOS change for pictures at fractional positions (slow movement stays smooth); the other one, a layer of a removed page, is fixed upstream.
 - The wander clock, the title marquee, the news crawl and a few smaller moving parts glide instead of stepping a pixel at a time; what stands still is drawn as sharp as before.
 - The Home Assistant address (setup screen, Settings → Home Assistant) is typed on the full keyboard instead of the number pad, so a host name can be entered as well as an IP address (#119).
+- "Change Home Assistant" on the pairing screen and on the screen shown while Home Assistant cannot be reached opens the address screen again, and "Change Wi-Fi" there opens the Wi-Fi settings; both did nothing before.
 
 ### Security
 - The Home Assistant login token goes only to the address it was made for. A new address set on the panel keeps the login only when it is another of that Home Assistant's own addresses (Home Assistant names them over the existing connection); otherwise the old login is revoked and the panel pairs again. The WebSocket follows no redirects.

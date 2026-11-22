@@ -856,6 +856,8 @@ export component AppWindow inherits Window {
     callback setup-choose-many();
     callback setup-pick-back();
     callback setup-back();
+    // the pairing and offline screens' "Change Home Assistant" (the setup screen with the address in use)
+    callback change-ha();
     callback wifi-back();
     callback wifi-pick(string);
     callback wifi-rescan();
@@ -1790,6 +1792,7 @@ export component AppWindow inherits Window {
         theme-mode: root.theme-mode;
         wifi-bars: root.net-bars;
         theme-changed(m) => { root.theme-mode-changed(m); }
+        change-ha => { root.change-ha(); }
     }
     if root.connecting: ConnectingScreen {
         morse-t: (animation-tick() - Clock.base) / 1s;
@@ -1811,6 +1814,8 @@ export component AppWindow inherits Window {
         variant: root.offline-variant;
         theme-mode: root.theme-mode;
         theme-changed(m) => { root.theme-mode-changed(m); }
+        change-ha => { root.change-ha(); }
+        change-wifi => { root.setup-change-wifi(); }
     }
     if root.setup: SetupScreen {
         found: root.setup-found;

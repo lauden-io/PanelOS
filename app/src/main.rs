@@ -4619,6 +4619,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let ui = AppWindow::new()?;
     UI.with(|u| *u.borrow_mut() = Some(ui.as_weak()));
+    // "Change Home Assistant" on the pairing and offline screens: the setup screen with the address in use
+    {
+        let weak = ui.as_weak();
+        ui.on_change_ha(move || {
+            if let Some(ui) = weak.upgrade() {
+                open_ha_setup(&ui);
+            }
+        });
+    }
     {
         let weak = ui.as_weak();
         platform::on_press(Box::new(move |pressed| {
