@@ -1340,7 +1340,6 @@ export component WeatherPanel inherits Rectangle {
     in property <bool> fx-bolts: true;       // visible lightning bolts in a thunderstorm
     in property <bool> fx-flash: true;       // lightning flash
     in property <bool> fx-drops: true;       // rain drops on the glass
-    in property <image> sky-frame;           // optional per-frame sky from the app
     in property <bool> shown;                // the page is the one on screen (25.W1: it opens)
     // 25.W1: when the page opens, the forecast bars grow from zero one after another (300 ms each, 20 ms apart)
     property <bool> opening;
@@ -1460,7 +1459,6 @@ export component WeatherPanel inherits Rectangle {
         time-offset: root.data.time-offset;
         wind: root.data.wind-kmh;
         gust: root.data.gust-kmh;
-        sky-frame: root.sky-frame;
         real-sun: root.data.real-sun;
         sun-az: root.data.sun-az;
         sun-el: root.data.sun-el;

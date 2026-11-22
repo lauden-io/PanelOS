@@ -383,7 +383,6 @@ export component MainWindow inherits Window {
     in property <[image]> music-woods;
     in property <string> home-year: "2026";
     in property <string> home-week: "Week 46";
-    in property <image> weather-sky-frame;   // optional per-frame sky from the app (radial cloud flow)
     in property <float> panel-appear: 1;
     in property <bool> weather-details: true;
     in property <bool> weather-hours: true;
@@ -811,7 +810,6 @@ export component MainWindow inherits Window {
             time-offset: root.weather.time-offset;
             wind: root.weather.wind-kmh;
             gust: root.weather.gust-kmh;
-            sky-frame: root.weather-sky-frame;
             fixed-halo: false;
             real-sun: root.weather.real-sun;
             sun-az: root.weather.sun-az;
@@ -889,7 +887,6 @@ export component MainWindow inherits Window {
         }
         if root.panel == "weather": WeatherPanel {
             data: root.weather;
-            sky-frame: root.weather-sky-frame;
             variant: root.panel-variant;
             appear: root.panel-appear;
             accent: root.clock-accent;

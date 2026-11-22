@@ -632,7 +632,6 @@ export component AppWindow inherits Window {
     in property <[image]> music-woods;
     in property <string> home-year: "2026";
     in property <string> home-week: "Week 46";
-    in property <image> weather-sky-frame;   // optional per-frame sky from the app (radial cloud flow)
     in property <[Person]> people;
     in property <bool> show-people;      // the small heads at the bottom of every page (the settings' show_people)
     in property <int> info-unread;       // unread notifications (the bell's count)
@@ -1082,7 +1081,6 @@ export component AppWindow inherits Window {
                     time-offset: root.weather.time-offset;
                     wind: root.weather.wind-kmh;
                     gust: root.weather.gust-kmh;
-                    sky-frame: root.weather-sky-frame;
                     fixed-halo: false;
                     real-sun: root.weather.real-sun;
                     sun-az: root.weather.sun-az;
@@ -1114,7 +1112,6 @@ export component AppWindow inherits Window {
                     time-offset: root.weather.time-offset;
                     wind: root.weather.wind-kmh;
                     gust: root.weather.gust-kmh;
-                    sky-frame: root.weather-sky-frame;
                     fixed-halo: false;
                     real-sun: root.weather.real-sun;
                     sun-az: root.weather.sun-az;

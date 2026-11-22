@@ -32,7 +32,6 @@ export component PhotoSky inherits Rectangle {
     in property <float> time-offset;     // mockup only: continue the clock across render batches
     in property <float> wind;            // km/h: sky speed and rain slant
     in property <float> gust;            // km/h: gusts lean the rain further now and then
-    in property <image> sky-frame;       // optional: the whole sky layer computed by the app per frame
     in property <bool> fixed-halo: true; // soft halos for the classic layout (the home page draws its own per widget)
     in property <bool> live: true;       // (partly) on screen: only then the app draws the moving rows
     // The sun and the moon follow the real sky: azimuth and elevation in degrees (HA sun.sun; the
@@ -50,7 +49,6 @@ export component PhotoSky inherits Rectangle {
     // the disc and its glow fade there, so they never fight with the text
     in property <float> sun-veil;
     in property <float> moon-veil;
-    property <bool> rust-sky: root.sky-frame.width > 0;
     property <float> t: (animation-tick() - Clock.base) / 1ms / 1000 + root.time-offset;
     clip: true;
     // (no ground of its own: the backdrop or the sky photo, the land and its strips cover every pixel, opaque)
@@ -237,7 +235,7 @@ export component PhotoSky inherits Rectangle {
     property <float> dfa: max(0.03, min(0.97, root.df));
     property <float> mt: Math.mod(root.t + 15.2, 17);
     property <int> mn: Math.floor((root.t + 15.2) / 17);
-    property <bool> streaks: !root.rust-sky && root.theme < 3 && (root.mood == 6 || ((root.mood == 0 || root.mood == 1) && root.wind >= 35));
+    property <bool> streaks: root.theme < 3 && (root.mood == 6 || ((root.mood == 0 || root.mood == 1) && root.wind >= 35));
     property <length> wsx: -Math.mod(root.t * 32, 528) * 1px;
     property <length> wsy: -Math.mod(root.t * 408 / 66, 408) * 1px;
     property <float> streak-k: root.streaks ? 1 : 0;
@@ -287,10 +285,10 @@ export component PhotoSky inherits Rectangle {
         }
 
         // 1. sky photo: seamless 792 px tile, two copies, plus the sub-pixel copies
-        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
-        if !root.rust-sky && !root.day-hidden: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
+        if !root.day-hidden: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.day-hidden: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.day-hidden: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
+        if !root.day-hidden: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
         if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
             source: root.gsky(root.theme, root.mood, 0);
@@ -308,9 +306,8 @@ export component PhotoSky inherits Rectangle {
             source: root.gsky(root.theme, root.mood, 1);
         }
 
-        if !root.rust-sky && root.nmix > 0: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
-        if !root.rust-sky && root.nmix > 0: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
-        if root.rust-sky: Image { x: root.sx; y: root.sy; width: 528px; height: 528px; source: root.sky-frame; }
+        if root.nmix > 0: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
+        if root.nmix > 0: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
 
         // 2. the photo's own stars twinkle (clear night) and drift with the sky; irregular
         //    scintillation, a soft glow around a small bright core
