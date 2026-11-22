@@ -30,7 +30,9 @@ jpeg-decoder = { version = "0.3", default-features = false }
 png = "0.18"
 jpeg-encoder = { version = "0.6", default-features = false, features = ["std"] }
 prost = "0.14"
-minimp3 = "0.5"
+# MP3 announcements from Home Assistant (pure Rust, no unsafe code)
+symphonia-core = "0.6"
+symphonia-bundle-mp3 = "0.6"
 alsa = "0.12"
 # ESPHome API encryption (Noise_NNpsk0_25519_ChaChaPoly_SHA256)
 snow = "=0.9.6"
