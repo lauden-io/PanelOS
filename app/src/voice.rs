@@ -683,29 +683,47 @@ pub fn parse_wav(bytes: &[u8]) -> Option<(u32, u16, Vec<u8>)> {
     None
 }
 
-/// MP3 → (rate, channels, 16-bit samples as bytes).
+/// MP3 → (rate, channels, 16-bit samples as bytes). A panic in the decoder counts as a file it cannot read, so
+/// the announcement thread still reports back and lets the next announcement in.
 fn decode_mp3(bytes: &[u8]) -> Option<(u32, u16, Vec<u8>)> {
-    let mut dec = minimp3::Decoder::new(bytes);
+    std::panic::catch_unwind(|| decode_mp3_frames(bytes)).ok().flatten()
+}
+
+/// Decodes the frames that have the first frame's rate and channel count, up to the longest sound the panel plays;
+/// bad frames and frames with another rate or channel count are skipped.
+fn decode_mp3_frames(bytes: &[u8]) -> Option<(u32, u16, Vec<u8>)> {
+    use symphonia_bundle_mp3::{MpaDecoder, MpaReader};
+    use symphonia_core::codecs::audio::{AudioDecoder, AudioDecoderOptions};
+    use symphonia_core::errors::Error;
+    use symphonia_core::formats::{FormatOptions, FormatReader};
+    use symphonia_core::io::MediaSourceStream;
+
+    let source = MediaSourceStream::new(Box::new(std::io::Cursor::new(bytes)), Default::default());
+    let mut reader = MpaReader::try_new(source, FormatOptions::default()).ok()?;
+    let params = reader.tracks().first()?.codec_params.as_ref()?.audio()?.clone();
+    // every decoded sample is kept (no trimming of the encoder's delay and padding)
+    let mut options = AudioDecoderOptions::default();
+    options.gapless = false;
+    let mut decoder = MpaDecoder::try_new(&params, &options).ok()?;
     let (mut rate, mut channels, mut out, mut max) = (0u32, 0u16, Vec::new(), 0usize);
-    loop {
-        match dec.next_frame() {
-            Ok(f) => {
-                if rate == 0 {
-                    rate = f.sample_rate as u32;
-                    channels = f.channels as u16;
-                    max = playable(rate, channels)?;
-                }
-                if f.sample_rate as u32 == rate && f.channels as u16 == channels {
-                    out.extend(f.data.iter().flat_map(|s| s.to_le_bytes()));
-                }
-                if out.len() >= max {
-                    out.truncate(max);
-                    break;
-                }
-            }
-            Err(minimp3::Error::Eof) => break,
-            Err(minimp3::Error::SkippedData) => continue,
+    let mut frame: Vec<i16> = Vec::new();
+    while let Ok(Some(packet)) = reader.next_packet() {
+        let audio = match decoder.decode(&packet) {
+            Ok(audio) => audio,
+            // a bad frame, or one with another rate or channel count than the first
+            Err(Error::DecodeError(_) | Error::IoError(_)) => continue,
             Err(_) => break,
+        };
+        if rate == 0 {
+            rate = audio.spec().rate();
+            channels = audio.spec().channels().count() as u16;
+            max = playable(rate, channels)?;
+        }
+        audio.copy_to_vec_interleaved(&mut frame);
+        out.extend(frame.iter().flat_map(|s| s.to_le_bytes()));
+        if out.len() >= max {
+            out.truncate(max);
+            break;
         }
     }
     (rate > 0 && channels > 0 && !out.is_empty()).then_some((rate, channels, out))
@@ -1117,7 +1135,7 @@ fn fetch_and_play(url: &str, ha_url: &str, player: &Player) -> Result<(), String
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 16 * 1024 * 1024), &mut bytes)
         .map_err(|e| e.to_string())?;
-    // Answers come as WAV; announcements from Home Assistant as MP3.
+    // Answers come as WAV; announcements from Home Assistant as WAV or MP3.
     let (rate, channels, data) = parse_wav(&bytes).or_else(|| decode_mp3(&bytes)).ok_or("neither a 16-bit WAV nor an MP3 file")?;
     player.play(Sound::Pcm { rate, channels, data });
     std::thread::sleep(Duration::from_millis(300));
@@ -1846,7 +1864,7 @@ pub fn spawn(
 
 #[cfg(test)]
 mod tests {
-    use super::silent_answer_secs;
+    use super::{decode_mp3, playable, silent_answer_secs};
 
     #[test]
     fn a_silent_answer_stays_long_enough_to_read() {
@@ -1856,5 +1874,93 @@ mod tests {
         // characters, not bytes
         assert_eq!(silent_answer_secs(&"é".repeat(150)), 10);
         assert_eq!(silent_answer_secs(&"x".repeat(2000)), 30);
+    }
+
+    // Half a second of sine tone each, made with ffmpeg (libmp3lame): 440 Hz, and 660 Hz on the right channel.
+    const TONE_22050_MONO: &[u8] = include_bytes!("testdata/tone-22050-mono.mp3");
+    // variable bit rate and no Xing header, the shape of Home Assistant's speech files
+    const TONE_24000_MONO: &[u8] = include_bytes!("testdata/tone-24000-mono.mp3");
+    const TONE_24000_STEREO: &[u8] = include_bytes!("testdata/tone-24000-stereo.mp3");
+    const TONE_44100_STEREO: &[u8] = include_bytes!("testdata/tone-44100-stereo.mp3");
+
+    /// One channel of interleaved 16-bit samples.
+    fn channel(data: &[u8], channels: u16, c: usize) -> Vec<i16> {
+        data.chunks_exact(2 * channels as usize).map(|f| i16::from_le_bytes([f[2 * c], f[2 * c + 1]])).collect()
+    }
+
+    /// A tone's pitch from the zero crossings in the middle half of the sound.
+    fn pitch(samples: &[i16], rate: u32) -> f64 {
+        let mid = &samples[samples.len() / 4..samples.len() * 3 / 4];
+        let crossings = mid.windows(2).filter(|w| (w[0] < 0) != (w[1] < 0)).count();
+        crossings as f64 / 2.0 * rate as f64 / mid.len() as f64
+    }
+
+    #[test]
+    fn mp3_tones_decode_with_their_rate_channels_and_pitch() {
+        for (file, rate, channels, pitches) in [
+            (TONE_22050_MONO, 22050, 1, &[440.0][..]),
+            (TONE_24000_MONO, 24000, 1, &[440.0][..]),
+            (TONE_24000_STEREO, 24000, 2, &[440.0, 660.0][..]),
+            (TONE_44100_STEREO, 44100, 2, &[440.0, 660.0][..]),
+        ] {
+            let (r, c, data) = decode_mp3(file).expect("decodes");
+            assert_eq!((r, c), (rate, channels));
+            assert_eq!(data.len() % (2 * c as usize), 0);
+            // half a second, give or take the encoder's delay and padding
+            let secs = data.len() as f64 / (r as f64 * c as f64 * 2.0);
+            assert!((0.45..0.6).contains(&secs), "{secs} s at {rate} Hz");
+            for (ch, want) in pitches.iter().enumerate() {
+                let got = pitch(&channel(&data, c, ch), r);
+                assert!((got - want).abs() < want * 0.02, "{rate} Hz channel {ch}: {got} Hz instead of {want} Hz");
+            }
+        }
+    }
+
+    #[test]
+    fn a_cut_mp3_plays_its_whole_frames() {
+        let (_, _, full) = decode_mp3(TONE_44100_STEREO).unwrap();
+        // cut in the middle of a frame
+        let (r, c, cut) = decode_mp3(&TONE_44100_STEREO[..TONE_44100_STEREO.len() * 6 / 10 + 7]).expect("decodes");
+        assert_eq!((r, c), (44100, 2));
+        assert!(!cut.is_empty() && cut.len() < full.len());
+        // whole frames of 1152 samples, the same as in the whole file
+        assert_eq!(cut.len() % (1152 * 4), 0);
+        assert_eq!(cut[..], full[..cut.len()]);
+    }
+
+    #[test]
+    fn only_frames_like_the_first_one_are_kept() {
+        let (_, _, stereo) = decode_mp3(TONE_44100_STEREO).unwrap();
+        let (_, _, mono) = decode_mp3(TONE_22050_MONO).unwrap();
+        let (r, c, data) = decode_mp3(&[TONE_44100_STEREO, TONE_22050_MONO].concat()).expect("decodes");
+        assert_eq!((r, c, data.len()), (44100, 2, stereo.len()));
+        let (r, c, data) = decode_mp3(&[TONE_22050_MONO, TONE_44100_STEREO].concat()).expect("decodes");
+        assert_eq!((r, c, data.len()), (22050, 1, mono.len()));
+    }
+
+    #[test]
+    fn a_long_mp3_stops_at_the_longest_playable_sound() {
+        // about 208 s of the tone, over and over
+        let (r, c, data) = decode_mp3(&TONE_24000_MONO.repeat(400)).expect("decodes");
+        assert_eq!((r, c), (24000, 1));
+        assert_eq!(Some(data.len()), playable(r, c));
+    }
+
+    #[test]
+    fn noise_and_other_files_are_not_mp3() {
+        assert!(decode_mp3(&[]).is_none());
+        let mut x = 1u32;
+        let noise: Vec<u8> = (0..16384)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                x as u8
+            })
+            .collect();
+        assert!(decode_mp3(&noise).is_none());
+        let mut wav = b"RIFF\0\0\0\0WAVEfmt ".to_vec();
+        wav.extend(std::iter::repeat(0u8).take(4096));
+        assert!(decode_mp3(&wav).is_none());
     }
 }
