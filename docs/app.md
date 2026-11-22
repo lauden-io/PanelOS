@@ -104,6 +104,13 @@ With the moving rows of the drawn scenes as one picture from the app (after 0.0.
 | Custom page with widgets, drawn city, clear night | 35.4–36.2 | 33.6–35.0 |
 | Weather details, strong wind: countryside / city / neutral / big city | 45.5 / 41.1 / 40.1–41.2 / 36.0–36.2 | 39.6–40.1 / 38.5 / 26.6–27.0 / 37.4–38.4 |
 
+Measured with 0.0.9 (before: the same views on 0.0.8 with the smooth sky):
+
+| View | Frames a second |
+|---|---|
+| Custom page with widgets, nature photo at night: clear / cloudy, strong wind | 59.4–59.5 / 51.2–52.2 (before 27.4–27.5 / 41.8–42.3) |
+| Synthwave timers, two running | 28.9–29.1 |
+
 Known limits:
 
 - Synthwave timers page: with two or more timers running, one frame a second takes 40–60 ms, so the page does not hold 60 fps.

@@ -13,6 +13,7 @@
 - The swaying meadow with its sheen, the bending trees and the city's river are one picture the app draws up to 30 times a second instead of many picture strips: in strong wind the drawn scenes behind widgets hold 31–38 fps (before 30–33), the neutral scene on the weather details page 40 (before 27); they look and move as before (#81).
 - The drifting sky glides at every speed: the night sky and the dusk and dawn light moved a whole pixel at a time, a visible step every few frames in a breeze.
 - At night the photo themes' stars stand nearly still while the clouds drift on with the wind, pass over the stars and hide them; the clear night's sky with the Milky Way stays with its stars. The app draws the stars as one picture, so the starry night draws faster.
+- Nothing of the land drifts with the clouds any more: trees, a ridge and roofs left in some sky photos are taken out. At night the dawn or dusk light of the land no longer shows at its edge (a warm fringe along the clear night's ridge).
 
 ### Timers
 - On the synthwave timers page with two timers, the tens of seconds of a running time could stand still while the time ran on (a timer at zero still showing 20 s): each new digit is drawn fresh now.

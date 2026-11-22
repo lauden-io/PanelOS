@@ -503,11 +503,11 @@ export component PhotoSky inherits Rectangle {
         cache-rendering-hint: true;
         Image { x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.day-h * 1px; source: root.fg(root.theme, root.mood);
             source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.day-h; }
-        if root.has-grade && root.dk > 0: Image {
+        if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
             x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dk;
             source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
         }
-        if root.has-grade && root.dn > 0: Image {
+        if root.has-grade && root.dn > 0 && root.nmix < 1: Image {
             x: root.fx; y: root.fy + root.land-top * 1px; width: 528px; height: root.grade-h * 1px; opacity: root.dn;
             source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.land-top; source-clip-width: 528; source-clip-height: root.grade-h;
         }
