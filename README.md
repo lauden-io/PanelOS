@@ -15,7 +15,7 @@ Version **0.0.8** (what is new: [CHANGELOG.md](CHANGELOG.md)). Licence: AGPL-3.0
 
 ## The interface
 
-PanelOS draws its own interface on the panel's GPU: no browser, no web page, every pixel made for a 480 × 480 wall screen. The plain looks run at the screen's full 60 frames a second, the richest living scenes (drawn cities at night, the synthwave drive, neon timers) at about 27 to 55, and a still screen does not draw at all ([measured view by view](docs/app.md#frame-rates)). Swipe through your pages (there is no last one: after it comes the first again), pull down the quick shade, talk to Assist. Nothing waits for a page to load.
+PanelOS draws its own interface on the panel's GPU: no browser, no web page, every pixel made for a 480 × 480 wall screen. The plain looks run at the screen's full 60 frames a second, the richest living scenes (drawn cities at night, the synthwave drive, neon timers) at about 31 to 55, and a still screen does not draw at all ([measured view by view](docs/app.md#frame-rates)). Swipe through your pages (there is no last one: after it comes the first again), pull down the quick shade, talk to Assist. Nothing waits for a page to load.
 
 <img alt="PanelOS on the NSPanel Pro: a synthwave home page, a turntable, rain on the glass, a wall thermostat with running timers, a mixing desk, the oscilloscope voice view, a pager and a split-flap clock" src="docs/images/panelos-views.png" width="100%">
 

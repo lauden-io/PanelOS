@@ -96,10 +96,18 @@ Measured again with 0.0.8 (ranges of several windows):
 | Stopwatch, nixie tubes, running | 43.2–55.1 |
 | Any other page while the stopwatch has the nixie look | 0 |
 
+With the moving rows of the drawn scenes as one picture from the app (after 0.0.8; at night, the second column with the strips as before, measured right after in the same conditions):
+
+| View | Frames a second | Strips |
+|---|---|---|
+| Custom page with widgets, strong wind: countryside / city / neutral / big city | 36.2–37.7 / 31.6–35.2 / 34.1–34.2 / 31.9–32.3 | 32.0–32.6 / 31.4–32.5 / – / 30.1–31.6 |
+| Custom page with widgets, drawn city, clear night | 35.4–36.2 | 33.6–35.0 |
+| Weather details, strong wind: countryside / city / neutral / big city | 45.5 / 41.1 / 40.1–41.2 / 36.0–36.2 | 39.6–40.1 / 38.5 / 26.6–27.0 / 37.4–38.4 |
+
 Known limits:
 
 - Synthwave timers page: with two or more timers running, one frame a second takes 40–60 ms, so the page does not hold 60 fps.
-- Drawn countryside and city behind widgets: in strong wind, and the drawn city at night, windows of 27–33 fps.
+- Drawn scenes behind widgets in strong wind: windows of 31–38 fps.
 
 Heat: the SoC temperature after eight minutes in each view, one after the other at night, with the app's CPU share. The SoC's first trip point is at 70 °C, but no cooling is bound to it: the CPU is slowed from 85 °C. The GPU runs only at the top of its frequency range: the logic rail's voltage limits leave out its lower operating points.
 

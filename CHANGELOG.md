@@ -7,6 +7,9 @@
 - Other speech over a ring is made louder before the speech recognition (the echo canceller leaves it very quiet) and, when the assistant's language is not English, recognized in English at the same time, so a stop phrase is understood more often (#13).
 - MP3 announcements are decoded in pure Rust (Symphonia) instead of minimp3, whose ring buffer dependency has an open double-free advisory (RUSTSEC-2025-0044).
 
+### Weather backgrounds
+- The swaying meadow with its sheen, the bending trees and the city's river are one picture the app draws up to 30 times a second instead of many picture strips: in strong wind the drawn scenes behind widgets hold 31–38 fps (before 30–33), the neutral scene on the weather details page 40 (before 27); they look and move as before (#81).
+
 ### Dashboard mode
 - What goes off a still dashboard no longer stays on the screen until the dashboard changes: a strip closed with its ×, the voice view, the pull to refresh disc, a ring or a status screen that ends. Before, the last picture stayed, up to a minute with a clock on the dashboard.
 - A folded status screen's strip sits at the very top (the dashboard has no status bar), and a pull down on it opens the quick settings.
