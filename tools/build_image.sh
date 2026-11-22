@@ -11,7 +11,7 @@
 #   STOCK_RESOURCE  the stock resource partition from a panel backup (default:
 #                   the first /root/nspanel-backups/*/resource.img)
 #   KERNEL_PACK     lz4 (default: packed kernel, the chain loader unpacks it;
-#                   the image fits the 32 MiB boot partition) or none
+#                   keeps the image small for the 32 MiB boot partition) or none
 set -euo pipefail
 
 # WSL appends the Windows PATH (with spaces), which Buildroot refuses.

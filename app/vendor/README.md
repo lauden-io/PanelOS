@@ -9,7 +9,8 @@ used by the GPU build. Changes:
 
 - `itemrenderer.rs`, `draw_image_impl`: the image origin is no longer rounded to
   whole device pixels, so images moving slowly (the home page's drifting sky)
-  move smoothly instead of a pixel at a time.
+  move smoothly instead of a pixel at a time (`PANELOS_ALIGN_IMAGES=1` brings
+  the upstream rounding back, for measurements).
 - `lib.rs`, `free_graphics_resources`: the layer cache (`cache-rendering-hint`)
   also forgets a destroyed component. Without it a component created later at
   the same address (a page swapped for another one) showed the old layer.

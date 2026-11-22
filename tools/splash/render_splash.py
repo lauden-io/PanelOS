@@ -6,11 +6,14 @@ logo raster (8x supersampled, box-filtered); the draw-on animation only
 reveals its white pixels in the order a pen would draw the line (arc length
 along the line's centre, round pen tip), so the last frame is the logo itself.
 
+The panel's boot pictures come from tools/splash/storyboard.py, which uses this
+module (the logo's layers and the draw-on reveal).
+
 Usage: python render_splash.py <logo.svg> <out_dir> [--preview]
   --preview  writes preview.gif (the whole sequence) and keyframes.png
-Always writes, for the panel:
-  splash.bin      data of the boot splash program (buildroot/board/nspanel/src/nspanel-splash.c)
-  logo_96.rgba    the logo as premultiplied RGBA for the panel app's hand-over fade
+Always writes the logo-only sequence:
+  splash.bin      in the boot splash program's format (buildroot/board/nspanel/src/nspanel-splash.c)
+  logo_96.rgba    the finished logo as premultiplied RGBA
 """
 
 import struct

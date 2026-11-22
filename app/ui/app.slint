@@ -1951,8 +1951,6 @@ export component AppWindow inherits Window {
         if root.touch-test-step < 9: TextButton { x: 180px; y: 352px; width: 120px; text: "Cancel"; clicked => { Act.act("touch.cancel", ""); } }
     }
 
-    // Hand-over from the boot splash: its last frame (logo and text on
-
     // Hand-over from the boot splash
     if root.intro-visible: Rectangle {
         background: #000000;

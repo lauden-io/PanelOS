@@ -17,8 +17,8 @@ fi
 # console (Buildroot leaves it empty).
 sed -i 's/^root:[^:]*:/root:*:/' "$TARGET/etc/shadow"
 
-# One system font is enough: the panel app embeds its own fonts; fontconfig
-# (needed by the app's font backend) only must find at least one font.
+# One system font is enough: the panel app's fonts come with the UI bundle;
+# fontconfig (needed by the app's font backend) only must find at least one font.
 if [ -d "$TARGET/usr/share/fonts/dejavu" ]; then
 	find "$TARGET/usr/share/fonts/dejavu" -type f ! -name DejaVuSans.ttf -delete
 fi

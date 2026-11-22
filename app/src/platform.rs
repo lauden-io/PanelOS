@@ -165,7 +165,7 @@ pub fn calm() -> bool {
     now_ms().saturating_sub(last) >= CALM_AFTER_S.load(Ordering::SeqCst) * 1000
 }
 
-/// Set by SIGUSR2: scroll the dashboard one page (development aid).
+/// Set by SIGUSR2; nothing reads it: the handler only keeps the signal from ending the app.
 pub static SCROLL_REQUEST: AtomicBool = AtomicBool::new(false);
 
 extern "C" fn on_sigusr2(_: libc::c_int) {
