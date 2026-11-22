@@ -250,6 +250,22 @@ component NeonText inherits Rectangle {
         color: root.cr; horizontal-alignment: center; vertical-alignment: center; overflow: elide; }
 }
 
+// One digit cell of a running time: a new NeonText, with a layer of its own, for every new digit or colour. A layer
+// drawn again in place kept showing an old digit now and then (two timers: the tens of seconds stood still while the
+// time ran on); two cells take turns, so each digit is drawn fresh and the one before goes with its layer.
+component NeonCell inherits Rectangle {
+    in property <string> text;
+    in property <length> size;
+    in property <int> weight;
+    in property <color> glow;
+    in property <color> rim;
+    property <bool> odd;
+    changed text => { root.odd = !root.odd; }
+    changed glow => { root.odd = !root.odd; }
+    if root.odd: NeonText { width: root.width; height: root.height; text: root.text; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    if !root.odd: NeonText { width: root.width; height: root.height; text: root.text; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+}
+
 // A running time in neon, one cached layer per digit: each second only the digits that change are drawn again
 // (the whole time as one live text re-set its 13 layers every second: a 40-50 ms frame over the moving scene).
 // The cells are set only when they really change, so the others keep their layers.
@@ -292,13 +308,13 @@ component NeonClock inherits Rectangle {
     p-digit := Text { visible: false; text: "0"; font-size: root.size; font-weight: root.weight; }
     p-colon := Text { visible: false; text: ":"; font-size: root.size; font-weight: root.weight; }
     p-lead := Text { visible: false; text: root.c0; font-size: root.size; font-weight: root.weight; }
-    NeonText { x: root.x0; width: root.lw + 8px; height: root.height; text: root.c0; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
-    NeonText { x: root.x0 + root.lw; width: root.cw + 8px; height: root.height; text: ":"; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
-    NeonText { x: root.x0 + root.lw + root.cw; width: root.dw + 8px; height: root.height; text: root.c2; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
-    NeonText { x: root.x0 + root.lw + root.cw + root.dw; width: root.dw + 8px; height: root.height; text: root.c3; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
-    if root.long: NeonText { x: root.x0 + root.lw + root.cw + 2 * root.dw; width: root.cw + 8px; height: root.height; text: ":"; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
-    if root.long: NeonText { x: root.x0 + root.lw + 2 * root.cw + 2 * root.dw; width: root.dw + 8px; height: root.height; text: root.c5; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
-    if root.long: NeonText { x: root.x0 + root.lw + 2 * root.cw + 3 * root.dw; width: root.dw + 8px; height: root.height; text: root.c6; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    NeonCell { x: root.x0; width: root.lw + 8px; height: root.height; text: root.c0; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    NeonCell { x: root.x0 + root.lw; width: root.cw + 8px; height: root.height; text: ":"; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    NeonCell { x: root.x0 + root.lw + root.cw; width: root.dw + 8px; height: root.height; text: root.c2; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    NeonCell { x: root.x0 + root.lw + root.cw + root.dw; width: root.dw + 8px; height: root.height; text: root.c3; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    if root.long: NeonCell { x: root.x0 + root.lw + root.cw + 2 * root.dw; width: root.cw + 8px; height: root.height; text: ":"; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    if root.long: NeonCell { x: root.x0 + root.lw + 2 * root.cw + 2 * root.dw; width: root.dw + 8px; height: root.height; text: root.c5; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
+    if root.long: NeonCell { x: root.x0 + root.lw + 2 * root.cw + 3 * root.dw; width: root.dw + 8px; height: root.height; text: root.c6; size: root.size; weight: root.weight; glow: root.glow; rim: root.rim; }
 }
 
 component RoundButton inherits Rectangle {

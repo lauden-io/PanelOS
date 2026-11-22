@@ -10,6 +10,9 @@
 ### Weather backgrounds
 - The swaying meadow with its sheen, the bending trees and the city's river are one picture the app draws up to 30 times a second instead of many picture strips: in strong wind the drawn scenes behind widgets hold 31–38 fps (before 30–33), the neutral scene on the weather details page 40 (before 27); they look and move as before (#81).
 
+### Timers
+- On the synthwave timers page with two timers, the tens of seconds of a running time could stand still while the time ran on (a timer at zero still showing 20 s): each new digit is drawn fresh now.
+
 ### Dashboard mode
 - What goes off a still dashboard no longer stays on the screen until the dashboard changes: a strip closed with its ×, the voice view, the pull to refresh disc, a ring or a status screen that ends. Before, the last picture stayed, up to a minute with a clock on the dashboard.
 - A folded status screen's strip sits at the very top (the dashboard has no status bar), and a pull down on it opens the quick settings.
