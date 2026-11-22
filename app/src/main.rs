@@ -4945,6 +4945,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             reroll_lines(ui.as_weak());
         }
     });
+    // The dashboard came over the pages (dashboard mode): a menu, sheet or editor left open on them closes, as when a
+    // page leaves the screen (no touch: not activity).
+    let weak = ui.as_weak();
+    ui.on_dashboard_shown(move || {
+        if let Some(ui) = weak.upgrade() {
+            close_page_sheets(&ui);
+        }
+    });
     let weak = ui.as_weak();
     ui.on_theme_mode_changed(move |m| {
         if let Some(ui) = weak.upgrade() {
@@ -5625,5 +5633,76 @@ mod tests {
         assert_eq!(timers_colours(None), (true, vec![]));
         let own = json!({ "options": { "colourful": false, "colours": ["#ff0000", "bad"] } });
         assert_eq!(timers_colours(Some(&own)), (false, vec![slint::Color::from_rgb_u8(255, 0, 0)]));
+    }
+}
+
+/// The UI itself (app.slint) on a window that draws nowhere: what the dashboard of dashboard mode does to the pages.
+#[cfg(test)]
+mod dashboard_tests {
+    use super::*;
+    use slint::platform::software_renderer::{MinimalSoftwareWindow, RepaintBufferType};
+    use std::cell::Cell;
+
+    struct NoScreen;
+    impl slint::platform::Platform for NoScreen {
+        fn create_window_adapter(&self) -> Result<Rc<dyn slint::platform::WindowAdapter>, slint::PlatformError> {
+            Ok(MinimalSoftwareWindow::new(RepaintBufferType::NewBuffer))
+        }
+    }
+
+    /// What the event loop does between two frames: the UI's `changed` handlers run.
+    fn settle() {
+        slint::platform::update_timers_and_animations();
+    }
+
+    #[test]
+    fn over_the_dashboard_no_page_row_and_a_menu_left_on_the_pages_holds_nothing_back() {
+        // (each test runs on its own thread, which has no platform yet)
+        let _ = slint::platform::set_platform(Box::new(NoScreen));
+        let ui = AppWindow::new().unwrap();
+        let shown = Rc::new(Cell::new(0));
+        let count = Rc::clone(&shown);
+        ui.on_dashboard_shown(move || count.set(count.get() + 1));
+        // the pages: a timers page on screen, its settings in the quick shade's page row
+        ui.set_pages(ModelRc::new(VecModel::from(vec![PageSlot { kind: "timers".into(), ..Default::default() }])));
+        ui.set_page(0);
+        ui.global::<PageMenu>().set_title("Timers settings".into());
+        ui.global::<PageMenu>().set_has_settings(true);
+        ui.set_paired(true);
+        settle();
+        assert!(!ui.get_web_shown());
+        assert!(ui.get_page_row());
+        // dashboard mode: the dashboard over the pages, no page row, and the app is told (it closes the pages' menus)
+        ui.set_dashboard_mode(true);
+        ui.set_web_active(true);
+        settle();
+        assert!(ui.get_web_shown());
+        assert!(!ui.get_page_row());
+        assert_eq!(shown.get(), 1);
+        // a menu still open on the hidden pages: a folded status screen's strip shows over the dashboard all the same
+        ui.set_timers_settings(true);
+        ui.set_strip_on(true);
+        assert!(ui.get_strip_shown());
+        // on the pages the strip steps aside for the page's menu, and the page row is there, as before
+        ui.set_dashboard_mode(false);
+        assert!(!ui.get_strip_shown());
+        assert!(ui.get_page_row());
+        // a status screen over the dashboard, then its end: the dashboard comes over the pages again, the app is told again
+        ui.set_dashboard_mode(true);
+        ui.set_status_on(true);
+        settle();
+        assert!(!ui.get_web_shown());
+        assert_eq!(shown.get(), 1);
+        ui.set_status_on(false);
+        settle();
+        assert!(ui.get_web_shown());
+        assert_eq!(shown.get(), 2);
+        // a ring, a critical alert or a doorbell over the dashboard is shown in the pages' place the same way
+        for cover in [AppWindow::set_timers_ringing, AppWindow::set_info_critical, AppWindow::set_cam_ring] {
+            cover(&ui, true);
+            assert!(!ui.get_web_shown());
+            cover(&ui, false);
+            assert!(ui.get_web_shown());
+        }
     }
 }

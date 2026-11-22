@@ -734,6 +734,7 @@ export component TimersPage inherits Rectangle {
     in property <color> ring-tint: #e8262d;
     in property <float> pulse;            // 0..1, the ringing background breathes (app animation)
     in property <bool> settings;          // the settings sheet
+    in property <bool> covered;           // the dashboard is shown over the pages (dashboard mode)
     in property <bool> colourful: true;
     // hourglass: the app picks the sand frame for the time left (48 levels) and the stream frame
     in property <image> hg-sand-mask;
@@ -2168,6 +2169,7 @@ export component TimersPage inherits Rectangle {
         property <int> req: PageMenu.open-request;
         property <int> tab: root.mode;
         property <bool> rings: root.ringing;
+        property <bool> hid: root.covered;
         init => { root.pm-fill(); }
         changed shown => {
             root.pm-fill();
@@ -2185,6 +2187,13 @@ export component TimersPage inherits Rectangle {
                 root.al-menu = false;
                 root.sw-menu = false;
                 if root.edit && !root.edit-timer { Act.act("alarm.close", ""); }
+            }
+        }
+        // the dashboard came over the pages: the tabs' own menus close (nobody sees them there; the app closes the rest)
+        changed hid => {
+            if root.covered {
+                root.al-menu = false;
+                root.sw-menu = false;
             }
         }
         changed req => {

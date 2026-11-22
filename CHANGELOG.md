@@ -18,6 +18,7 @@
 ### Dashboard mode
 - What goes off a still dashboard no longer stays on the screen until the dashboard changes: a strip closed with its ×, the voice view, the pull to refresh disc, a ring or a status screen that ends. Before, the last picture stayed, up to a minute with a clock on the dashboard.
 - A folded status screen's strip sits at the very top (the dashboard has no status bar), and a pull down on it opens the quick settings.
+- The quick settings show no page row over the dashboard (it opened the settings of the page hidden behind it), and status screens come over the dashboard even if a page menu was left open: such a menu closes when the dashboard comes back.
 
 ### Integration
 - Home Assistant's Wake word and Wake word 2 selects of the panel's voice device show the panel's wake words: Home Assistant kept them at "No wake word" for a panel with two, and picking one of them then left the panel with only that word. The panel reports its wake words, and the integration sets the selects whenever they differ, also after a change on the panel or on the PanelOS page.

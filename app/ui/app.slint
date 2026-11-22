@@ -46,6 +46,8 @@ export { Theme, Act, Clock, Words, Phrases, FoundHa, WifiNet, Person, TimerInfo,
 export { HomeItem, HomeEvent, HomeMusic, HomeSensor, MusicPlayer, TimerItem, AlarmItem, SwCar, ClimateDev, ClimateRoom, CamItem, CamAction }
 export { TodoItem, TodoList, CalEvent, CalDay, CalCell, CalBoard, WallCell, InfoNote, InfoStatus, StatusScreen, QuickTile, QuickGroup }
 export { SetRow, SetBar, SetSeg, SetSection, WinRect, Warp, WarpIn, StarsIn }
+// (the page row's global: the app's tests fill it in as a page on screen would)
+export { PageMenu }
 
 // One page of the pager: which kind, and the variant / look where a kind has several.
 export struct PageSlot {
@@ -1277,6 +1279,7 @@ export component AppWindow inherits Window {
                     edit-label: root.timers-edit-label; edit-sound: root.timers-edit-sound; edit-ha-sound: root.timers-edit-ha-sound; ha-sounds: root.timers-ha-sounds; edit-keyboard: root.timers-edit-keyboard && root.page == i; kb-layer: root.timers-kb-layer; kb-layout: root.kb-layout;
                     edit-info: root.timers-edit-info; edit-tint: root.timers-edit-tint;
                     on-screen: i == root.shown-page && !root.screensaver-on; snooze-h: root.timers-snooze-h; ring-h: root.timers-ring-h; cells: root.timers-grid;
+                    covered: root.web-shown;
                 }
                 if slot.kind == "thermostat" && slot.variant == 3: FastLane {
                     scene: root.home-fl-scene; back-a: root.home-fl-back-a; floor-a: root.home-fl-floor-a; back-b: root.home-fl-back-b; floor-b: root.home-fl-floor-b;
@@ -1529,16 +1532,19 @@ export component AppWindow inherits Window {
     property <length> shade-d;               // … how far (+ down)
     property <int> shade-from: 1;            // … from which step
     // the quick shade's page row (spec 32.0): the page on screen has settings in its look's menu (the page fills in
-    // PageMenu); kinds without page settings never show it, whatever an earlier page left there
+    // PageMenu); kinds without page settings never show it, whatever an earlier page left there; over the dashboard
+    // the pages are hidden, so there is no page row
     pure function menu-kind(kind: string) -> bool {
         kind == "music" || kind == "thermostat" || kind == "timers" || kind == "calendar" || kind == "camera" || kind == "info"
             || kind == "todo" || kind == "quick"
     }
-    property <bool> page-row: PageMenu.has-settings && !root.screensaver-on && root.pages.length > 0
+    out property <bool> page-row: PageMenu.has-settings && !root.screensaver-on && !root.web-shown && root.pages.length > 0
         && root.page >= 0 && root.page < root.pages.length && root.menu-kind(root.pages[root.page].kind);
-    // its tap: the shade closes, then (300 ms later, the shade gone) the page opens its settings
+    // its tap: the shade closes, then (300 ms later, the shade gone) the page opens its settings (not if the dashboard
+    // came over the pages meanwhile)
     property <bool> page-row-pending;
-    Timer { interval: 300ms; running: root.page-row-pending; triggered => { root.page-row-pending = false; PageMenu.open-request += 1; } }
+    Timer { interval: 300ms; running: root.page-row-pending;
+        triggered => { root.page-row-pending = false; if !root.web-shown { PageMenu.open-request += 1; } } }
     // the finger travel that morphs the first step into the second: what "Now" moves by (60 px more with the page row)
     property <length> shade-morph: root.page-row ? 196px : 136px;
     pure function shade-band(d: length) -> float {
@@ -1601,7 +1607,12 @@ export component AppWindow inherits Window {
             root.shade-d = 0px;
         }
     }
-    changed web-shown => { root.shade-settle(); }
+    // the dashboard came over the pages: their menus close (nobody sees them there, and they would hold the strip back)
+    callback dashboard-shown();
+    changed web-shown => {
+        root.shade-settle();
+        if root.web-shown { root.dashboard-shown(); }
+    }
     Timer {
         interval: 250ms;
         running: (root.shade-pulling || root.shade-moving) && !root.finger-down;
@@ -1663,8 +1674,10 @@ export component AppWindow inherits Window {
 
     // the status strip (#91): right under the status bar, which stays visible; over the dashboard, which has no status bar,
     // at the very top, and a pull down on it opens the quick settings as the top edge does; under the new-notification
-    // window, the voice view and the shade; it steps aside while a page's menu or sheet is open (those come down from y 48)
-    property <float> strip-k: root.strip-on && !root.sheet-open ? 1 : 0;
+    // window, the voice view and the shade; it steps aside while a page's menu or sheet is open (those come down from y 48),
+    // but not over the dashboard, where the pages and their menus are hidden
+    out property <bool> strip-shown: root.strip-on && (!root.sheet-open || root.web-shown);
+    property <float> strip-k: root.strip-shown ? 1 : 0;
     animate strip-k { duration: 200ms; easing: ease-out; }
     if root.strip-k > 0.001: SwipeGestureHandler {
         x: 0; y: (root.web-shown ? 0px : 44px) - 6px * (1 - root.strip-k); width: root.width; height: 44px;
