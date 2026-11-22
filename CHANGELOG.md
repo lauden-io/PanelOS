@@ -52,7 +52,7 @@
 - Wi-Fi takeover at installation reads each network saved in the stock firmware on its own (the one in use, else the first complete one); open and hidden networks and special characters work, WEP and enterprise networks are not taken over (#115).
 - The roam check compares a network name's own bytes, so names with accents, emoji, quotes or spaces work (#68).
 - `tools/build_ui_bundle.sh` builds the UI bundle and `tools/install_bundles.sh` puts the UI and web bundles on a panel; the install guide builds and installs both.
-- The image packs its system files with xz and leaves out FlatBuffers' compiler; the build checks the image against the boot partition (#116).
+- A smaller image (with the next image): the system files are packed with xz and FlatBuffers' compiler is left out; `tools/build_image.sh` prints the room left in the boot partition, or a warning when the image fits only the recovery partition (#116).
 
 ## 0.0.7
 

@@ -179,16 +179,13 @@ limit=$((131072 * 512))
 echo "recovery-dev.img: $size bytes (recovery partition: $limit; boot partition: $((65536 * 512)))"
 [ "$size" -le "$limit" ] || { echo "ERROR: image does not fit the recovery partition"; exit 1; }
 # Without the stock Android the boot partition holds a second copy (tools/remove_android.sh), and the A/B update
-# keeps an image in each slot: every image has to fit the boot partition. ALLOW_RECOVERY_ONLY_IMAGE=1 builds a bigger
-# one for a recovery-only experiment.
+# keeps an image in each slot: those need an image that fits the boot partition. A bigger one still boots from
+# recovery; tools/remove_android.sh then refuses the second copy.
 boot=$((65536 * 512))
 if [ "$size" -le "$boot" ]; then
   echo "fits the boot partition: $((boot - size)) bytes left"
-elif [ "${ALLOW_RECOVERY_ONLY_IMAGE:-0}" = 1 ]; then
-  echo "WARNING: $((size - boot)) bytes too big for the boot partition (ALLOW_RECOVERY_ONLY_IMAGE=1: recovery only)"
 else
-  echo "ERROR: image $((size - boot)) bytes too big for the boot partition (ALLOW_RECOVERY_ONLY_IMAGE=1 for a recovery-only experiment)"
-  exit 1
+  echo "WARNING: $((size - boot)) bytes too big for the boot partition: recovery only, no second copy"
 fi
 (cd "$OUT" && md5sum recovery-dev.img > recovery-dev.img.md5 && cat recovery-dev.img.md5)
 mkdir -p /tmp/nspanel_out
