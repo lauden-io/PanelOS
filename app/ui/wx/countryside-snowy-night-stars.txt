@@ -1,0 +1,6 @@
+# countryside-snowy-night-sky.jpg: its stars, split off by tools/split_night_stars.py
+# x y (tile pixels, the centre of pixel (i, j) is (i, j)), b (brightness above the sky, 0..1), k (1 twinkles with a glow, 0 a steady point)
+698.1 7.4 0.104 1
+589.1 31.0 0.056 1
+154.9 54.7 0.041 0
+640.4 25.6 0.033 0

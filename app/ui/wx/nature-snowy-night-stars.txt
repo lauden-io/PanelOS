@@ -1,0 +1,11 @@
+# nature-snowy-night-sky.jpg: its stars, split off by tools/split_night_stars.py
+# x y (tile pixels, the centre of pixel (i, j) is (i, j)), b (brightness above the sky, 0..1), k (1 twinkles with a glow, 0 a steady point)
+526.6 133.9 0.067 1
+470.7 68.7 0.061 1
+393.2 30.2 0.059 1
+430.8 44.8 0.054 0
+208.0 135.2 0.033 0
+156.9 232.0 0.030 0
+564.2 27.7 0.030 0
+544.2 133.3 0.030 0
+136.1 228.3 0.030 0

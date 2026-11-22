@@ -51,6 +51,12 @@ fn main() {
     let sky = std::fs::read_to_string("ui/photo_sky.slint").expect("ui/photo_sky.slint");
     let pics = warp_pics::generate(&sky).unwrap_or_else(|e| panic!("ui/photo_sky.slint pictures: {e}"));
     std::fs::write(std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("warp_pics.rs"), pics).unwrap();
+    // The night stars the app draws (src/stars.rs): the star lists and cloud cover maps next to the night sky photos the
+    // scene's `sky` function picks (tools/split_night_stars.py wrote them; ui/ is watched above).
+    let ui = std::path::Path::new("ui");
+    let stars = warp_pics::night_stars(&sky, &|p| std::fs::read_to_string(ui.join(p)).ok(), &|p| ui.join(p).exists())
+        .unwrap_or_else(|e| panic!("ui/photo_sky.slint night stars: {e}"));
+    std::fs::write(std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("night_stars.rs"), stars).unwrap();
     println!("cargo:rerun-if-changed=ui/photo_sky.slint");
     println!("cargo:rerun-if-changed=src/warp_pics.rs");
 
