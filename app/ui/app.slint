@@ -742,7 +742,10 @@ export component AppWindow inherits Window {
     // Pull to refresh: how far the page is pulled down (0 none, 1 far enough to reload).
     in property <float> web-pull: 0;
     in property <image> loading-image;
-    out property <bool> web-shown: root.paired && root.dashboard-mode && root.web-active;
+    // a ringing timer or alarm, an open status screen, a critical alert or a doorbell's visitor view come over the dashboard:
+    // their pages show instead of the web view until they end
+    property <bool> web-covered: root.timers-ringing || root.status-on || root.info-critical || root.cam-ring;
+    out property <bool> web-shown: root.paired && root.dashboard-mode && root.web-active && !root.web-covered;
 
     // ---- clock: the seconds move smoothly between the app's updates ----
     in-out property <float> sec-base;
