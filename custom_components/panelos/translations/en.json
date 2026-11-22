@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Add a PanelOS panel",
-        "description": "Adds a panel running PanelOS as a device with its display, settings and sensors, and sets what its dashboard and assistant modes show. The panel's voice satellite comes with the ESPHome integration and is shown as connected via this device.",
+        "description": "Adds a panel running PanelOS as a device with its display, settings and sensors, and sets what its assistant mode shows; its dashboard is set in the options or on the PanelOS page. The panel's voice satellite comes with the ESPHome integration and is shown as connected via this device.",
         "data": {
           "panel_id": "Panel ID (the panel's name, nspanel-pro for a panel without one)",
           "weather_entity": "Weather",
@@ -13,7 +13,7 @@
       }
     },
     "error": {
-      "invalid_panel_id": "A panel's name has letters a-z, digits and hyphens, at most 31 characters."
+      "invalid_panel_id": "A panel's name has letters a-z, digits and hyphens (not at either end), at most 31 characters."
     },
     "abort": {
       "already_configured": "This panel is already set up."
@@ -42,7 +42,7 @@
           "keep_resources": "Always load these card resources"
         },
         "data_description": {
-          "dashboard": "Which dashboard the panel shows. \"Chosen on the panel\" leaves it to the panel's own settings and its Dashboard entity.",
+          "dashboard": "Which dashboard the panel shows. \"Chosen on the panel\" leaves it to the panel's Dashboard entity.",
           "show_header": "The dashboard's top bar with its title and the tabs of its views. Without it the dashboard gets the whole screen, but its views can only be reached through links on the dashboard.",
           "show_sidebar": "Home Assistant's menu (all dashboards, settings and other pages). Without it the panel stays on the chosen dashboard.",
           "zoom": "How large the dashboard is drawn on the panel; below 100 % more fits on the screen.",
@@ -107,7 +107,7 @@
         },
         "entity_id": {
           "name": "Camera",
-          "description": "The camera for the camera view."
+          "description": "The camera for the camera view, shown big on the cameras page that has it, or on a page of its own."
         },
         "seconds": {
           "name": "Seconds",
@@ -181,7 +181,7 @@
         },
         "picture": {
           "name": "Picture",
-          "description": "A camera entity or a picture's address, shown with the notification."
+          "description": "A camera entity or the address of a JPEG picture, shown with the notification."
         },
         "buttons": {
           "name": "Buttons",
