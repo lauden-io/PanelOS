@@ -5,8 +5,10 @@ DOMAIN = "panelos"
 CONF_PANEL_ID = "panel_id"
 CONF_WEATHER = "weather_entity"
 CONF_MEDIA_PLAYER = "media_player_entity"
-CONF_TILES = "tile_entities"
 CONF_SHOW_CONVERSATION = "show_conversation"
+# Options of earlier versions that nothing reads any more (the quick tiles of the assistant mode, now the quick
+# controls pages' own tiles): left out when the options are saved.
+OLD_OPTIONS = ("tile_entities",)
 # The voice view's look: 0 plain, 1 terminal, 2 comic, 3 oscilloscope.
 CONF_VOICE_LOOK = "voice_look"
 # The player music commands said to the panel act on: the one picked on its music page (default) or the panel itself.
@@ -46,7 +48,7 @@ REPORTING = {
 
 DEFAULT_PANEL_ID = "nspanel-pro"
 
-# Entities the assistant mode's quick tiles can show.
+# Entities a quick controls page's tiles can show.
 TILE_DOMAINS = ("light", "switch", "cover", "fan", "input_boolean", "scene", "script", "sensor", "climate")
 
 # The panel's pages, in the order they are swiped: each a kind, its look

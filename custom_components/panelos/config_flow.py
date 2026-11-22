@@ -21,15 +21,14 @@ from .const import (
     CONF_KEEP_RESOURCES,
     CONF_SHOW_SIDEBAR,
     CONF_SKIP_UNUSED,
-    CONF_TILES,
     CONF_WEATHER,
     CONF_ZOOM,
     CONF_LOADING_SCREEN,
     DASHBOARD_FROM_PANEL,
     DEFAULT_PANEL_ID,
     DOMAIN,
+    OLD_OPTIONS,
     REPORTING,
-    TILE_DOMAINS,
 )
 
 
@@ -91,12 +90,6 @@ def _assistant_schema(defaults: dict[str, Any]) -> vol.Schema:
             vol.Optional(
                 CONF_MEDIA_PLAYER, description={"suggested_value": defaults.get(CONF_MEDIA_PLAYER)}
             ): selector.EntitySelector(selector.EntitySelectorConfig(domain="media_player")),
-            vol.Optional(CONF_TILES, default=defaults.get(CONF_TILES, [])): selector.EntitySelector(
-                selector.EntitySelectorConfig(
-                    domain=list(TILE_DOMAINS),
-                    multiple=True,
-                )
-            ),
             vol.Optional(CONF_SHOW_CONVERSATION, default=defaults.get(CONF_SHOW_CONVERSATION, True)): bool,
         }
     )
@@ -167,7 +160,8 @@ class PanelOSOptionsFlow(OptionsFlow):
 
     def _save(self, schema: vol.Schema, user_input: dict[str, Any]) -> ConfigFlowResult:
         # A step replaces only its own fields (a cleared entity field is
-        # missing from user_input and must not keep its old value).
+        # missing from user_input and must not keep its old value); options of
+        # earlier versions go.
         own = {str(key) for key in schema.schema}
-        kept = {k: v for k, v in self.config_entry.options.items() if k not in own}
+        kept = {k: v for k, v in self.config_entry.options.items() if k not in own and k not in OLD_OPTIONS}
         return self.async_create_entry(data={**kept, **user_input})

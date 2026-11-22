@@ -12,8 +12,8 @@ integration gives each panel:
   and wake word sensors) and is shown as connected via this device;
 * the dashboard mode's settings (which Home Assistant dashboard the panel's
   web view shows, with or without its header and sidebar) and the assistant
-  mode's settings (weather, media player, quick tiles, full-screen
-  conversation), set in the integration's options;
+  mode's settings (weather, media player, full-screen conversation), set in
+  the integration's options;
 * how much the recorded sensors (illuminance, SoC temperature, Wi-Fi signal)
   must change before the panel sends a new value, also in the options;
 * actions that put something on a panel's screen: ``panelos.show_view``

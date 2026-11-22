@@ -8,7 +8,6 @@
           "panel_id": "Panel ID (the panel's network name)",
           "weather_entity": "Weather",
           "media_player_entity": "Media player",
-          "tile_entities": "Quick tiles",
           "show_conversation": "Full-screen conversation"
         }
       }
@@ -54,7 +53,6 @@
         "data": {
           "weather_entity": "Weather",
           "media_player_entity": "Media player",
-          "tile_entities": "Quick tiles",
           "show_conversation": "Full-screen conversation"
         }
       },

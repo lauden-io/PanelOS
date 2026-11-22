@@ -4,7 +4,7 @@ Custom integration for panels running PanelOS (`custom_components/panelos` in th
 
 - **The panel's device** (maker PanelOS, model for example NSPanel Pro 86 Gen1) with the display, the settings and the sensors as entities (see [Entities](#entities)).
 - **Dashboard mode settings** (integration options): which Home Assistant dashboard the panel's web view shows, with or without its header and sidebar.
-- **Assistant mode settings** (integration options): weather entity, media player, quick tiles (lights, switches, shutters, fans, thermostats, scenes, scripts, sensors, input booleans), full-screen conversation on/off.
+- **Assistant mode settings** (integration options): weather entity, media player, full-screen conversation on/off.
 - **Sensor reporting** (integration options): how much the illuminance, SoC temperature and Wi-Fi signal must change before the panel sends a new value (see below).
 - **The PanelOS page** in the sidebar (administrators): every setting of a panel in one place, beside a live picture of its screen (see [The PanelOS page](#the-panelos-page)).
 - **Critical alerts and status screens**, shared by every panel (each with its own panels on or off): the integration follows their sensors and shows them on the panels (see [Alerts and status screens](#alerts-and-status-screens)).
@@ -81,14 +81,14 @@ Up to PanelOS 0.0.3 the integration was called NSPanel Pro (`nspanel_pro`); sinc
 
 1. Write the new image to the panel (install guide, "Updating later").
 2. Install PanelOS as above, then remove the old **NSPanel Pro** integration (**Settings → Devices & services**, its entry, **Delete**) and the folder `custom_components/nspanel_pro`.
-3. Restart Home Assistant and add PanelOS ([Set up](#set-up)); set its options again (weather, media player, tiles, dashboard).
+3. Restart Home Assistant and add PanelOS ([Set up](#set-up)); set its options again (weather, media player, dashboard).
 
 The panel's settings and sensors move from its ESPHome device to the PanelOS device and keep their entity ids, history and settings; the ESPHome device keeps the voice satellite.
 
 ## Set up
 
 1. **Settings → Devices & services → Add integration**, search for **PanelOS** and select it.
-2. Panel ID: the panel's network name, the same as its ESPHome device's (`nspanel-pro` by default). Then choose the weather entity, the media player and the quick tiles.
+2. Panel ID: the panel's network name, the same as its ESPHome device's (`nspanel-pro` by default). Then choose the weather entity and the media player.
 3. The panel's device appears with its entities; they become available as soon as the panel connects. Switch the panel to the mode you want with its **Display mode** select (or on the panel: settings → Display mode).
 
 Options can be changed any time (**Configure** on the integration entry, then **Dashboard mode**, **Assistant mode** or **Sensor reporting**); the panel follows at once.
