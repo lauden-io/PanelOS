@@ -3809,7 +3809,7 @@ class PanelOSPage extends HTMLElement {
         // drawn, line and plain backgrounds: light or dark by the panel's theme, or always one of them
         (Number(o.theme) >= 3 && Number(o.theme) !== 8) ? this._row("Light or dark", this._seg([["panel", "Panel setting"], ["light", "Light"], ["dark", "Dark"]], ["light", "dark"].includes(o.light) ? o.light : "panel",
           (v) => this._setPageOption(p, i, "light", v === "panel" ? undefined : v), { label: "Light or dark" }),
-          { info: "Panel setting: light or dark as the panel's theme is, also while Auto switches it. Light or Dark: always that way." }) : null,
+          { info: "Panel setting: follows the panel's light or dark theme, also when Auto switches it. Light or Dark: stays that way." }) : null,
         sw || plain ? null : this._more(`bg:${p.entry_id}:${i}`, weather ? null : this._row("Real sun and moon", this._toggle(o.real_sun !== false, (v) => this._setPageOption(p, i, "real_sun", v), { label: "Real sun and moon" }),
           { info: "On: the sun and the moon stand where they really are in the sky. Off: they keep a fixed place." }),
           // the panel's own switches (its entities): the same on every weather page of the panel
