@@ -7,7 +7,7 @@ This guide takes you from a stock NSPanel Pro to PanelOS step by step. You do no
 ## What you need
 
 - A **Sonoff NSPanel Pro, 86 model** (the square 86 × 86 mm one), on its stock firmware, set up in the eWeLink app and **connected to your Wi-Fi**. PanelOS takes over this Wi-Fi network: with several saved networks, the one the panel is connected to. Password-protected (WPA/WPA2 personal), open and hidden networks work; WEP and enterprise (802.1X) networks are not taken over. It has been tested on stock firmware 3.0.0.
-- A **computer**: Windows 10/11, Linux, or a Mac (see [Mac](#mac)), with about **20 GB free disk space** (64 GB for the Mac virtual machine) and internet access. The first build takes a long time (it builds a whole Linux system); later builds take a few minutes.
+- A **computer**: Windows 10/11, Linux, or a Mac (see [Mac](#mac)), with about **60 GB free disk space** (80 GB for the Mac virtual machine) and internet access. The first build takes a long time (it builds a whole Linux system, and a web browser for the dashboard mode: several hours); later builds take a few minutes.
 - **Home Assistant** on the same network, and a phone with a camera.
 - The **IP address of Home Assistant** (for example `192.168.1.10`; in Home Assistant: Settings → System → Network). The panel cannot use names like `homeassistant.local`.
 
@@ -81,7 +81,7 @@ This route has not been tested yet; the UTM screens may look slightly different.
    - Operating system: **Linux**.
    - Boot ISO image: **Browse** and select the downloaded file. On Apple silicon set the architecture to **x86_64**.
    - Memory: at least **8192 MB**; CPU cores: as many as offered (at least 4).
-   - Storage: at least **64 GB**.
+   - Storage: at least **80 GB**.
    - Save, then start the virtual machine with the **play** button.
 4. Install Ubuntu with the default answers. Choose a user name and password, and tick **Install OpenSSH server** when it is offered. When the installation asks to restart, remove the installer first (in UTM: the CD/DVD icon → **Clear**), then restart.
 5. Log in in the virtual machine window and find its address with this command (it prints the address, for example `192.168.64.5`; if it prints more than one, use the first):
@@ -187,17 +187,41 @@ A backup only helps if it can be written back. Test it now, while the panel stil
 - **Quick test** (one command, the panel stays closed): writes the backed-up recovery partition back over ADB and checks it.
 - **Full test** (the panel has to be opened): checks the USB rescue path, the one you need when the panel does not start at all.
 
-## 7. Build the system image
+## 7. Build PanelOS
+
+PanelOS comes in three parts, built one after the other:
+
+- the **system image**: Linux and a simple version of the PanelOS app;
+- the **web bundle**: the web browser of the dashboard mode and the graphics libraries;
+- the **UI bundle**: the full PanelOS app, drawn on the graphics chip, with the pictures, fonts and sounds of its pages.
+
+First the system image:
 
 ```
 cd /root/PanelOS && tools/build_image.sh
 ```
 
-This is the long step. When it is done, the last line is `done: /tmp/nspanel_out/recovery-dev.img`. The build also creates an SSH key in `/root/.ssh/nspanel_dev`: it is your key to log in to your panels later, so keep it.
+When it is done, the last line is `done: /tmp/nspanel_out/recovery-dev.img`. The build also creates an SSH key in `/root/.ssh/nspanel_dev`: it is your key to log in to your panels later, so keep it.
 
 The build takes one file from the backup of step 6: the stock device tree from the `resource` partition. The panel's bootloader needs it to show the boot logo and to load PanelOS in about 2 seconds.
 
-You build once; the same image goes on every NSPanel Pro 86 you have.
+Then the web bundle. This is the long step: the first time it builds a whole web browser, which takes several hours.
+
+```
+cd /root/PanelOS && tools/build_web.sh
+```
+
+When it is done, the last line shows the file `/root/nspanel/br-web/images/rootfs.squashfs`.
+
+Then the UI bundle:
+
+```
+cd /root/PanelOS && tools/build_ui_bundle.sh
+```
+
+When it is done, the last line is `done: /root/nspanel/out/panelos-ui.squashfs`.
+
+You build once; the same image and bundles go on every NSPanel Pro 86 you have.
 
 ## 8. Install PanelOS
 
@@ -217,7 +241,7 @@ You do this step **once**.
 
 If the panel starts the stock firmware again (the Sonoff screen) instead of PanelOS, PanelOS found no network within 90 seconds and went back by itself. Check in the stock firmware that the panel is connected to your Wi-Fi. Then run the command of this step again.
 
-## 9. Make PanelOS start every time
+## 9. Make PanelOS start every time and put its bundles on the panel
 
 Do this while PanelOS is running (after the animation):
 
@@ -228,6 +252,16 @@ ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnow
 The answer starts with `default boot: open system`. From now on the panel starts PanelOS every time, also after a power cut.
 
 The first SSH command stores the panel's SSH host key in `/root/.ssh/panelos_known_hosts`; later commands check it. The panel keeps the key across reboots and updates; should it ever change on purpose (e.g. after restoring the stock firmware), remove the old one with `ssh-keygen -R $PANEL -f /root/.ssh/panelos_known_hosts`.
+
+Then put the two bundles of step 7 on the panel:
+
+```
+cd /root/PanelOS && tools/install_bundles.sh $PANEL
+```
+
+It sends both bundles over Wi-Fi (about 250 MB, a few minutes), checks them on the panel, and restarts the PanelOS app with them. The panel keeps running while they are sent. At the end it says `the app runs from the UI bundle, on the GPU`, `dashboard mode: the web bundle is mounted` and `done`, and the panel shows the setup screen again.
+
+If it stops with a message, nothing has changed on the panel unless the message says otherwise; run the command again (an upload that already got through is not sent again).
 
 Then give the panel its name (step 5). The command writes it on the panel and restarts the panel; PanelOS comes back with the setup screen after about a minute:
 
@@ -340,9 +374,15 @@ Today, while the stock Android is on the panel, a PanelOS that does not start at
    tools/remove_android.sh $PANEL data
    ```
 
+5. Move the UI bundle to the new, larger partition. This frees room on the small one, where the web bundle stays:
+
+   ```
+   tools/install_bundles.sh $PANEL ui
+   ```
+
 ## More panels
 
-Do steps 1–2, 5–6 and 8–13 for each further panel. Steps 3, 4 and 7 are not needed again: the computer is ready, and the same image fits every NSPanel Pro 86. In step 5 set `PANEL` and `NAME` for the new panel: its backup goes into its own folder, and step 9 gives it its own name, so several panels work side by side in one Home Assistant.
+Do steps 1–2, 5–6 and 8–13 for each further panel. Steps 3, 4 and 7 are not needed again: the computer is ready, and the same image and bundles fit every NSPanel Pro 86. In step 5 set `PANEL` and `NAME` for the new panel: its backup goes into its own folder, and step 9 gives it its own name, so several panels work side by side in one Home Assistant.
 
 ## Updating later
 
@@ -352,6 +392,18 @@ Until PanelOS can update itself (planned: updates from Home Assistant's Settings
 
    ```
    cd /root/PanelOS && git pull && tools/build_image.sh
+   ```
+
+   The web bundle changes seldom, and its build takes long. Build it again only when the release notes ([CHANGELOG.md](../CHANGELOG.md), "Upgrading") ask for a new web bundle:
+
+   ```
+   cd /root/PanelOS && tools/build_web.sh
+   ```
+
+   Then the UI bundle (always after the web bundle):
+
+   ```
+   cd /root/PanelOS && tools/build_ui_bundle.sh
    ```
 
 2. For **each panel**, set its address, write the new version and restart it. The panel keeps running PanelOS while it is written; the new version starts after the restart, and all settings (Wi-Fi, Home Assistant login, choices) stay.
@@ -368,7 +420,13 @@ Until PanelOS can update itself (planned: updates from Home Assistant's Settings
    ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "nohup reboot >/dev/null 2>&1 </dev/null &"
    ```
 
-   Then the next panel: set `PANEL` again and repeat these three commands.
+   When PanelOS is back (about a minute), put the new bundles on it. A bundle that is already on the panel is skipped, so an unchanged web bundle is not sent again:
+
+   ```
+   cd /root/PanelOS && tools/install_bundles.sh $PANEL
+   ```
+
+   Then the next panel: set `PANEL` again and repeat these four commands.
 
 3. On a panel without the stock Android (step 14) the boot partition keeps the previous version as the fallback. Once the new version has proven itself, copy it there too: `tools/remove_android.sh $PANEL copy`.
 
@@ -382,3 +440,15 @@ See [restore.md](restore.md), case A.
 - **The setup screen says Home Assistant did not answer:** check the IP address and the port (`:8123` or none) in Home Assistant under Settings → System → Network.
 - **"Waiting for the network…" or "Home Assistant not reachable, retrying…" in the status line:** the panel keeps trying by itself, no restart needed; check the Wi-Fi and that Home Assistant runs.
 - **The screen stays black for minutes:** unplug the power for 10 seconds. If it still does not start, follow [restore.md](restore.md), case C.
+- **`tools/install_bundles.sh` says there is not enough room:** until step 14, both bundles (about 250 MB) share the small persistent partition (384 MiB) with the settings and the browser's cache. This shows what takes the room:
+
+  ```
+  ssh -n -i /root/.ssh/nspanel_dev -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "du -sh /mnt/persist/*"
+  ```
+
+  After step 14 the UI bundle goes to the large data partition.
+- **`tools/install_bundles.sh` ends with "the image's app runs":** the line under it says why. When the app from the UI bundle ended right after its start three times, the panel uses the simple app until its next restart; the app's messages:
+
+  ```
+  ssh -n -i /root/.ssh/nspanel_dev -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "grep nspanel-app /var/log/messages | tail -30"
+  ```

@@ -21,5 +21,9 @@ find "$BREXT" -type f -exec chmod 644 {} +
 find "$BREXT" -name '*.sh' -exec chmod 755 {} +
 
 make -C "$BRSRC" O="$BROUT" BR2_EXTERNAL="$BREXT" panelos_web_defconfig >/dev/null
+# The panelos-web helper is a local package: Buildroot copies its sources only
+# for its first build. Without its stamps it is copied and built again, so a
+# changed helper gets into the bundle.
+make -C "$BRSRC" O="$BROUT" panelos-web-clean-for-rebuild >/dev/null
 make -C "$BRSRC" O="$BROUT" "$@" 2>&1 | tail -20
 ls -la "$BROUT/images/rootfs.squashfs"
