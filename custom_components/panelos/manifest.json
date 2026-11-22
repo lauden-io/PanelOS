@@ -4,7 +4,8 @@
   "after_dependencies": [
     "assist_pipeline",
     "esphome",
-    "intent"
+    "intent",
+    "network"
   ],
   "categories": [
     "diy_makers",
