@@ -75,7 +75,7 @@
   "selector": {
     "view": {
       "options": {
-        "home": "Home screen",
+        "home": "Start page",
         "dashboard": "Dashboard",
         "weather": "Weather",
         "media": "Media player",

@@ -18,6 +18,63 @@ thread_local! {
     static GRID_SET: std::cell::RefCell<String> = const { std::cell::RefCell::new(String::new()) };
     /// Each cameras page's fit and start view as the integration had them last (a change there is taken over).
     static SEEN: std::cell::RefCell<Vec<(Option<String>, String)>> = const { std::cell::RefCell::new(Vec::new()) };
+    /// A camera Home Assistant showed that no cameras page has (its entity and its name there): the temporary cameras
+    /// page shows it alone, in a row of its own after the cameras pages' rows. It goes with the temporary page.
+    static GUEST: std::cell::RefCell<Option<(String, String)>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Where Home Assistant's camera view shows `entity` among the cameras pages (`pages`: their places in the integration's
+/// list and their settings, in order): the cameras page on screen (`on_screen`, its place in the list) when it has the
+/// camera, else the first that has it, as (its place in the list, its row among the cameras pages, the camera's place
+/// on the page). None when no cameras page has it.
+pub fn page_with(pages: &[(usize, &serde_json::Value)], on_screen: Option<usize>, entity: &str) -> Option<(usize, usize, usize)> {
+    let has = |n: usize| crate::pages::entities_of(pages[n].1).iter().position(|e| e == entity).map(|i| (pages[n].0, n, i));
+    let on = (0..pages.len()).find(|&n| Some(pages[n].0) == on_screen);
+    on.and_then(has).or_else(|| (0..pages.len()).find_map(has))
+}
+
+/// Home Assistant's camera view of `entity` (`name`: its name there): on the cameras page that has it (`page_with`) the
+/// camera shows big, and that page's place in the integration's list comes back; a camera no cameras page has becomes
+/// the temporary cameras page's camera (None).
+pub fn show_camera(ui: &AppWindow, entity: &str, name: &str) -> Option<usize> {
+    let (found, count) = with_state(|s| {
+        let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "camera");
+        let slots = ui.get_pages();
+        let on = slint::Model::row_data(&slots, ui.get_page().max(0) as usize)
+            .filter(|p| p.kind == "camera" && p.cfg >= 0)
+            .map(|p| p.cfg as usize);
+        (page_with(&pages, on, entity), pages.len())
+    });
+    match found {
+        Some((cfg, n, i)) => {
+            crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), n, |d| {
+                d.sel = i as i32;
+                d.view = 0;
+            });
+            Some(cfg)
+        }
+        None => {
+            let old = GUEST.with(|g| g.replace(Some((entity.to_string(), name.to_string()))));
+            if old.is_none_or(|(e, _)| e != entity) {
+                // a fresh row: no picture of another camera, the screen filled (a cameras page's default)
+                crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), count, |d| {
+                    *d = Default::default();
+                    d.fit = fit_index("");
+                });
+            }
+            None
+        }
+    }
+}
+
+/// The row of the cameras pages' data a temporary cameras page shows: the guest camera's (after the cameras pages'
+/// rows) while there is one, else the first page's.
+pub fn guest_row(s: &crate::UiState) -> i32 {
+    if GUEST.with(|g| g.borrow().is_some()) {
+        crate::pages::kind_pages(s.panel_config.as_ref(), "camera").len() as i32
+    } else {
+        0
+    }
 }
 
 /// Starts the frame fetcher (once Home Assistant's address and login are known).
@@ -251,11 +308,21 @@ pub fn shrink(frame: &SharedPixelBuffer<Rgb8Pixel>, n: u32) -> SharedPixelBuffer
 /// Every cameras page from the states, each from its own cameras and options; frames only for the one on screen.
 pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
     let pages = crate::pages::kind_pages(s.panel_config.as_ref(), "camera").into_iter().map(|(cfg, p)| (cfg, p.clone())).collect::<Vec<_>>();
+    // the guest camera goes with the temporary page
+    let guest = GUEST.with(|g| {
+        if s.temp_page.is_none() {
+            g.replace(None);
+        }
+        g.borrow().clone()
+    });
     // the cameras page on screen (only it gets frames)
     let slots = ui.get_pages();
     let on = slint::Model::row_data(&slots, ui.get_page().max(0) as usize).filter(|p| p.kind == "camera" && !ui.get_screensaver_on());
     let shown = on.as_ref().map(|p| p.n.max(0) as usize);
-    let entities = shown.and_then(|n| pages.get(n)).map(|(_, p)| crate::pages::entities_of(p)).unwrap_or_default();
+    let entities = match (shown, &guest) {
+        (Some(n), Some((entity, _))) if n == pages.len() => vec![entity.clone()],
+        _ => shown.and_then(|n| pages.get(n)).map(|(_, p)| crate::pages::entities_of(p)).unwrap_or_default(),
+    };
     let d = crate::pages::inst(&ui.get_cam_inst(), shown.unwrap_or(0));
     let sel = (d.sel.max(0) as usize).min(entities.len().saturating_sub(1));
     let grid = shown.is_some() && d.view == 1 && entities.len() > 1;
@@ -288,7 +355,7 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             });
         }
     });
-    if pages.iter().all(|(_, p)| crate::pages::entities_of(p).is_empty()) {
+    if guest.is_none() && pages.iter().all(|(_, p)| crate::pages::entities_of(p).is_empty()) {
         crate::pages::keep_insts(&ui.get_cam_inst(), pages.len());
         return;
     }
@@ -339,7 +406,28 @@ pub fn refresh(ui: &AppWindow, s: &mut crate::UiState) {
             }
         });
     }
-    crate::pages::keep_insts(&ui.get_cam_inst(), pages.len());
+    // the guest camera's row: its name as Home Assistant sent it (the panel does not follow its state), available
+    // unless the panel knows otherwise
+    if let Some((entity, name)) = &guest {
+        crate::pages::with_inst(ui.get_cam_inst(), |m| ui.set_cam_inst(m), pages.len(), |d| {
+            let st = s.states.get(entity);
+            let row = CamItem {
+                name: st
+                    .and_then(|e| e.attrs.get("friendly_name"))
+                    .and_then(serde_json::Value::as_str)
+                    .or(Some(name.as_str()).filter(|n| !n.is_empty()))
+                    .unwrap_or(entity)
+                    .into(),
+                frame: slint::Model::row_data(&d.items, 0).map(|o| o.frame).unwrap_or_default(),
+                state: i32::from(matches!(st.map(|e| e.state.as_str()), Some("unavailable" | "unknown"))),
+            };
+            if let Some(m) = crate::pages::update_rows(&d.items, vec![row]) {
+                d.items = m;
+            }
+            d.sel = 0;
+        });
+    }
+    crate::pages::keep_insts(&ui.get_cam_inst(), pages.len() + usize::from(guest.is_some()));
     door_replies_state(ui, s);
     doorbell(ui, s, &pages);
 }
@@ -546,6 +634,22 @@ pub fn act(ui: &AppWindow, what: &str, value: &str) {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn a_camera_view_finds_the_page_with_the_camera() {
+        let a = json!({"kind": "camera", "entities": ["camera.a", "camera.b"]});
+        let b = json!({"kind": "camera", "entities": ["camera.c", "camera.b"]});
+        let pages = vec![(1, &a), (4, &b)];
+        // the first page that has it: its place in the list, its row, the camera's place on it
+        assert_eq!(page_with(&pages, None, "camera.c"), Some((4, 1, 0)));
+        assert_eq!(page_with(&pages, None, "camera.b"), Some((1, 0, 1)));
+        // the cameras page on screen first
+        assert_eq!(page_with(&pages, Some(4), "camera.b"), Some((4, 1, 1)));
+        assert_eq!(page_with(&pages, Some(4), "camera.a"), Some((1, 0, 0)));
+        // on no cameras page
+        assert_eq!(page_with(&pages, Some(1), "camera.d"), None);
+        assert_eq!(page_with(&[], None, "camera.a"), None);
+    }
 
     #[test]
     fn fit_defaults_to_filling_the_screen() {

@@ -1,4 +1,5 @@
-"""The options without the old quick tiles (custom_components/panelos/config_flow.py, panel.py).
+"""panelos.show_view's request (custom_components/panelos/view.py) and the options without the old quick tiles
+(config_flow.py, panel.py).
 
 Runs with the standard library only: python3 -m unittest discover -s tests
 
@@ -31,6 +32,10 @@ def _module(name: str, package: bool = False, **attrs) -> types.ModuleType:
 class Placeholder:
     def __init__(self, *args, **kwargs) -> None:
         self.args, self.kwargs = args, kwargs
+
+
+class ServiceValidationError(Exception):
+    pass
 
 
 class _Key(str):
@@ -79,6 +84,7 @@ def _stubs() -> dict[str, types.ModuleType]:
             OptionsFlow=_FlowBase,
         ),
         _module("homeassistant.core", HomeAssistant=Placeholder, callback=lambda func: func),
+        _module("homeassistant.exceptions", ServiceValidationError=ServiceValidationError),
         helpers,
         selector,
         _module(f"{PACKAGE}.resources", async_resources=None),
@@ -107,7 +113,42 @@ def _load(name: str) -> types.ModuleType:
                 sys.modules[n] = old
 
 
+view = _load("view")
 config_flow = _load("config_flow")
+
+
+class State:
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+class Hass:
+    def __init__(self, states: dict[str, State]) -> None:
+        self.states = types.SimpleNamespace(get=states.get)
+
+
+HASS = Hass({"camera.porch": State("Porch")})
+
+
+class ViewRequest(unittest.TestCase):
+    """What panelos.show_view sends to the panels."""
+
+    def test_a_camera_view_carries_the_camera_and_its_name(self) -> None:
+        request = view.view_request(HASS, {"view": "camera", "entity_id": "camera.porch", "seconds": 0})
+        self.assertEqual(request, {"view": "camera", "entity_id": "camera.porch", "name": "Porch", "seconds": 0, "type": "view"})
+
+    def test_a_camera_home_assistant_does_not_have_is_an_error(self) -> None:
+        with self.assertRaises(ServiceValidationError):
+            view.view_request(HASS, {"view": "camera", "entity_id": "camera.gone", "seconds": 30})
+
+    def test_a_camera_view_without_a_camera_shows_the_cameras_page(self) -> None:
+        self.assertEqual(view.view_request(HASS, {"view": "camera", "seconds": 30}), {"view": "camera", "seconds": 30, "type": "view"})
+
+    def test_other_views_go_without_a_camera(self) -> None:
+        for name in ("home", "dashboard", "weather", "media"):
+            with self.subTest(view=name):
+                request = view.view_request(HASS, {"view": name, "entity_id": "camera.porch", "seconds": 30})
+                self.assertEqual(request, {"view": name, "seconds": 30, "type": "view"})
 
 
 class OptionsWithoutQuickTiles(unittest.TestCase):

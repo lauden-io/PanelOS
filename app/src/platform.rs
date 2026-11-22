@@ -139,6 +139,14 @@ pub fn note_activity() {
     LAST_INPUT_MS.store(now_ms(), Ordering::SeqCst);
 }
 
+/// Fingers that went down on the screen since start (a view Home Assistant shows until someone touches the screen).
+static TOUCHES: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// How many times a finger went down on the screen since start.
+pub fn touches() -> u64 {
+    TOUCHES.load(Ordering::SeqCst)
+}
+
 /// Milliseconds (since START) of the last stir for the clocks' calm: someone near, or something asked of the panel
 /// from Home Assistant (these do not hold off the screensaver).
 static LAST_STIR_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -348,6 +356,9 @@ impl PanelPlatform {
 
     fn dispatch_touch(&self, event: TouchEvent) {
         note_activity();
+        if matches!(event, TouchEvent::Down(..)) {
+            TOUCHES.fetch_add(1, Ordering::SeqCst);
+        }
         // a finger resting on a weather page opens its edit lock (it needs no part of the page under it)
         match event {
             TouchEvent::Down(x, y) => crate::home_edit::finger(0, x, y),
