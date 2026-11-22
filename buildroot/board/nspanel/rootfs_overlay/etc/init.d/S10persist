@@ -1,6 +1,6 @@
 #!/bin/sh
-# Persistent storage for this system's own settings (Wi-Fi, later the Home
-# Assistant pairing and the dashboard choice).
+# Persistent storage for this system's own settings (Wi-Fi, the Home Assistant
+# address and pairing, the app's settings).
 #
 # A directory on the old Android "cache" partition (ext4): /mnt/persist/nspanel.
 # Once the stock Android is removed (tools/remove_android.sh data), its old

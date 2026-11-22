@@ -552,9 +552,7 @@ export component Marquee {
     }
 }
 
-// The LAUDEN logo mark (red disc with the house), from assets/logo.svg.
-// The software renderer fills paths non-zero only, so the even-odd cut-outs
-// of the SVG are drawn as layers: disc, house lines, house inside.
+// The PanelOS mark, drawn from rounded rectangles.
 export component LogoMark inherits Rectangle {
     // the PanelOS mark: P in Morse in two rows (dot dash / dash dot); dots Signal, dashes the text colour of the ground
     in property <length> size: 32px;

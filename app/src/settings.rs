@@ -35,8 +35,8 @@ pub struct Settings {
     pub mic_muted: bool,
     /// Speaker volume, percent (codec digital volume: 100 % = 0 dB, 0 % = off).
     pub volume: u8,
-    /// "dashboard" (native Home Assistant dashboard) or "assistant"
-    /// (the panel's own pages, full-screen conversation).
+    /// "dashboard" (a Home Assistant dashboard in the web view; the panel's pages without the web bundle) or
+    /// "assistant" (the panel's own pages, full-screen conversation).
     pub display_mode: String,
     /// Last assistant mode configuration received from the PanelOS
     /// integration (kept so a restart starts with the right entities).

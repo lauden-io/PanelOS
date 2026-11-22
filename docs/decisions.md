@@ -5,12 +5,12 @@
 | Replace the vendor firmware completely | Removes the software bloat; on the NSPanel Pro, Android 8.1 caps the WebView at Chromium 138 on every Sonoff firmware |
 | Mainline Linux kernel from the start | Long-term maintainability, open GPU driver (Panfrost), no vendor kernel lock-in |
 | Buildroot root filesystem | Small, fast boot, reproducible |
-| Native Rust app with the Slint UI toolkit | No browser and no WebView; renders directly on DRM/KMS; small and fast on a Cortex-A35 |
-| Home Assistant WebSocket API for the dashboard, ESPHome native API for the device and the voice satellite | Works with Home Assistant's built-in integrations; no broker and no custom integration needed for the basics |
+| Native Rust app with the Slint UI toolkit | Native pages drawn by the app, rendered directly on DRM/KMS; Home Assistant's own dashboard only in the optional web view; small and fast on a Cortex-A35 |
+| Home Assistant WebSocket API for the pages and the PanelOS integration, ESPHome native API for the voice satellite | No broker; the voice satellite works with Home Assistant's built-in ESPHome integration, the display and its settings come with the PanelOS integration |
 | Zigbee radio optional, router role at most | Not needed for the panel's main job |
-| Keep the stock U-Boot (no mainline U-Boot for now) | Replacing it is the only step that can brick the panel, and the USB rescue mode depends on it; it keeps the install simple for everyone. With the chain loader below it shows the PanelOS logo and takes about 2.5 s |
+| Keep the stock U-Boot (no mainline U-Boot for now) | Replacing it is the only step that can brick the panel, and the USB rescue mode depends on it; it keeps the install simple for everyone. With the chain loader below it shows the boot logo and takes about 2.5 s |
 | The stock U-Boot gets the stock device tree, the kernel its own (chain loader in front of the kernel) | The stock U-Boot drives its own display and storage with the boot image's device tree: with the mainline one it showed no logo and took about 45 s, vendor nodes mixed into it made it hang. The stock device tree comes from each user's own backup, it is not redistributed |
-| Kernel packed with LZ4 in the boot image, unpacked by the chain loader with caches on | The image fits the 32 MiB `boot` partition (needed for A/B) at the same boot time |
+| Kernel packed with LZ4 in the boot image, unpacked by the chain loader with caches on; the initramfs packed with xz | Every image has to fit the 32 MiB `boot` partition (needed for A/B); the packed kernel loads at the same boot time as the unpacked one; `tools/build_image.sh` stops when an image does not fit |
 | The panel keeps trying for good when Home Assistant or the network is away | After a power cut Home Assistant or the router may take minutes or hours; the panel must come back by itself, without a restart |
 | Hold the UI back until the clock and the first Home Assistant data are in | The first screen shows the right time and current states, not 1970 and empty tiles; the boot animation shows the wait |
 | Features inspired by an open-source Flutter panel app, no code reused | Feature ideas only |
@@ -37,27 +37,25 @@ The current base is the latest stable kernel (7.3.x). There is no 7.x longterm k
 
 ## Home Assistant connection
 
-- **Dashboard**: Home Assistant's WebSocket API.
-- **Device and voice**: the panel speaks the ESPHome native API, so Home Assistant's built-in ESPHome integration adds it like any ESPHome device: settings and sensors as entities, plus the Assist satellite over the same connection. Several panels are handled like any ESPHome device; automations can switch modes.
+- **Pages and the panel's device**: Home Assistant's WebSocket API; the PanelOS integration sends the pages and settings and adds the panel's display, settings and sensors as entities.
+- **Voice**: the panel speaks the ESPHome native API for its voice satellite, so Home Assistant's built-in ESPHome integration adds it like any ESPHome device (the Assist satellite, volume, microphone switch, wake word sensors). Several panels work side by side, each with the name given at installation; automations can switch modes.
 - **No token typing on the panel.** Pairing uses Home Assistant's standard OAuth (IndieAuth) login: the panel shows a QR code, the user scans it with a phone and logs in to Home Assistant as usual, Home Assistant redirects to the panel (client_id and redirect_uri on the panel's own address), and the panel exchanges the code for a refresh token. The token is visible and revocable in the Home Assistant user profile.
 - The QR login shows Home Assistant's normal login form, so any user can log in, for example a dedicated non-admin "panel" user, independent of the account the phone's Home Assistant app uses (a private browser window avoids any confusion). An on-panel login with a touch keyboard is planned as an alternative.
-- **Dashboard choice:** the panel lists the Home Assistant dashboards; the user picks one on the panel's settings screen or with the Dashboard select in Home Assistant.
-- **Kiosk by design:** the app draws the dashboard natively, not the Home Assistant web frontend, so there is no Home Assistant header or sidebar at all. Trade-off: only the card types the app implements render; custom frontend cards (HACS) do not.
+- **Dashboard choice:** the panel lists the Home Assistant dashboards its user may open; the user picks one on the PanelOS page or with the panel's Dashboard select in Home Assistant.
+- **Native pages:** the app draws its own pages from the entity states, not Home Assistant's web frontend or its cards; Home Assistant's dashboards, custom cards included, show in the web view (dashboard mode).
 
 ## Display modes
 
 | Mode | What it is | Engine |
 |---|---|---|
-| Native dashboard (default) | Predefined card types; content from a Home Assistant dashboard chosen for the panel; own look, themes, more-info dialogs | Rust/Slint app |
-| Assistant | The panel as a smart display: big clock and date, the weather now and for the next hours, what is playing (artwork and controls), a few quick tiles, timers; while you talk to it, what it heard and what it answers, full screen | Same app; set in the PanelOS integration (`custom_components/panelos`) |
-| Web (planned) | The real Home Assistant frontend as a kiosk, custom (HACS) cards included | WPE WebKit + cog on DRM, GPU through Panfrost; its speed on the PX30 has to be measured first |
+| Dashboard (default) | A Home Assistant dashboard in the web view, custom (HACS) cards included; without the web bundle the panel's own pages | WPE WebKit through `panelos-web` from the web bundle, GPU through Panfrost |
+| Assistant | The panel as a smart display: its own pages (custom pages with the clock, the weather and widgets, music, timers and the others), set on the PanelOS page; while you talk to it, what it heard and what it answers, full screen | Rust/Slint app; set in the PanelOS integration (`custom_components/panelos`) |
 
 - The **voice satellite** works in every mode: PDM microphones → on-device wake word → Home Assistant Assist pipeline, echo cancellation with the player's own output as reference, TTS and media through the speaker.
 - **Configuration in three layers:**
-  1. On the panel (settings screen): what must work without Home Assistant – Wi-Fi, pairing, mode, brightness, theme, screensaver, about.
-  2. In Home Assistant as ESPHome device entities: mode, dashboard, theme, brightness, screensaver, wake words, volume, microphone mute, sensors.
-  3. Content: Home Assistant dashboards; the assistant mode through the own integration.
-- The look is a placeholder until a full redesign.
+  1. On the panel (settings list): what must work without Home Assistant – Wi-Fi, pairing, brightness, theme, screensaver, time format, voice, sound, touch, about.
+  2. In Home Assistant: the PanelOS device's entities (mode, dashboard, theme, brightness, screensaver, time format, sensors) and the ESPHome voice device's (wake words, volume, microphone mute).
+  3. Content: the pages, their looks and the alerts on the PanelOS page; Home Assistant dashboards for dashboard mode.
 
 ## Future plans
 
@@ -72,7 +70,7 @@ The stock firmware backup is not published: it is Sonoff's copyrighted software,
 - Required: Wi-Fi ADB **with root** (`su`), as on the stock 3.0.0 userdebug build. Some community reports say newer stock firmware removed basic tools (`dd`, `chmod`, ...); the installer should bring its own static tools.
 - Only the 86 model (480x480, ST7701S) so far. The 120 model and the second generation are different hardware.
 - Known to work: a unit rooted on an older stock firmware and then updated to 3.0.0 (the stock launcher blocks OTA updates on rooted units, so it stays there).
-- Verified on stock firmware 3.0.0 only. The stock U-Boot on 4.x firmware may load kernels differently; the installer must check prerequisites and refuse to write anything if they are not met.
+- Verified on stock firmware 3.0.0 only. The stock U-Boot on 4.x firmware may load kernels differently; the installer should check prerequisites and refuse to write anything if they are not met (today it checks the image's size and checksum only).
 
 ## Open questions
 

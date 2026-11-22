@@ -21,7 +21,7 @@ const PREVIEW_IDLE_MS = 60000;
 const USE_EVENTS = ["pointermove", "pointerdown", "wheel", "keydown", "touchstart"];
 const SYNC_FALLBACK_MS = 3000;
 // a Panel ID that is not a panel's name (the integration's rule)
-const PANEL_ID_RULE = "A panel's name has letters a-z, digits and hyphens, at most 31 characters.";
+const PANEL_ID_RULE = "A panel's name has letters a-z, digits and hyphens (not at either end), at most 31 characters.";
 
 const DEFAULT_CAPS = ["touch", "images", "web", "video", "mic", "speaker", "proximity", "light"];
 const CAP_NAMES = {
@@ -174,7 +174,7 @@ function widgetMin(wd) {
 // everywhere, live on the panel while it moves.
 const WEIGHTS = [[300, "Light"], [400, "Regular"], [600, "Semibold"], [800, "Bold"]];
 // The screensaver's clock faces (the panel's ClockFace styles 0..10; the clock page's looks are the same faces).
-const SAVER_FACES = ["Big clock", "Huge digits", "Round", "Square", "Minimal", "Numerals", "Wandering", "Split-flap", "Nixie", "LCD quartz", "Twin-bell"];
+const SAVER_FACES = ["Digital", "Big digits", "Round", "Square", "Minimal", "Numerals", "Wandering", "Split-flap", "Nixie", "LCD quartz", "Twin-bell"];
 // The panel's own layout when a weather page has none (as the panel draws it).
 const DEFAULT_ITEMS = [
   { kind: 0, col: 0, row: 0, w: 4, h: 1, style: 1, opts: 1 },
@@ -251,8 +251,8 @@ const SECTIONS = [
 ];
 
 const REPORTING = {
-  illuminance_change: { label: "Light", now: "illuminance", unit: "lx" },
-  soc_temperature_change: { label: "Chip temperature", now: "soc_temperature", unit: "°C" },
+  illuminance_change: { label: "Illuminance", now: "illuminance", unit: "lx" },
+  soc_temperature_change: { label: "SoC temperature", now: "soc_temperature", unit: "°C" },
   wifi_signal_change: { label: "Wi-Fi signal", now: "wifi_signal", unit: "dBm" },
 };
 
@@ -1445,7 +1445,7 @@ class PanelOSPage extends HTMLElement {
       return !t ? "" : m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} h ago` : `${Math.round(m / 1440)} d ago`;
     };
     const strip = (s) => String(s || "").replace(/[*_`#>]/g, "").replace(/\[([^\]]+)\]\([^)]+\)/g, "$1").trim();
-    return this._card("Notifications", { info: `Home Assistant's notifications. A new one shows on ${this._pname(p)} as it comes (Display → New notifications); here are the ones there now.` },
+    return this._card("Notifications", { info: `Home Assistant's notifications. A new one shows on ${this._pname(p)} as it comes (Alerts → New notifications); here are the ones there now.` },
       list.length ? h("div", { class: "below" }, list.map((n, k) => {
         const text = strip(n.message);
         // with a title: the title and the text under it; without one: the text itself
@@ -3485,12 +3485,12 @@ class PanelOSPage extends HTMLElement {
     const version = s.app_version || p.device?.sw_version;
     const num = (v) => typeof v === "number" && !Number.isNaN(v);
     const tiles = [
-      this._has(p, "light") ? this._gl("brightness-6", "Light", num(s.illuminance) ? `${Math.round(s.illuminance)} lx` : "–", "Built-in sensor") : null,
+      this._has(p, "light") ? this._gl("brightness-6", "Illuminance", num(s.illuminance) ? `${Math.round(s.illuminance)} lx` : "–", "Built-in sensor") : null,
       this._has(p, "proximity") ? this._gl("motion-sensor", "Presence", s.presence == null ? "–" : s.presence ? "Someone" : "Nobody", "In front of the panel") : null,
       this._gl("monitor", "Screen", s.screen == null ? "–" : s.screen ? "On" : "Screensaver",
         s.auto_brightness ? "Automatic brightness" : num(s.brightness) ? `Brightness ${s.brightness} %` : null),
       this._gl("wifi", "Wi-Fi", num(s.wifi_signal) ? `${s.wifi_signal} dBm` : "–", s.ip_address || null),
-      this._gl("chip", "Chip temperature", num(s.soc_temperature) ? `${s.soc_temperature.toFixed(1)} °C` : "–", null),
+      this._gl("chip", "SoC temperature", num(s.soc_temperature) ? `${s.soc_temperature.toFixed(1)} °C` : "–", null),
       this._gl("view-grid-outline", "Pages", String(shown.length), "to swipe through"),
     ];
     const house = this._data.house || {};
@@ -3504,7 +3504,7 @@ class PanelOSPage extends HTMLElement {
     return [
       hero,
       h("section", { class: "card only-narrow pv-card" }, this._previewBlock(p, { width: Math.min((this.clientWidth || 360) - 64, 330), height: 330 })),
-      p.loaded ? null : this._card(null, {}, this._row("This panel's entry is not loaded", null, { sub: "Check it in Settings → Devices and services.", lead: h("span", { class: "lead" }, icon("alert-outline")), cls: "first", keep: true })),
+      p.loaded ? null : this._card(null, {}, this._row("This panel's entry is not loaded", null, { sub: "Check it in Settings → Devices & services.", lead: h("span", { class: "lead" }, icon("alert-outline")), cls: "first", keep: true })),
       this._card("Right now", { info: "Live values from the panel. In Home Assistant they are entities of the panel's device, so automations can use them." },
         h("div", { class: "glance" }, tiles)),
       this._card("Alerts and status now", { info: "Critical alerts and status screens that are on at this moment on this panel. They are set in Alerts." },
@@ -3560,7 +3560,7 @@ class PanelOSPage extends HTMLElement {
     return [
       this._hero("Pages", [h("span", null, this._pname(p)), h("span", null, `${shown} of ${pages.length} shown`), this._syncLine(p)]),
       this._card("Swipe order", {
-        info: "The panel shows these pages in this order; swipe left and right between them. After the last page the first comes again, in both directions. The first page is the start page: it stays first and the panel returns to it. A page type can be added more than once, for example two Custom pages with different backgrounds. A hidden page keeps its settings.",
+        info: "The panel shows these pages in this order; swipe left and right between them. After the last page the first comes again, in both directions. The first page is the start page and always stays first. A page type can be added more than once, for example two Custom pages with different backgrounds. A hidden page keeps its settings.",
         acts: this._btn("Add a page", () => this._openSheet({ kind: "catalogue", panel: p.entry_id }), { cls: "small", icon: "plus", disabled: pages.length >= max, title: pages.length >= max ? `At most ${max} pages` : null }),
       },
       h("div", { class: "plist" }, pages.map((page, i) => {
@@ -3591,7 +3591,7 @@ class PanelOSPage extends HTMLElement {
     const modes = p.select_options?.display_mode || [];
     return this._card("Dashboard", {
       sub: "A Home Assistant dashboard in the web view",
-      info: "The panel can show a Home Assistant dashboard instead of its own pages, custom cards included. It is logged in as its own Home Assistant user: dashboards for administrators only, or views shown only to some users, stay empty on it. \"Chosen on the panel\" leaves the choice to the panel's own setting.",
+      info: "The panel can show a Home Assistant dashboard instead of its own pages, custom cards included. It is logged in as its own Home Assistant user: dashboards for administrators only, or views shown only to some users, stay empty on it. \"Chosen on the panel\" leaves the choice to the panel's Dashboard entity.",
     },
     modes.length ? this._row("The panel shows", this._seg(modes.map((m) => [m, m]), s.display_mode, (v) => this._command(p, "display_mode", v), { label: "Display mode" })) : null,
     this._row("Dashboard", this._dropdown((this._data.dashboards || []).map((d) => [d.value, d.label]), st.dashboard || "", (v) => this._options(p, { dashboard: v }, { optimistic: (x) => { x.dashboard = v; } }), { label: "Dashboard" })),
@@ -3809,14 +3809,14 @@ class PanelOSPage extends HTMLElement {
         // drawn, line and plain backgrounds: light or dark by the panel's theme, or always one of them
         (Number(o.theme) >= 3 && Number(o.theme) !== 8) ? this._row("Light or dark", this._seg([["panel", "Panel setting"], ["light", "Light"], ["dark", "Dark"]], ["light", "dark"].includes(o.light) ? o.light : "panel",
           (v) => this._setPageOption(p, i, "light", v === "panel" ? undefined : v), { label: "Light or dark" }),
-          { info: "Panel setting: the light scene with the panel's light theme, the dark one with its dark theme, and Auto follows the panel. Light or Dark keeps this background so." }) : null,
+          { info: "Panel setting: light or dark as the panel's theme is, also while Auto switches it. Light or Dark: always that way." }) : null,
         sw || plain ? null : this._more(`bg:${p.entry_id}:${i}`, weather ? null : this._row("Real sun and moon", this._toggle(o.real_sun !== false, (v) => this._setPageOption(p, i, "real_sun", v), { label: "Real sun and moon" }),
           { info: "On: the sun and the moon stand where they really are in the sky. Off: they keep a fixed place." }),
           // the panel's own switches (its entities): the same on every weather page of the panel
           BACKGROUNDS[cur].theme <= 2 ? this._row("Rain on the glass", this._toggle(ps.rain_on_glass !== false, (v) => this._command(p, "rain_on_glass", v), { label: "Rain on the glass" }),
-            { info: "Drops on the glass while it rains, over the photo backgrounds only. This switch is the panel's: it applies to all its weather pages." }) : null,
+            { info: "Drops on the glass while it rains, over the photo backgrounds only. This switch is the panel's: it applies to all its pages." }) : null,
           this._row("Lightning", this._toggle(ps.lightning !== false, (v) => this._command(p, "lightning", v), { label: "Lightning" }),
-            { info: "Flashes and lightning bolts in thunderstorms. Turn them off if the flashes disturb anyone. This switch is the panel's: it applies to all its weather pages." })));
+            { info: "Flashes and lightning bolts in thunderstorms. Turn them off if the flashes disturb anyone. This switch is the panel's: it applies to all its pages." })));
     }
     const looks = LOOKS[page.kind] || [];
     if (looks.length < 2) return null;
@@ -4018,7 +4018,7 @@ class PanelOSPage extends HTMLElement {
   }
 
   _editThermostat(p, page, i) {
-    return [this._card("Thermostats", { info: "The first one opens on the page; a swipe up shows every one of them as rooms." },
+    return [this._card("Thermostats", { info: "The first one opens on the page; the chip at the top right lists every one of them, room by room, to pick from." },
       this._entityList(p, i, ["climate"], { most: 8, addLabel: "Add a thermostat" }))];
   }
 
@@ -4096,7 +4096,7 @@ class PanelOSPage extends HTMLElement {
       this._card("Picture", {},
         this._row("Opens on", this._seg([["one", "One camera"], ["all", "All cameras"]], o.view === "all" ? "all" : "one", (v) => this._setPageOption(p, i, "view", v), { label: "Opens on" })),
         this._row("Fit", this._seg([["whole", "Whole picture"], ["fill", "Fill the screen"]], o.fit === "whole" ? "whole" : "fill", (v) => this._setPageOption(p, i, "fit", v), { label: "Fit" }))),
-      this._card("Visitor alert", { info: "When this sensor turns on, the first camera's picture opens over any page and the panel rings (also in do not disturb, if the doorbell is allowed to come through there). With a door chosen, holding the button on the picture opens it. With a speaker at the door, the microphone on the picture offers the replies; a tap on one says it on that speaker." },
+      this._card("Visitor alert", { info: "When this sensor turns on, the panel wakes on this page with its camera shown big and rings (in do not disturb only if the doorbell may come through there). With a door chosen, holding the button on the picture opens it. With a speaker at the door, the microphone on the picture offers the replies; a tap on one says it on that speaker." },
         this._row("Opens when", this._entityButton(o.ring || "", { title: "Opens when", domains: ["binary_sensor"], none: "Never", p, onPick: (v) => this._setPageOption(p, i, "ring", v || undefined) })),
         this._row("Door to open", this._entityButton(o.lock || "", { title: "Door to open", domains: ["lock", "cover"], none: "None", p, onPick: (v) => this._setPageOption(p, i, "lock", v || undefined) })),
         ...this._doorReplies(p, page, i)),
@@ -4794,7 +4794,7 @@ class PanelOSPage extends HTMLElement {
           ? this._row("Home Assistant user", h("span", { class: "muted wrap" }, p.panel_user || "–"),
             { info: "The panel tells Home Assistant which user it is logged in as. Only this user and administrators can connect as this panel. Pairing the panel with another user moves it there." })
           : this._row("Home Assistant user", p.panel_user != null ? this._armed(`forget:${p.entry_id}`, "Forget", "Tap again to forget", () => this._forgetUser(p), { cls: "small", icon: "account-remove-outline" }) : h("span", { class: "muted wrap" }, "–"),
-            { sub: p.panel_user || null, info: "Only this user and administrators can connect as this panel. After Forget, the next user that connects as this panel is kept." }),
+            { sub: p.panel_user || null, info: "Only this user and administrators can connect as this panel. After Forget, the next user that is not an administrator to connect as this panel is kept." }),
         this._row("What it can do", null, { stack: true, sub: p.caps_reported ? "As the panel reports it" : "Not reported yet: treated as an NSPanel Pro" }),
         h("div", { class: "below muted" }, this._caps(p).map((c) => CAP_NAMES[c] || c).join(" · "))),
       this._card("Wi-Fi", {},
@@ -4869,7 +4869,7 @@ class PanelOSPage extends HTMLElement {
       this._card("Shared by every panel", {},
         this._row("Critical alerts", this._btn("Edit", () => this._go(firstAlerts), { cls: "small" }), { sub: plural([...(house.critical || []), ...(house.own_critical || [])].filter((c) => c.on).length, "alert", "alerts"), lead: h("span", { class: "lead" }, icon("alert-octagon-outline")), keep: true, cls: "first" }),
         this._row("Status screens", this._btn("Edit", () => this._go(firstAlerts), { cls: "small" }), { sub: `${plural((house.status || []).length, "screen", "screens")}, each on the panels you choose`, lead: h("span", { class: "lead" }, icon("card-text-outline")), keep: true }),
-        panels.length > 1 ? this._row("Copy settings between panels", this._btn("Copy…", () => this._openCopy(panels[0]), { cls: "small", icon: "content-copy" }), { sub: "Pages, display, voice, do not disturb", lead: h("span", { class: "lead" }, icon("content-copy")), keep: true }) : null),
+        panels.length > 1 ? this._row("Copy settings between panels", this._btn("Copy…", () => this._openCopy(panels[0]), { cls: "small", icon: "content-copy" }), { sub: "Pages, display, voice, do not disturb, notifications, dashboard", lead: h("span", { class: "lead" }, icon("content-copy")), keep: true }) : null),
       this._card("What each panel can do", { info: "As each panel reports it. Settings a panel cannot use are left out of its pages; when copying, they are skipped with the reason." },
         h("div", { class: "scroll-x" }, h("table", { class: "matrix" },
           h("thead", null, h("tr", null, h("th", null, ""), panels.map((x) => h("th", null, this._pname(x))))),
@@ -5850,8 +5850,8 @@ class PanelOSPage extends HTMLElement {
         own ? h("div", { class: "group" },
           this._row("Headline", this._text(r.headline, (v) => set({ headline: v.trim() }), { max: 40, label: "Headline" }), { cls: "first", stack: true }),
           this._row("Line", this._text(r.line, (v) => set({ line: v.trim() }), { max: 80, label: "Line" }), { stack: true })) : null),
-      this._has(pv, "images") ? h("div", { class: "sec" }, h("h3", null, "Picture"), h("div", { class: "swatches" }, pictos.map((x) => h("button", {
-        class: `picto${picto === x.id ? " on" : ""}`, style: { background: r.colour || cat.c }, "aria-label": x.mdi ? "Icon" : x.id, onclick: () => set({ picto: x.id }),
+      this._has(pv, "images") ? h("div", { class: "sec" }, h("h3", null, "Picture"), h("div", { class: "swatches" }, pictos.map((x, k) => h("button", {
+        class: `picto${picto === x.id ? " on" : ""}`, style: { background: r.colour || cat.c }, "aria-label": x.mdi ? "Icon" : `Picture ${k + 1}`, onclick: () => set({ picto: x.id }),
       }, x.img ? h("img", { src: x.img, alt: "" }) : icon(x.mdi))))) : null,
       h("div", { class: "sec" }, h("h3", null, "Colour"), h("div", { class: "swatches" }, STATUS_COLOURS.map((c) => h("button", { class: `sw${(r.colour || cat.c).toLowerCase() === c.toLowerCase() ? " on" : ""}`, style: { background: c }, "aria-label": c, onclick: () => set({ colour: c }) })))),
       h("div", { class: "group" },
@@ -5911,7 +5911,7 @@ class PanelOSPage extends HTMLElement {
         if (!to.connected) out.push(["n", "Theme, brightness, screensaver timing and style, waking, child lock", `${tn} is offline; they are the panel's own settings.`]);
         else out.push(["y", "Theme, brightness, screensaver timing and style, waking, child lock"]);
       }
-      if (what.voice) out.push(this._has(to, "mic") ? ["y", "Voice look"] : ["n", "Voice look", this._reason(to, "mic")]);
+      if (what.voice) out.push(this._has(to, "mic") ? ["y", "Voice look and music commands"] : ["n", "Voice look and music commands", this._reason(to, "mic")]);
       if (what.dnd) out.push(["y", "Do not disturb"]);
       if (what.popups) out.push(!this._has(to, "speaker") && from.settings.popups?.sound !== false ? ["a", "New notifications, without sound", this._reason(to, "speaker")] : ["y", "New notifications"]);
       if (what.dashboard) out.push(this._has(to, "web") ? ["y", "Dashboard"] : ["n", "Dashboard", this._reason(to, "web")]);
@@ -5987,7 +5987,7 @@ class PanelOSPage extends HTMLElement {
     const targets = this._panels.filter((x) => x.entry_id !== from.entry_id);
     const page = sh.page != null ? this._pages(from)[sh.page] : null;
     const res = { y: ["check", "y"], a: ["alert-outline", "a"], n: ["close", "n"] };
-    const items = [["pages", "Pages, their looks and options"], ["display", "Display and screensaver"], ["voice", "Voice look"], ["dnd", "Do not disturb"], ["popups", "New notifications"], ["dashboard", "Dashboard"]];
+    const items = [["pages", "Pages, their looks and options"], ["display", "Display and screensaver"], ["voice", "Voice look and music commands"], ["dnd", "Do not disturb"], ["popups", "New notifications"], ["dashboard", "Dashboard"]];
     const tos = sh.to.map((id) => this._panelById(id)).filter(Boolean);
     return this._sheetFrame(page ? `Copy ${(PAGE_TYPES[page.kind] || { name: page.kind }).name}` : "Copy settings", [
       h("div", { class: "sec" }, h("h3", null, "From"), this._choice(this._panels.map((x) => [x.entry_id, this._pname(x)]), from.entry_id, (v) => {
@@ -6057,7 +6057,7 @@ class PanelOSPage extends HTMLElement {
       if (flow.type === "form") result = await this._hass.callApi("POST", `config/config_entries/flow/${flow.flow_id}`, { panel_id: panelId });
       if (result.type === "abort") throw new Error(result.reason === "already_configured" ? "This panel is already set up." : `Not added (${result.reason}).`);
       if (result.type === "form" && result.errors?.panel_id) throw new Error(PANEL_ID_RULE);
-      if (result.type !== "create_entry") throw new Error("Home Assistant asked for more than this page can answer; add the panel in Settings → Devices and services.");
+      if (result.type !== "create_entry") throw new Error("Home Assistant asked for more than this page can answer; add the panel in Settings → Devices & services.");
       const entryId = result.result?.entry_id;
       this._ui.sheet = null;
       this._renderLayer();

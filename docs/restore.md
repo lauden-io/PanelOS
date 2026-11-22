@@ -51,7 +51,7 @@ It ends with `recovery partition written and verified`.
 
 This needs the panel opened, a micro-USB data cable, and the computer. It works even when the panel shows nothing, as long as the bootloader on the panel is intact (PanelOS never changes it).
 
-What you do: start the panel in its USB download mode with the BOOT button, and write the backed-up **misc** partition back. That clears PanelOS's "start PanelOS" setting, so the panel starts the stock firmware again, and the stock firmware then repairs the recovery partition itself.
+What you do: start the panel in its USB download mode with the BOOT button, and write the backed-up **misc** partition back. That clears PanelOS's "start PanelOS" setting, so the panel starts from its boot partition: the stock firmware, which then repairs the recovery partition itself, or, once the stock Android is removed (install guide, step 14), the second PanelOS copy there.
 
 ### 1. Open the panel
 
@@ -126,12 +126,18 @@ rkdeveloptool rd
 
 ### 5. Put the panel back together
 
-Unplug the USB cable, close the display unit, put it back on the wall part, and switch the circuit on again. The stock firmware starts (Sonoff logo).
+Unplug the USB cable, close the display unit, put it back on the wall part, and switch the circuit on again. The stock firmware starts (Sonoff logo). Without the stock Android, the second PanelOS copy starts instead. From there, case D brings the stock firmware back; or write a working image to the recovery partition (install guide, "Updating later") and, before the restart, make it the default again with the first command of the install guide's step 9.
 
 If it still does not start, write the backed-up recovery partition too (download mode again, parts 2–4), with this command instead of the misc one:
 
 ```
 rkdeveloptool wl 204800 $BACKUP/recovery.img
+```
+
+Without the stock Android, if the PanelOS copy on the boot partition does not start either, write the backed-up boot partition instead (download mode again, parts 2–4). It puts the stock Android's boot partition back, so the stock firmware should start again and repair the recovery partition. This way has not been tried on a panel yet.
+
+```
+rkdeveloptool wl 139264 $BACKUP/boot.img
 ```
 
 Do not write the `uboot`, `trust` or other partitions unless you know exactly why: the USB download mode itself depends on them.

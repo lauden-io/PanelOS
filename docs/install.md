@@ -6,7 +6,7 @@ This guide takes you from a stock NSPanel Pro to PanelOS step by step. You do no
 
 ## What you need
 
-- A **Sonoff NSPanel Pro, 86 model** (the square 86 × 86 mm one), on its stock firmware, set up in the eWeLink app and **connected to your Wi-Fi**. PanelOS takes over this Wi-Fi network: with several saved networks, the one the panel is connected to. Password-protected (WPA/WPA2 personal), open and hidden networks work; WEP and enterprise (802.1X) networks are not taken over. It has been tested on stock firmware 3.0.0.
+- A **Sonoff NSPanel Pro, 86 model** (the square 86 × 86 mm one), on its stock firmware, set up in the eWeLink app and **connected to your Wi-Fi**. PanelOS takes over this Wi-Fi network: with several saved networks, the one the stock firmware's list marks as connected, otherwise the first one it can use. Password-protected (WPA/WPA2 personal), open and hidden networks work; WEP and enterprise (802.1X) networks are not taken over. It has been tested on stock firmware 3.0.0.
 - A **computer**: Windows 10/11, Linux, or a Mac (see [Mac](#mac)), with about **60 GB free disk space** (80 GB for the Mac virtual machine) and internet access. The first build takes a long time (it builds a whole Linux system, and a web browser for the dashboard mode: several hours); later builds take a few minutes.
 - **Home Assistant** on the same network, and a phone with a camera.
 - The **IP address of Home Assistant** (for example `192.168.1.10`; in Home Assistant: Settings → System → Network). The panel cannot use names like `homeassistant.local`.
@@ -126,7 +126,7 @@ The second command downloads the Linux kernel and Buildroot (a few GB). It ends 
 
 ## 5. Connect to the panel and check root
 
-Store the panel's IP address and a short name for the panel. The name is the panel's own name from now on: its backups are named after it (step 6), and the panel is known by it in Home Assistant (step 9). Use lower-case letters `a`–`z`, digits and hyphens, at most 31 characters, for example `kitchen`; every panel gets a different one, and no other ESPHome device in Home Assistant may have it. **Set again after reopening.**
+Store the panel's IP address and a short name for the panel. The name is the panel's own name from now on: its backups are named after it (step 6), and the panel is known by it in Home Assistant (step 9). Use lower-case letters `a`–`z`, digits and hyphens (not at the start or the end), at most 31 characters, for example `panel1`; every panel gets a different one, and no other ESPHome device in Home Assistant may have it. **Set again after reopening.**
 
 ```
 PANEL=<panel IP address>
@@ -203,7 +203,7 @@ cd /root/PanelOS && tools/build_image.sh
 
 When it is done, the last line is `done: /tmp/nspanel_out/recovery-dev.img`. The build also creates an SSH key in `/root/.ssh/nspanel_dev`: it is your key to log in to your panels later, so keep it.
 
-The build takes one file from the backup of step 6: the stock device tree from the `resource` partition. The panel's bootloader needs it to show the boot logo and to load PanelOS in about 2 seconds.
+The build takes one file from the backup of step 6: the stock device tree from the `resource` partition. The panel's bootloader needs it to show the boot logo and to load PanelOS quickly.
 
 Then the web bundle. This is the long step: the first time it builds a whole web browser, which takes several hours.
 
@@ -233,9 +233,9 @@ cd /root/PanelOS && tools/flash_recovery_adb.sh $PANEL:5555 /tmp/nspanel_out/rec
 
 The command writes the image, checks it, and restarts the panel. On the panel you see:
 
-1. after a few seconds the **PanelOS logo** (the stock bootloader loads PanelOS), then a short black moment,
-2. the **PanelOS boot animation**, which waits until Wi-Fi is up,
-3. the setup screen **"Connect to Home Assistant"** (step 10).
+1. after a few seconds the **boot logo** (the stock bootloader loads PanelOS),
+2. the **boot animation**, which waits until Wi-Fi is up,
+3. the setup screen, which asks for your Home Assistant (step 10). Until step 9 puts the bundles on the panel, this is the system image's simple app, without the bundle's pictures and fonts.
 
 You do this step **once**.
 
@@ -243,7 +243,7 @@ If the panel starts the stock firmware again (the Sonoff screen) instead of Pane
 
 ## 9. Make PanelOS start every time and put its bundles on the panel
 
-Do this while PanelOS is running (after the animation):
+Do this while PanelOS is running (after the boot animation):
 
 ```
 ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL nspanel-bootmode open
@@ -261,7 +261,7 @@ cd /root/PanelOS && tools/install_bundles.sh $PANEL
 
 It sends both bundles over Wi-Fi (about 250 MB, a few minutes), checks them on the panel, and restarts the PanelOS app with them. The panel keeps running while they are sent. At the end it says `the app runs from the UI bundle, on the GPU`, `dashboard mode: the web bundle is mounted` and `done`, and the panel shows the setup screen again.
 
-If it stops with a message, nothing has changed on the panel unless the message says otherwise; run the command again (an upload that already got through is not sent again).
+If it stops with a message, do what the message says and run the command again (an upload that already got through is not sent again). A failed upload changes nothing on the panel.
 
 Then give the panel its name (step 5). The command writes it on the panel and restarts the panel; PanelOS comes back with the setup screen after about a minute:
 
@@ -273,14 +273,20 @@ The panel's settings show the name under **About** as its **Panel ID**. A panel 
 
 ## 10. Tell the panel where Home Assistant is
 
-On the panel's setup screen **"Connect to Home Assistant"**:
+On the panel's setup screen:
 
-- If your Home Assistant is listed (the panel found it on the network), tap it.
+- If your Home Assistant is listed (the panel found it on the network), tap it. When the panel found several, tap the row and pick yours.
 - Otherwise type its IP address on the keypad, plus `:8123` if your Home Assistant uses that port (installations from before 2026.8 and Docker installations do; Home Assistant OS installed since 2026.8 uses port 80). Without a port the panel tries 8123 first, then 80. Tap **Connect**.
 
 The panel checks that Home Assistant answers at that address, saves it, and shows a **QR code** a moment later. If it says that Home Assistant did not answer, check the IP address and the port.
 
-Alternatively, from the computer (with `HA=http://<Home Assistant IP address>:8123`):
+Alternatively, from the computer. First store the address of Home Assistant (leave out `:8123` if your Home Assistant uses port 80):
+
+```
+HA=http://<Home Assistant IP address>:8123
+```
+
+Then write it on the panel; the panel restarts and shows the QR code:
 
 ```
 ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "echo '{\"ha_url\": \"$HA\"}' > /mnt/persist/nspanel/app.json && nohup reboot >/dev/null 2>&1 </dev/null &"
@@ -290,13 +296,13 @@ ssh -n -i /root/.ssh/nspanel_dev -o StrictHostKeyChecking=accept-new -o UserKnow
 
 1. Scan the QR code with the phone's camera (Android: the camera app or Google Lens; iPhone: the Camera app), and open the link it shows.
 2. The Home Assistant login page opens. It always asks for a user name and password, also when the phone is already logged in to Home Assistant, so log in with the user the panel should use (a separate, non-administrator Home Assistant user works well).
-3. The panel connects by itself and shows your default dashboard. You can pick another dashboard on the panel: gear icon → Dashboard.
+3. The panel connects by itself and shows your default dashboard. Which dashboard it shows is set in Home Assistant once the PanelOS integration is added (step 12): in its dashboard mode options, or with the panel's Dashboard select.
 
 ## 12. Add the panel to Home Assistant
 
 1. If Home Assistant and the panel are in the same network segment, Home Assistant finds the panel by itself (mDNS): **Settings → Devices & services** shows it under Discovered; tap **Add**. Otherwise: **Settings → Devices & services → Add integration → ESPHome**.
 2. Host: the panel's IP address (pre-filled when discovered). Port: `6053`. Leave the encryption key empty: Home Assistant gives the panel a key by itself right after adding it and connects encrypted from then on.
-3. The panel appears as a device with its settings, sensors and the voice assistant (Assist satellite). Choose the wake words and the assistant on the device page.
+3. The panel appears as its voice device: the voice assistant (Assist satellite), volume, a microphone switch and a media player. Choose the wake words and the assistant on the device page. The panel's display settings and sensors come with the PanelOS integration below.
 
 ### The PanelOS integration
 
@@ -320,7 +326,7 @@ Then **Settings → Devices & services → Add integration → PanelOS**, Panel 
 
 ## 13. Check
 
-Unplug the panel's power (or switch off its circuit) for 10 seconds and switch it on again. After the logo and the animation, the panel must show your dashboard again.
+Unplug the panel's power (or switch off its circuit) for 10 seconds and switch it on again. After the boot logo and the boot animation, the panel must show your dashboard again.
 
 ## 14. Remove the stock Android (optional)
 
@@ -333,20 +339,20 @@ The other Android partitions stay as they are, unused. The way back to the stock
 
 Before you start: the backup of step 6 is on the computer (best with its restore test), and PanelOS has run for some days without trouble.
 
-> **Tried on one panel so far** (2026-11-15, steps 1–4): PanelOS started from the boot partition and was on the network after 8 s, and after formatting `/mnt/data` was mounted at the next start by itself. Read the risks first.
+> **Tried on one panel so far** (steps 1–4): PanelOS started from the boot partition and came on the network, and after formatting `/mnt/data` was mounted at the next start by itself. Read the risks first.
 
-**Risks, and why they are small.** What speaks for it, checked on a backup of the stock firmware 3.0.0: the stock boot and recovery images have the same layout (Android boot image version 0, page 2048, each with its own kernel and the same second stage); the stock bootloader's start command (`boot_android`, then `bootrkp`, then the distro boot) loads both partitions with the same code; it has no verified boot (no AVB, no signature check of the boot partition) and passes no `skip_initramfs`; the image that goes to the boot partition is the very one that already runs from recovery, byte for byte, and it fits (30.7 MB of 32 MiB).
+**Risks, and why they are small.** What speaks for it, checked on a backup of the stock firmware 3.0.0: the stock boot and recovery images have the same layout (Android boot image version 0, page 2048, each with its own kernel and the same second stage); the stock bootloader's start command (`boot_android`, then `bootrkp`, then the distro boot) loads both partitions with the same code; it has no verified boot (no AVB, no signature check of the boot partition) and passes no `skip_initramfs`; the image that goes to the boot partition is the very one that already runs from recovery, byte for byte, and `tools/build_image.sh` stops when an image does not fit the boot partition (32 MiB).
 
 | Risk | When | What happens | Way out |
 |---|---|---|---|
-| PanelOS does not start from the boot partition | step 3, the one test start | the panel keeps restarting the boot partition | unplug for 10 s; if it still does not start, the USB route of [restore.md](restore.md) case C: the panel has to be opened for its BOOT button. This is the one risk that can need opening the panel. |
+| PanelOS does not start from the boot partition | step 3, the one test start | the panel keeps restarting the boot partition | unplug for 10 s; if it still does not start, the USB route of [restore.md](restore.md) case C, with the backed-up boot partition: the panel has to be opened for its BOOT button. This is the one risk that can need opening the panel. |
 | Power cut while writing the boot partition | step 2 (a few seconds) | the boot partition is half written; the default boot still starts PanelOS from recovery | run step 2 again |
 | Power cut while formatting | step 4 | the new data partition is unusable | run step 4 again |
-| Both partitions hold a broken image | later, only if a bad image is written to both | no system starts | [restore.md](restore.md) case C (opening the panel). Copy an image to the boot partition only after it has proven itself (see "Updating later"). |
+| Both partitions hold a broken image | later, only if a bad image is written to both | no system starts | [restore.md](restore.md) case C, with the backed-up boot partition (opening the panel). Copy an image to the boot partition only after it has proven itself (see "Updating later"). |
 | The stock firmware is gone | from step 2 | the panel cannot go back to Sonoff's firmware by itself | the backup of step 6, written by PanelOS ([restore.md](restore.md) case D); the stock firmware then starts like after a factory reset. Keep the backup safe: without it there is no way back to the stock firmware. |
-| A bigger image does not fit | later updates | the second copy cannot be refreshed | `tools/build_image.sh` warns when an image is larger than the boot partition |
+| A bigger image does not fit | later updates | `tools/build_image.sh` stops instead of building it, and `tools/remove_android.sh` refuses to copy one | nothing to do on the panel: it keeps the version it has |
 
-Today, while the stock Android is on the panel, a PanelOS that does not start at all needs the same USB route; what step 14 changes is that the stock Android is no longer the fallback, the second PanelOS copy is.
+While the stock Android is on the panel, a PanelOS that does not start at all needs the same USB route; step 14 changes the fallback: the second PanelOS copy instead of the stock Android.
 
 1. See what is on the panel (changes nothing):
 
@@ -366,7 +372,7 @@ Today, while the stock Android is on the panel, a PanelOS that does not start at
    tools/remove_android.sh $PANEL test
    ```
 
-   If the panel does not come back within 5 minutes, unplug its power for 10 seconds. If it still does not start, follow [restore.md](restore.md), case C. This is the only point of this step where the panel may have to be opened.
+   If the panel does not come back within 5 minutes, unplug its power for 10 seconds. If it still does not start, follow [restore.md](restore.md), case C, with the backed-up boot partition. This is the only point of this step where the panel may have to be opened.
 
 4. Format the old userdata partition for PanelOS (needs a PanelOS with `mkfs.ext4`, from version 0.0.4). PanelOS mounts it at `/mnt/data` at every start:
 
@@ -374,7 +380,7 @@ Today, while the stock Android is on the panel, a PanelOS that does not start at
    tools/remove_android.sh $PANEL data
    ```
 
-5. Move the UI bundle to the new, larger partition. This frees room on the small one, where the web bundle stays:
+5. Move the UI bundle to the new, larger partition: it is sent from the computer once more, and the copy on the small partition, where the web bundle stays, is removed:
 
    ```
    tools/install_bundles.sh $PANEL ui
@@ -432,13 +438,13 @@ Until PanelOS can update itself (planned: updates from Home Assistant's Settings
 
 ## Going back to the stock firmware
 
-See [restore.md](restore.md), case A.
+See [restore.md](restore.md), case A (case D once the stock Android is removed, step 14).
 
 ## If something goes wrong
 
 - **The panel shows the Sonoff screen / stock firmware again:** PanelOS was not made the default (step 9) or found no network. Repeat from step 8.
 - **The setup screen says Home Assistant did not answer:** check the IP address and the port (`:8123` or none) in Home Assistant under Settings → System → Network.
-- **"Waiting for the network…" or "Home Assistant not reachable, retrying…" in the status line:** the panel keeps trying by itself, no restart needed; check the Wi-Fi and that Home Assistant runs.
+- **The panel says that its Wi-Fi has no connection or that Home Assistant is not answering:** the panel keeps trying by itself, no restart needed (**Try now** tries at once); check the Wi-Fi and that Home Assistant runs. **Change Wi-Fi** or **Change Home Assistant** on that screen picks another network or address.
 - **The screen stays black for minutes:** unplug the power for 10 seconds. If it still does not start, follow [restore.md](restore.md), case C.
 - **`tools/install_bundles.sh` says there is not enough room:** until step 14, both bundles (about 250 MB) share the small persistent partition (384 MiB) with the settings and the browser's cache. This shows what takes the room:
 
@@ -447,7 +453,7 @@ See [restore.md](restore.md), case A.
   ```
 
   After step 14 the UI bundle goes to the large data partition.
-- **`tools/install_bundles.sh` ends with "the image's app runs":** the line under it says why. When the app from the UI bundle ended right after its start three times, the panel uses the simple app until its next restart; the app's messages:
+- **`tools/install_bundles.sh` says "the image's app runs":** the line under it says why. When the app from the UI bundle ended within 30 seconds of its start three times in a row, the panel uses the simple app until its next restart; the app's messages:
 
   ```
   ssh -n -i /root/.ssh/nspanel_dev -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "grep nspanel-app /var/log/messages | tail -30"

@@ -3,7 +3,7 @@
   <img alt="PanelOS: open firmware for smart home wall panels" src="branding/kit/social/readme-header-light.png" width="100%">
 </picture>
 
-Open-source Linux firmware for smart home wall panels: it replaces the closed vendor firmware with a minimal **mainline Linux** system built with **Buildroot**, running its own native interface for Home Assistant (**Rust + Slint**, drawn on the GPU) and a voice satellite. No browser, no cloud.
+Open-source Linux firmware for smart home wall panels: it replaces the closed vendor firmware with a minimal **mainline Linux** system built with **Buildroot**, running its own native interface for Home Assistant (**Rust + Slint**, drawn on the GPU) and a voice satellite. No cloud.
 
 Version **0.0.7** (what is new: [CHANGELOG.md](CHANGELOG.md)). Licence: AGPL-3.0-or-later ([LICENSE](LICENSE)).
 
@@ -11,7 +11,7 @@ Version **0.0.7** (what is new: [CHANGELOG.md](CHANGELOG.md)). Licence: AGPL-3.0
 
 | Device | SoC | State |
 |---|---|---|
-| Sonoff NSPanel Pro (86 model) | Rockchip PX30 | working: native interface, voice satellite, boot logo and animation, about 12 s boot |
+| Sonoff NSPanel Pro (86 model) | Rockchip PX30 | working: native interface, voice satellite, Music Assistant player, dashboard mode, Home Assistant integration and page, boot logo and animation |
 
 ## The interface
 
@@ -29,7 +29,8 @@ PanelOS draws its own interface on the panel's GPU: no browser, no web page, eve
 - **Calendar**: agenda, day, three days, week and month, or a departure board, a tear-off calendar and a wall calendar with your events written in pen.
 - **To-do lists**: a plain list, a shop receipt, a terminal, embossed label tapes, or a yellow notepad in handwriting.
 - **Notifications**: a list, sticky notes on a fridge, a 90s pager, or the evening news.
-- **Clock**: digital or analog faces, a split-flap board, the time in words, nixie tubes, an LCD quartz watch or a twin-bell alarm clock; on its own page, as a widget and on the screensaver.
+- **Clock**: digital or analog faces, a split-flap board, nixie tubes, an LCD quartz watch or a twin-bell alarm clock, on its own page and on the screensaver; as a widget also the time in words.
+- **Weather details**: cards or a living photo, with the hours and days ahead.
 - **Quick controls**: tiles, a mixing desk with faders, or a flight deck with toggle switches.
 
 **It tells you what matters.** Status screens show what happens at home (someone in the bathroom, a call going on, the robot vacuum at work) in their own colour, with a few words; a swipe folds one into a strip on top. A critical alert (smoke, CO, gas, water) takes the whole screen in red and keeps sounding until someone holds the button. Do not disturb lets through what you choose.
@@ -46,7 +47,7 @@ PanelOS draws its own interface on the panel's GPU: no browser, no web page, eve
 - **Dashboard mode** (secondary): a Home Assistant dashboard in a web view, custom cards included; within the limits of the panel's hardware, so a light, simple dashboard made for it works best ([docs/home_assistant.md](docs/home_assistant.md#dashboard-mode)).
 - **First-start setup on the panel**: Home Assistant found on the network (mDNS) or its address typed on a keypad; pairing with a QR code.
 - **Home Assistant device and page**: the PanelOS integration (`custom_components/panelos`) adds the panel as a device with its display, settings and sensors, and a PanelOS page in the sidebar where every panel's pages, looks, alerts, status screens, display and voice are set beside a live picture of its screen; it also shows views or messages on it; the voice satellite is an ESPHome device (announced over mDNS like any ESPHome device), connected via the panel.
-- **Super fast boot**: about 12 s from power on to the dashboard, more than four times faster than the stock firmware (about 53 s). The PanelOS logo already shows in the bootloader, then the boot animation; the UI comes with the right time and current Home Assistant data. After a power cut it waits for Home Assistant and the network as long as it takes and comes back by itself.
+- **Fast boot**: from power on to your first page much faster than the stock firmware (about 53 s); the UI comes with the right time and current Home Assistant data. After a power cut it waits for Home Assistant and the network as long as it takes and comes back by itself.
 
 Details: [docs/app.md](docs/app.md).
 
@@ -96,19 +97,19 @@ paste `https://github.com/lauden-io/PanelOS`, download **PanelOS**, then restart
 
 - No TLS yet: Home Assistant must be reachable over plain `http://`.
 - mDNS (finding Home Assistant on the setup screen, Home Assistant discovering the panel) only works inside one network segment, unless the router repeats mDNS between them.
-- Web mode (the real Home Assistant frontend) is not started.
-- Alarm sounds are simple beeps for now.
 
 ## Repository layout
 
 - `app/` the panel app (Rust + Slint), see [docs/app.md](docs/app.md)
 - `custom_components/panelos/` Home Assistant integration (the panel's device, its PanelOS page, shared alerts and status screens, screen actions), installable with the Home Assistant Marketplace or HACS, see [docs/home_assistant.md](docs/home_assistant.md)
-- `docs/` hardware notes ([docs/hardware.md](docs/hardware.md)), backup and restore, bring-up notes ([docs/bringup.md](docs/bringup.md)), security and development aids ([docs/security.md](docs/security.md)), design decisions and plans, feature list
+- `docs/` installation ([docs/install.md](docs/install.md)), hardware notes ([docs/hardware.md](docs/hardware.md)), backup and restore ([docs/restore.md](docs/restore.md)), bring-up notes ([docs/bringup.md](docs/bringup.md)), security and development aids ([docs/security.md](docs/security.md)), design decisions and plans ([docs/decisions.md](docs/decisions.md)), feature list ([docs/features.md](docs/features.md))
 - `kernel/` board device tree (`dts/`), mainline kernel patches (`patches/`), config fragment (`configs/`)
-- `buildroot/` Buildroot external tree (`BR2_EXTERNAL`): root filesystem defconfig, init scripts, boot splash, small tools
-- `assets/` logo and logotype (SVG), generated boot pictures
+- `buildroot/` Buildroot external tree (`BR2_EXTERNAL`): the root filesystem and web bundle defconfigs, init scripts, boot splash, the web view (`package/panelos-web`, WPE WebKit patches), small tools
+- `assets/` the boot logo and the sources of the boot pictures
+- `branding/` the PanelOS logo, brand kit and guidelines
+- `tests/` integration tests (`python3 -m unittest discover -s tests`)
 - `testinit/` minimal PID 1 used for the first bring-up test boots
-- `tools/` build scripts, backup and restore, flashing over ADB or SSH, resource image pack/unpack, DTB dump, pstore log, boot splash renderer (`tools/splash/`), wake word benchmark
+- `tools/` build scripts (image, UI bundle, web bundle, app), putting the bundles on a panel, backup and restore, flashing over ADB or SSH, removing the stock Android, chain loader (`tools/chainload/`), resource image pack/unpack, DTB dump, pstore log, boot splash renderer (`tools/splash/`), wake word benchmark
 - `backup/` local firmware backups, git-ignored, **never published**
 
 ## How it is made
@@ -121,4 +122,4 @@ Flashing can brick the device. Make a full backup first (see [docs/restore.md](d
 
 ## License
 
-AGPL-3.0-or-later (full text in LICENSE). The panel app uses the Slint toolkit under its GPLv3 option, which GPLv3 section 13 allows to be combined with AGPL-3.0 code. Third-party parts keep their own licences (Linux kernel GPL-2.0, Buildroot packages, DejaVu fonts, Material Design Icons, the microWakeWord models).
+AGPL-3.0-or-later (full text in LICENSE). The panel app uses the Slint toolkit under its GPLv3 option, which GPLv3 section 13 allows to be combined with AGPL-3.0 code. Third-party parts keep their own licences: the Linux kernel (GPL-2.0), Buildroot packages, the Rust crates, the fonts (DejaVu; Noto Sans, Space Grotesk, Caveat, Courier Prime, Oswald and Press Start 2P under the SIL OFL), Material Design Icons, kissfft, TensorFlow Lite's micro frontend, the ESPHome API definitions (aioesphomeapi), WebRTC audio processing and the microWakeWord models.

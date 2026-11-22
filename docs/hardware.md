@@ -97,28 +97,28 @@ Init sequence (DCS, in order; delays in ms after the command):
 
 ## Touch controller: interrupt bursts (open)
 
-The kernel log sometimes fills with `Hynitron-TS 1-005a: cst3xx touch read failure`, hundreds of lines a second for up to several seconds. Measured on 2026-11-15 (one panel, kernel log, `/proc/interrupts`):
+The kernel log sometimes fills with `Hynitron-TS 1-005a: cst3xx touch read failure`, hundreds of lines a second for up to several seconds. Four bursts, measured on one panel (kernel log, `/proc/interrupts`):
 
-| When (local time) | Lines | Length | Next to it |
+| Burst | Lines | Length | Next to it |
 |---|---|---|---|
-| 10:47:00 | ≈590 | ≈4 s | app start |
-| 11:00:43 | ≈720 | ≈4 s | proximity "approach" in the same second |
-| 11:23:34 | 240 | 0.35 s | proximity "approach" 1 s later |
-| 11:26:45 | 3012 | 7.2 s | proximity "approach" at 65535 counts (the sensor's maximum: a hand on the glass), again 2 s later |
+| 1 | ≈590 | ≈4 s | app start |
+| 2 | ≈720 | ≈4 s | proximity "approach" in the same second |
+| 3 | 240 | 0.35 s | proximity "approach" 1 s later |
+| 4 | 3012 | 7.2 s | proximity "approach" at 65535 counts (the sensor's maximum: a hand on the glass), again 2 s later |
 
 The touch interrupt had fired 68 716 times in 16.3 h of uptime. Three of the four bursts came with the proximity sensor seeing a hand, so while the panel was touched or covered; the first came while the app started.
 
 What the driver does (`drivers/input/touchscreen/hynitron_cstxxx.c`, `cst3xx_touch_report`): on every interrupt it reads 28 bytes from register 0xd000. It prints this one message both when the I²C read fails and when the frame does not check out: byte 6 is not 0xab, or byte 0 is 0xab (a frame that was already read). In both cases it returns **without** writing the end-of-read command (0xab to 0xd000), so the controller keeps its interrupt line low (the interrupt is level triggered) and the read runs again at once. That explains the rate. The frames of a burst are dropped, so touches during a burst are lost. A frame read while nobody touches the panel starts with 0xab (`ab 01 1c 70 3b 00 ab 00 00 00 2e 35 ab …`).
 
-Frames read during a burst (read-only watcher: `i2ctransfer -f -y 1 w2@0x5a 0xd0 0x00 r28`, triggered by the interrupt rate; 2026-11-15 11:56): `ab 0e 0f 40 40 01 ab 00 …` and `ab 1d 0f 48 19 00 ab 00 …`. Byte 0 still holds the end-of-read mark 0xab while byte 5 reports one touch (then none): the controller raises its interrupt for frames whose status byte it did not refresh, so they are not I²C errors. Such frames come while a finger rests on the glass, which fits a long press that does not register.
+Frames read during a burst (read-only watcher: `i2ctransfer -f -y 1 w2@0x5a 0xd0 0x00 r28`, triggered by the interrupt rate): `ab 0e 0f 40 40 01 ab 00 …` and `ab 1d 0f 48 19 00 ab 00 …`. Byte 0 still holds the end-of-read mark 0xab while byte 5 reports one touch (then none): the controller raises its interrupt for frames whose status byte it did not refresh, so they are not I²C errors. Such frames come while a finger rests on the glass, which fits a long press that does not register.
 
-A test with known touches (2026-11-15 12:33, the four corners, then a long press in the middle; the driver logged the rejected frames): `ab 00 00 be 2a 01 ab 00` decodes to one touch at (11, 14), the top left corner, and `ab 10 0e e3 47 01 ab 00` to one touch at (270, 227), the long press in the middle; each came again every 1.2 ms (1142 more lines within 5 s). So these frames are real touches with a stale status byte, and dropping them is why corners seemed insensitive and a long press did not register. Ending the read alone did not let the line go: the controller keeps it low while the finger rests.
+A test with known touches (the four corners, then a long press in the middle; the driver logged the rejected frames): `ab 00 00 be 2a 01 ab 00` decodes to one touch at (11, 14), the top left corner, and `ab 10 0e e3 47 01 ab 00` to one touch at (270, 227), the long press in the middle; each came again every 1.2 ms (1142 more lines within 5 s). So these frames are real touches with a stale status byte, and dropping them is why corners seemed insensitive and a long press did not register. Ending the read alone did not let the line go: the controller keeps it low while the finger rests.
 
 Fix (`kernel/patches/0002`, `end_bad_frames` for the CST226SE): a frame whose status byte holds the end-of-read mark and that reports one touch is reported as that touch (one finger, slot 0, coordinates and width from bytes 1–4); one that reports none releases all contacts; the read is ended and the next report waits about 10 ms, so a resting finger gives about 100 reports a second instead of about 800. Other rejected frames are logged with their first bytes, rate limited.
 
-A second test (2026-11-15 12:42, evtest on the panel) with this fix: every corner came through at the edge, (21, 8), (450, 8), (11, 471), (439, 471), and the long press lasted 5.4 s with 126 reports. But 1 ms after every release the controller sent the last frame once more, which became a 13 ms ghost touch at the same place, a second tap. The driver therefore ignores a frame without status that repeats the last contact's place within 60 ms after it went.
+A second test (evtest on the panel) with this fix: every corner came through at the edge, (21, 8), (450, 8), (11, 471), (439, 471), and the long press lasted 5.4 s with 126 reports. But 1 ms after every release the controller sent the last frame once more, which became a 13 ms ghost touch at the same place, a second tap. The driver therefore ignores a frame without status that repeats the last contact's place within 60 ms after it went.
 
-Accuracy, with that fix (2026-11-15, the app's touch test view, `docs/bringup.md`): nine points 16 px from the edges and the middle, four rounds, touched in different ways (one round with the other hand, speeds varied, as in everyday use). Every point registered at the first touch, 36 of 36, and the event log shows no ghost touch (27 touches for the last 27 points; the shortest pause between two touches 391 ms). Offsets of the touch from the point:
+Accuracy, with that fix (the app's touch test view, `docs/bringup.md`): nine points 16 px from the edges and the middle, four rounds, touched in different ways (one round with the other hand, speeds varied, as in everyday use). Every point registered at the first touch, 36 of 36, and the event log shows no ghost touch (27 touches for the last 27 points; the shortest pause between two touches 391 ms). Offsets of the touch from the point:
 
 | | x | y |
 |---|---|---|
@@ -127,7 +127,7 @@ Accuracy, with that fix (2026-11-15, the app's touch test view, `docs/bringup.md
 | bottom row (12) | +2.1 ± 5.5 px | +7.2 ± 0.7 px |
 | all 36 | +0.5 ± 7.2 px | |
 
-The only systematic part is in y at the top and bottom edges: a touch there is reported 7–8 px nearer the edge, the same in every round and with either hand (y about 3 % stretched around the middle; x not). Everything else is where the finger landed. All of it is far below a fingertip (40–50 px), so on this panel a calibration would not help in everyday use. It is one panel, though: whether every unit behaves the same is not known (glass, sensor and controller tuning can differ from unit to unit). Hence a touch calibration in the settings, started on the panel or from the integration: it runs these nine points and applies a correction only when the offsets are systematic, the same in every round.
+The only systematic part is in y at the top and bottom edges: a touch there is reported 7–8 px nearer the edge, the same in every round and with either hand (y about 3 % stretched around the middle; x not). Everything else is where the finger landed. All of it is far below a fingertip (40–50 px), so on this panel a calibration would not help in everyday use. It is one panel, though: whether every unit behaves the same is not known (glass, sensor and controller tuning can differ from unit to unit). Hence a touch calibration in the settings, started on the panel or from the integration: it runs these nine points once and shifts all touches only when they are off the same way (more than 3 px on average, spread under 6 px).
 
 ## GPIO and pin map (from the vendor device tree)
 
