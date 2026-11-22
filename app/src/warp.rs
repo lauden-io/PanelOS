@@ -73,6 +73,28 @@ impl Band {
         let (r, s) = ((y - self.y) as usize, self.stride());
         &mut self.px[r * s..(r + 1) * s]
     }
+
+    /// The first channel of the pixel at column x, row y (a grey picture's level), 0 outside the band.
+    pub(crate) fn level(&self, x: i32, y: i32) -> u8 {
+        if !self.has_row(y) || x < self.x || x >= self.x + self.w as i32 {
+            return 0;
+        }
+        self.row(y)[(x - self.x) as usize * 4 + PAD * 4]
+    }
+}
+
+/// A grey band (level f(column, row)), for tests.
+#[cfg(test)]
+pub(crate) fn grey_band(w: usize, h: usize, f: impl Fn(i32, i32) -> u8) -> Band {
+    let mut b = Band::blank(0, 0, w, h);
+    for y in 0..h as i32 {
+        let row = b.row_mut(y);
+        for x in 0..w as i32 {
+            let g = f(x, y);
+            row[(x as usize + PAD) * 4..(x as usize + PAD) * 4 + 4].copy_from_slice(&[g, g, g, 255]);
+        }
+    }
+    b
 }
 
 /// x / 255, rounded (x up to 255 * 255 + 255).
@@ -385,7 +407,7 @@ fn compose(out: &mut [u8], fr: &Frame, land: Option<&Land>, trees: &[(Tree, &Ban
 // --- pictures ---------------------------------------------------------------------------------------------------
 
 /// A band of a picture file: its path in the UI bundle, columns x .. x + w, rows y .. y + h.
-type BandKey = (&'static str, i32, i32, usize, usize);
+pub(crate) type BandKey = (&'static str, i32, i32, usize, usize);
 
 enum Slot {
     Loading,
@@ -394,7 +416,7 @@ enum Slot {
 }
 
 #[derive(Clone)]
-enum Got {
+pub(crate) enum Got {
     Ready(Arc<Band>),
     Waiting,
     Failed,
@@ -406,7 +428,7 @@ fn store() -> &'static Mutex<HashMap<BandKey, Slot>> {
 }
 
 /// The bands asked for: the loaded ones, the others started loading together in a thread.
-fn fetch(keys: &[BandKey]) -> Vec<Got> {
+pub(crate) fn fetch(keys: &[BandKey]) -> Vec<Got> {
     let now = Instant::now();
     let mut missing = Vec::new();
     let got = {
@@ -459,7 +481,7 @@ fn fetch(keys: &[BandKey]) -> Vec<Got> {
 }
 
 /// Reads a band of a PNG picture of the UI bundle: only the rows down to the band's last are decoded.
-fn read_band(key: &BandKey) -> Option<Band> {
+pub(crate) fn read_band(key: &BandKey) -> Option<Band> {
     let &(path, x, y, w, h) = key;
     let bytes = std::fs::read(std::path::Path::new(env!("PANELOS_UI_PICTURES")).join(path)).ok()?;
     decode_band(&bytes, x, y, w, h)
@@ -568,24 +590,24 @@ fn mix(cache: &mut Option<Mix>, srcs: &[Option<Arc<Band>>; 4], weights: [u32; 4]
 /// Two frame buffers that take turns: the page still shows one while the next is drawn into the other, and once the page
 /// lets the older picture go its buffer is drawn into again without a new allocation.
 #[derive(Default)]
-struct Buffers {
+pub(crate) struct Buffers {
     bufs: [Option<SharedPixelBuffer<Rgba8Pixel>>; 2],
     next: usize,
 }
 
 impl Buffers {
-    fn take(&mut self, w: u32, h: u32) -> SharedPixelBuffer<Rgba8Pixel> {
+    pub(crate) fn take(&mut self, w: u32, h: u32) -> SharedPixelBuffer<Rgba8Pixel> {
         self.bufs[self.next].take().filter(|b| b.width() == w && b.height() == h).unwrap_or_else(|| SharedPixelBuffer::new(w, h))
     }
 
-    fn give_back(&mut self, buf: SharedPixelBuffer<Rgba8Pixel>) -> Image {
+    pub(crate) fn give_back(&mut self, buf: SharedPixelBuffer<Rgba8Pixel>) -> Image {
         let img = Image::from_rgba8_premultiplied(buf.clone());
         self.bufs[self.next] = Some(buf);
         self.next ^= 1;
         img
     }
 
-    fn bytes(&self) -> usize {
+    pub(crate) fn bytes(&self) -> usize {
         self.bufs.iter().flatten().map(|b| b.as_bytes().len()).sum()
     }
 }
@@ -622,13 +644,20 @@ thread_local! {
     static BROKEN: Cell<bool> = const { Cell::new(false) };
 }
 
-/// Development: the app's pictures off, so the scenes draw their strips again ({"warp": false} on the development
-/// input, to compare the look and the cost).
+/// Development: the app's pictures off, so the scenes draw their strips and their night stars again ({"warp": false}
+/// on the development input, to compare the look and the cost; src/stars.rs follows it too).
 static ENABLED: AtomicBool = AtomicBool::new(true);
 
 pub fn set_enabled(on: bool) {
     ENABLED.store(on, Ordering::Relaxed);
-    eprintln!("nspanel-app: warp: the scenes' moving rows drawn by {}", if on { "the app" } else { "the scenes' strips" });
+    eprintln!(
+        "nspanel-app: warp: the scenes' moving rows and night stars drawn by {}",
+        if on { "the app" } else { "the scenes' strips and star lists" }
+    );
+}
+
+pub(crate) fn enabled() -> bool {
+    ENABLED.load(Ordering::Relaxed)
 }
 
 /// The page's question (`Warp.frame`): the picture of the moving rows for this snapshot, or an empty picture when the
@@ -807,7 +836,7 @@ pub fn tick() {
 }
 
 /// Development: the frame statistics are on.
-fn stats_on() -> bool {
+pub(crate) fn stats_on() -> bool {
     #[cfg(feature = "gpu")]
     {
         crate::gpu::FRAME_STATS.load(std::sync::atomic::Ordering::Relaxed)
@@ -818,7 +847,7 @@ fn stats_on() -> bool {
     }
 }
 
-fn pct(v: &mut [f32], p: f32) -> f32 {
+pub(crate) fn pct(v: &mut [f32], p: f32) -> f32 {
     if v.is_empty() {
         return 0.0;
     }

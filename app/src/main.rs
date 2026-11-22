@@ -49,6 +49,7 @@ mod sendspin;
 mod settings;
 mod shade;
 mod sounds;
+mod stars;
 mod stt;
 mod synth;
 mod texts;
@@ -4921,8 +4922,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_act(&ui, what.as_str(), value.as_str());
         }
     });
-    // the weather scenes' moving rows, drawn by the app when a scene asks (src/warp.rs)
+    // the weather scenes' moving rows and the photo themes' night stars, drawn by the app when a scene asks
+    // (src/warp.rs, src/stars.rs)
     ui.global::<Warp>().on_frame(|w| warp::frame(&w));
+    ui.global::<Warp>().on_stars(|s| stars::frame(&s));
     let weak = ui.as_weak();
     ui.global::<Act>().on_act(move |what, value| {
         if let Some(ui) = weak.upgrade() {
@@ -4960,8 +4963,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ui) = weak.upgrade() {
             update_clock(&ui);
         }
-        // the weather scenes' moving rows: what is no longer shown lets its memory go
+        // the weather scenes' moving rows and night stars: what is no longer shown lets its memory go
         warp::tick();
+        stars::tick();
     });
     let ticker = slint::Timer::default();
     let weak = ui.as_weak();
@@ -5078,8 +5082,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             if let Some(b) = v.get("frame_stats").and_then(Value::as_bool) {
                 gpu::FRAME_STATS.store(b, Ordering::SeqCst);
             }
-            // Development: the weather scenes' moving rows drawn by the scenes' own strips ({"warp": false}) or by the
-            // app again ({"warp": true}), to compare
+            // Development: the weather scenes' moving rows drawn by the scenes' own strips and the photo themes' night
+            // stars by the scenes' own lists ({"warp": false}), or both by the app again ({"warp": true}), to compare
             if let Some(b) = v.get("warp").and_then(Value::as_bool) {
                 warp::set_enabled(b);
                 ui.window().request_redraw();
