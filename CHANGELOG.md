@@ -13,6 +13,9 @@
 ### Integration
 - Home Assistant's Wake word and Wake word 2 selects of the panel's voice device show the panel's wake words: Home Assistant kept them at "No wake word" for a panel with two, and picking one of them then left the panel with only that word. The panel reports its wake words, and the integration sets the selects whenever they differ, also after a change on the panel or on the PanelOS page.
 
+### Docs
+- The install guide and the decisions say what `tools/build_image.sh` does with an image too big for the boot partition: it warns, and `tools/remove_android.sh` refuses to copy it.
+
 ## 0.0.8
 
 **Upgrading from 0.0.7**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-007)).
