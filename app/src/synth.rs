@@ -1,10 +1,10 @@
 //! The synthwave scenes (home background, timers theme,
-//! thermostat look): which view (day, night, the beach's dawn) and the fade
+//! thermostat look): which view (day, night, dawn) and the fade
 //! between them by the sun, the floor colour, and a passing car now and then.
 //! The clock, the floor lines, the palms and the cars' motion run in the UI.
 
 use serde_json::Value;
-use slint::{Color, ModelRc, VecModel};
+use slint::{Color, ComponentHandle, ModelRc, VecModel};
 
 use crate::{AppWindow, SwCar};
 
@@ -155,20 +155,43 @@ fn on_screen(ui: &AppWindow, s: &crate::UiState) -> bool {
     ((p.kind == "home" || p.kind == "weather") && theme == 8) || (p.kind == "timers" && p.variant == 3) || (p.kind == "thermostat" && p.variant == 3)
 }
 
-/// The synthwave scene of the panel (one for every page with the synthwave background): the first custom or weather
-/// details page that has the synthwave background chooses it; else the first custom page's choice, else the old panel
-/// setting.
-fn scene_choice(s: &crate::UiState) -> usize {
-    let pages = s.panel_config.as_ref().and_then(|c| c.get("pages")).and_then(Value::as_array);
-    let own = pages.into_iter().flatten().find(|p| {
-        matches!(p.get("kind").and_then(Value::as_str), Some("home" | "weather"))
-            && p.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64) == Some(8)
-    });
-    own.and_then(|p| p.get("options")?.get("scene")?.as_u64())
-        .or_else(|| crate::first_page_option(s, "home", "scene").and_then(|v| v.as_u64()))
-        .or_else(|| s.panel_config.as_ref().and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
+/// The page that chooses the panel's synthwave scene (its place in the integration's list): the first custom or weather
+/// details page with the synthwave background of its own, else the first custom page.
+fn scene_page(config: Option<&Value>) -> Option<usize> {
+    let pages = crate::pages::config_pages(config);
+    let kind = |p: &Value| p.get("kind").and_then(Value::as_str).map(str::to_string);
+    pages
+        .iter()
+        .find(|(_, p)| {
+            matches!(kind(p).as_deref(), Some("home" | "weather")) && p.get("options").and_then(|o| o.get("theme")).and_then(Value::as_i64) == Some(8)
+        })
+        .or_else(|| pages.iter().find(|(_, p)| kind(p).as_deref() == Some("home")))
+        .map(|(i, _)| *i)
+}
+
+/// The synthwave scene of the panel (one for every page with the synthwave background): the scene of the page that
+/// chooses it (`scene_page`); else the first custom page's, else the old panel setting.
+fn scene_of(config: Option<&Value>) -> usize {
+    let option = |i: usize| config?.get("pages")?.get(i)?.get("options")?.get("scene")?.as_u64();
+    let first_home = crate::pages::kind_pages(config, "home").first().map(|(i, _)| *i);
+    scene_page(config)
+        .and_then(option)
+        .or_else(|| first_home.and_then(option))
+        .or_else(|| config.and_then(|c| c.get("fl_scene")).and_then(Value::as_u64))
         .unwrap_or(0)
         .min(3) as usize
+}
+
+fn scene_choice(s: &crate::UiState) -> usize {
+    scene_of(s.panel_config.as_ref())
+}
+
+/// A scene picked on the panel (the synthwave background's menu, the thermostat's neon look): set on the page that
+/// chooses the scene, so it shows at once on every page with the synthwave background; Home Assistant keeps it.
+pub fn set_scene(ui: &AppWindow, k: i64) {
+    let Some(cfg) = crate::with_state(|s| scene_page(s.panel_config.as_ref())) else { return };
+    crate::page_set_at(ui, cfg, None, serde_json::json!({ "scene": k.clamp(0, 3) }));
+    crate::refresh_pages(ui);
 }
 
 thread_local! {
@@ -290,6 +313,115 @@ fn timers_random_scene(ui: &AppWindow, n: usize) -> usize {
     })
 }
 
+/// The views' blend by the sun: `mix` puts the night view over the day view (day above +3°, night below -6°, a fade
+/// between); `dawn` puts the dawn view over the night view while the sun rises from -12° to -6° (only while it rises,
+/// never in the evening). From -6° on, the dawn view fades into the day together with the night view.
+fn views(el: f64, rising: bool) -> (f32, f32) {
+    let mix = ((3.0 - el) / 9.0).clamp(0.0, 1.0) as f32;
+    let dawn = if rising { ((el + 12.0) / 6.0).clamp(0.0, 1.0) as f32 } else { 0.0 };
+    (mix, dawn)
+}
+
+/// The view's colour (the floor lines, the widgets' accent and their glow): day, night and dawn, mixed like the
+/// pictures.
+fn view_colour(scene: usize, mix: f32, dawn: f32) -> Color {
+    let lerp_c = |a: Color, b: Color, k: f32| {
+        let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * k).round() as u8;
+        Color::from_rgb_u8(l(a.red(), b.red()), l(a.green(), b.green()), l(a.blue(), b.blue()))
+    };
+    let day = grid(scene, "day");
+    if mix <= 0.0 {
+        return day;
+    }
+    let night = grid(scene, "night");
+    let night = if dawn > 0.0 { lerp_c(night, grid(scene, "dawn"), dawn) } else { night };
+    lerp_c(day, night, mix)
+}
+
+/// Whether a shown blend value is already `want`: within `tol`, and exactly 0 or 1 when that is wanted (so a view
+/// that is gone is not drawn at a trace of opacity).
+fn blend_is(shown: f32, want: f32, tol: f32) -> bool {
+    if want == 0.0 || want == 1.0 {
+        return shown == want;
+    }
+    (shown - want).abs() <= tol
+}
+
+/// Sets the views' blend, the view's colour and the shooting stars (at night, and at any time in space). Each only
+/// when it changed: a set redraws every page with a scene (the scenes live on pages out of sight too).
+fn show_views(ui: &AppWindow, scene: usize, mix: f32, dawn: f32, tol: f32) {
+    if !blend_is(ui.get_home_fl_mix(), mix, tol) {
+        ui.set_home_fl_mix(mix);
+    }
+    if !blend_is(ui.get_home_fl_mix_c(), dawn, tol) {
+        ui.set_home_fl_mix_c(dawn);
+    }
+    let g = view_colour(scene, mix, dawn);
+    if ui.get_home_fl_grid() != g {
+        ui.set_home_fl_grid(g);
+    }
+    let star = if scene == 3 { 1.0 } else { mix };
+    if !blend_is(ui.get_home_fl_star(), star, tol) {
+        ui.set_home_fl_star(star);
+    }
+}
+
+/// How long a new sun value takes to come in on screen: 75 whole 40 ms frames (3 s), straight, without easing.
+const GLIDE_FRAMES: u32 = 75;
+const GLIDE_FRAME_MS: u64 = 40;
+
+/// The views' glide: from which blend (mix, dawn) to which, for which scene, and the frames done.
+#[derive(Clone, Copy, Default)]
+struct Glide {
+    from: (f32, f32),
+    to: (f32, f32),
+    scene: usize,
+    step: u32,
+}
+
+thread_local! {
+    static GLIDE: slint::Timer = slint::Timer::default();
+    static GLIDE_PATH: std::cell::Cell<Glide> = std::cell::Cell::new(Glide::default());
+}
+
+/// The blend `step` frames into a glide of GLIDE_FRAMES frames from `from` to `to`.
+fn glide_at(from: (f32, f32), to: (f32, f32), step: u32) -> (f32, f32) {
+    let k = (step as f32 / GLIDE_FRAMES as f32).min(1.0);
+    (from.0 + (to.0 - from.0) * k, from.1 + (to.1 - from.1) * k)
+}
+
+/// A scene on screen takes a new blend in a glide from the one shown (the sun's values come minutes apart, each a
+/// step). A glide on its way keeps going to the same value, or starts again from where it is to a new one; the
+/// timer runs only while it glides.
+fn glide_to(ui: &AppWindow, scene: usize, mix: f32, dawn: f32) {
+    let to = (mix, dawn);
+    let running = GLIDE.with(|t| t.running());
+    let path = GLIDE_PATH.with(|p| p.get());
+    if running && path.to == to && path.scene == scene {
+        return;
+    }
+    let from = (ui.get_home_fl_mix(), ui.get_home_fl_mix_c());
+    if !running && blend_is(from.0, mix, 0.004) && blend_is(from.1, dawn, 0.004) {
+        show_views(ui, scene, mix, dawn, 0.004);
+        return;
+    }
+    GLIDE_PATH.with(|p| p.set(Glide { from, to, scene, step: 0 }));
+    let weak = ui.as_weak();
+    GLIDE.with(|t| {
+        t.start(slint::TimerMode::Repeated, std::time::Duration::from_millis(GLIDE_FRAME_MS), move || {
+            let Some(ui) = weak.upgrade() else { return };
+            let mut g = GLIDE_PATH.with(|p| p.get());
+            g.step += 1;
+            GLIDE_PATH.with(|p| p.set(g));
+            let (m, d) = glide_at(g.from, g.to, g.step);
+            show_views(&ui, g.scene, m, d, 0.0);
+            if g.step >= GLIDE_FRAMES {
+                GLIDE.with(|t| t.stop());
+            }
+        })
+    });
+}
+
 /// Updates the scenes that are in use (once a second).
 pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     // any page on the list with a synthwave look (a kind may be there more than once)
@@ -302,27 +434,26 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
         return;
     }
     let scene = scene_choice(s);
-    // The view by the sun: day above +3°, night below -6°, a fade between; the
-    // beach has a dawn view for the morning: it comes in over the night view while the
-    // sun rises from -12° to -6° (never at solar midnight, never in the evening).
+    // The view by the sun (see `views`); the development input's weather values may set the sun
+    // ({"wx": {"sun_el": -8, "rising": true}}).
     let sun = s.states.get("sun.sun");
-    let el = sun.and_then(|e| e.attrs.get("elevation")).and_then(Value::as_f64).unwrap_or(30.0);
-    let rising = sun.and_then(|e| e.attrs.get("rising")).and_then(Value::as_bool).unwrap_or(false);
-    let night_view = "night";
-    let dawn = if scene == 2 && rising { ((el + 12.0) / 6.0).clamp(0.0, 1.0) as f32 } else { 0.0 };
-    let mix = ((3.0 - el) / 9.0).clamp(0.0, 1.0) as f32;
+    let dev = |k: &str| s.dev_wx.as_ref().and_then(|o| o.get(k));
+    let el = dev("sun_el").and_then(Value::as_f64).or_else(|| sun.and_then(|e| e.attrs.get("elevation")).and_then(Value::as_f64)).unwrap_or(30.0);
+    let rising = dev("rising").and_then(Value::as_bool).or_else(|| sun.and_then(|e| e.attrs.get("rising")).and_then(Value::as_bool)).unwrap_or(false);
+    let (mix, dawn) = views(el, rising);
     let pic = |view: &str, floor: bool| {
         crate::quick::picture(&format!("home/fl/fl-{scene}-{view}{}.png", if floor { "-floor" } else { "" }))
     };
-    if ui.get_home_fl_scene() != scene as i32 || ui.get_home_fl_back_a().size().width == 0 {
+    let new_scene = ui.get_home_fl_scene() != scene as i32 || ui.get_home_fl_back_a().size().width == 0;
+    if new_scene {
         ui.set_home_fl_scene(scene as i32);
         ui.set_home_fl_back_a(pic("day", false));
         ui.set_home_fl_floor_a(pic("day", true));
-        ui.set_home_fl_back_b(pic(night_view, false));
-        ui.set_home_fl_floor_b(pic(night_view, true));
-        // the beach's dawn view (the other scenes have none)
-        ui.set_home_fl_back_c(if scene == 2 { pic("dawn", false) } else { slint::Image::default() });
-        ui.set_home_fl_floor_c(if scene == 2 { pic("dawn", true) } else { slint::Image::default() });
+        ui.set_home_fl_back_b(pic("night", false));
+        ui.set_home_fl_floor_b(pic("night", true));
+        // every scene's dawn view (drawn only while the dawn shows)
+        ui.set_home_fl_back_c(pic("dawn", false));
+        ui.set_home_fl_floor_c(pic("dawn", true));
     }
     // each synthwave timers page's own scene (its option; -1 = a new random one every time the page is opened; none =
     // the home page's)
@@ -346,38 +477,18 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
             d.sw_floor = floor;
         });
     }
-    if (ui.get_home_fl_mix() - mix).abs() > 0.004 {
-        ui.set_home_fl_mix(mix);
-    }
-    if (ui.get_home_fl_mix_c() - dawn).abs() > 0.004 || (dawn == 0.0 && ui.get_home_fl_mix_c() != 0.0) {
-        ui.set_home_fl_mix_c(dawn);
-    }
-    // the view's colour: day, night and (the beach in the morning) dawn, mixed like the pictures
-    let lerp_c = |a: Color, b: Color, k: f32| {
-        let l = |x: u8, y: u8| (x as f32 + (y as f32 - x as f32) * k).round() as u8;
-        Color::from_rgb_u8(l(a.red(), b.red()), l(a.green(), b.green()), l(a.blue(), b.blue()))
-    };
-    let g = grid(scene, "day");
-    let g = if mix > 0.0 {
-        let n = grid(scene, night_view);
-        let n = if dawn > 0.0 { lerp_c(n, grid(scene, "dawn"), dawn) } else { n };
-        lerp_c(g, n, mix)
+    // The views' blend: a new scene, or one out of sight, takes it at once; on screen a new sun value glides there
+    // (`glide_to`).
+    let shown = on_screen(ui, s);
+    if new_scene || !shown {
+        GLIDE.with(|g| g.stop());
+        show_views(ui, scene, mix, dawn, 0.004);
     } else {
-        g
-    };
-    if ui.get_home_fl_grid() != g {
-        ui.set_home_fl_grid(g);
-    }
-    // the shooting stars: at night, and at any time in space; only on a change (a set every second redrew every page,
-    // the scenes live on pages out of sight too)
-    let star = if scene == 3 { 1.0 } else { mix };
-    if (ui.get_home_fl_star() - star).abs() > 0.004 {
-        ui.set_home_fl_star(star);
+        glide_to(ui, scene, mix, dawn);
     }
     // The scene clock, the palms and the cars only while a scene is on screen: the scene time comes from the
     // animation clock, and every read of it asks for a frame (a read every second redrew every page once a
     // second). Cars whose trip ended meanwhile are out of sight; the next tick on screen clears them.
-    let shown = on_screen(ui, s);
     if !shown {
         return;
     }
@@ -623,6 +734,90 @@ mod tests {
             sorted.dedup();
             assert_eq!(sorted.len(), 3);
         }
+    }
+
+    #[test]
+    fn the_views_follow_the_sun() {
+        // full day above +3 degrees, full night below -6, a fade between
+        assert_eq!(views(10.0, true), (0.0, 1.0));
+        assert_eq!(views(3.0, false), (0.0, 0.0));
+        assert_eq!(views(-6.0, false), (1.0, 0.0));
+        assert!((views(-1.5, false).0 - 0.5).abs() < 1e-6);
+        // the dawn view comes in over the night view while the sun rises from -12 to -6 degrees …
+        assert_eq!(views(-20.0, true), (1.0, 0.0));
+        assert_eq!(views(-12.0, true), (1.0, 0.0));
+        assert!((views(-9.0, true).1 - 0.5).abs() < 1e-6);
+        assert_eq!(views(-6.0, true), (1.0, 1.0));
+        // … and fades into the day with the night view (drawn at mix * dawn)
+        let (mix, dawn) = views(-1.5, true);
+        assert!((mix * dawn - 0.5).abs() < 1e-6);
+        // never in the evening
+        assert_eq!(views(-9.0, false).1, 0.0);
+        assert_eq!(views(-6.0, false).1, 0.0);
+    }
+
+    #[test]
+    fn a_glide_is_straight_and_ends_on_the_value() {
+        assert_eq!(GLIDE_FRAMES as u64 * GLIDE_FRAME_MS, 3000);
+        let (from, to) = ((1.0, 0.0), (1.0, 0.6));
+        assert_eq!(glide_at(from, to, 0), from);
+        assert_eq!(glide_at(from, to, GLIDE_FRAMES), to);
+        assert_eq!(glide_at(from, to, GLIDE_FRAMES + 5), to);
+        // the same step every frame (no easing)
+        let a = glide_at(from, to, 10).1 - glide_at(from, to, 9).1;
+        let b = glide_at(from, to, 60).1 - glide_at(from, to, 59).1;
+        assert!((a - b).abs() < 1e-6 && a > 0.0);
+    }
+
+    #[test]
+    fn a_gone_view_is_exactly_gone() {
+        assert!(!blend_is(0.003, 0.0, 0.004));
+        assert!(blend_is(0.0, 0.0, 0.004));
+        assert!(!blend_is(0.998, 1.0, 0.004));
+        assert!(blend_is(0.502, 0.5, 0.004));
+        assert!(!blend_is(0.502, 0.5, 0.0));
+    }
+
+    #[test]
+    fn the_first_page_with_the_synthwave_background_chooses_the_scene() {
+        let config = serde_json::json!({ "pages": [
+            { "kind": "music" },
+            { "kind": "home", "options": { "theme": 2, "scene": 1 } },
+            { "kind": "weather", "options": { "theme": 8, "scene": 3 } },
+            { "kind": "home", "options": { "theme": 8, "scene": 2 } },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(2));
+        assert_eq!(scene_of(Some(&config)), 3);
+        // the custom page measured on the panel: the beach
+        let config = serde_json::json!({ "pages": [
+            { "kind": "home", "options": { "theme": 8, "scene": 2 } },
+            { "kind": "weather", "options": {} },
+            { "kind": "timers", "variant": 3 },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(0));
+        assert_eq!(scene_of(Some(&config)), 2);
+    }
+
+    #[test]
+    fn without_a_scene_of_its_own_the_first_custom_page_chooses() {
+        // the synthwave page has no scene: the first custom page's, where the panel's menus then set it
+        let config = serde_json::json!({ "pages": [
+            { "kind": "home", "options": { "scene": 1 } },
+            { "kind": "weather", "options": { "theme": 8 } },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(1));
+        assert_eq!(scene_of(Some(&config)), 1);
+        // no synthwave background at all (the thermostat's neon look): the first custom page
+        let config = serde_json::json!({ "pages": [
+            { "kind": "thermostat", "variant": 3 },
+            { "kind": "home", "options": { "theme": 0, "scene": 3 } },
+        ] });
+        assert_eq!(scene_page(Some(&config)), Some(1));
+        assert_eq!(scene_of(Some(&config)), 3);
+        // the old panel setting, else the mountains
+        assert_eq!(scene_of(Some(&serde_json::json!({ "fl_scene": 2 }))), 2);
+        assert_eq!(scene_of(None), 0);
+        assert_eq!(scene_page(None), None);
     }
 
     #[test]
