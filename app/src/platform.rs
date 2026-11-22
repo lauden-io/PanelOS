@@ -57,7 +57,13 @@ thread_local! {
     static SCREEN_REQUESTS: std::cell::RefCell<Vec<ScreenSink>> = const { std::cell::RefCell::new(Vec::new()) };
     /// Told after every touch whether a one-finger press is under way (see `on_press`).
     static PRESS: std::cell::RefCell<Option<Box<dyn Fn(bool)>>> = const { std::cell::RefCell::new(None) };
+    /// Since the web view took the screen over: until when the UI still draws while no web frame came (see `draw`).
+    static UI_UNTIL_WEB: std::cell::Cell<Option<Instant>> = const { std::cell::Cell::new(None) };
 }
+
+/// How long the UI keeps drawing after the web view took the screen over, while the web view sends no frame: long
+/// enough for what went off the dashboard (a strip, the voice view, the pull disc) to fade out.
+const UI_AFTER_WEB_TAKES_OVER: Duration = Duration::from_millis(1000);
 
 /// UI thread: `f` is told after every touch whether a one-finger press is under way in the UI (false after a lift and
 /// once a second finger turns the touch into a gesture), so the UI can settle what a release that never reached it
@@ -89,6 +95,9 @@ fn web_direct_now() -> bool {
         if now != *was {
             *was = now;
             (direct.changed)(now);
+            // the web view sends a frame only when its page changes: a still dashboard would leave the UI's last frame
+            // (with what just went off it) on the screen
+            UI_UNTIL_WEB.with(|u| u.set(now.then(|| Instant::now() + UI_AFTER_WEB_TAKES_OVER)));
         }
         now
     })
@@ -494,14 +503,21 @@ impl PanelPlatform {
                 crate::webstats::frame_on_ui(times);
                 let shown = self.display.borrow_mut().show_web(i);
                 match shown {
-                    Ok(()) => crate::webstats::drawn(started),
+                    Ok(()) => {
+                        crate::webstats::drawn(started);
+                        UI_UNTIL_WEB.with(|u| u.set(None));
+                    }
                     Err(e) => {
                         eprintln!("nspanel-app: web frame to the screen: {e}");
                         freed.push(i);
                     }
                 }
+                return Ok(());
             }
-            return Ok(());
+            // no web frame yet since the web view took the screen over: the UI draws what went off it to its end
+            if !UI_UNTIL_WEB.with(|u| u.get()).is_some_and(|until| Instant::now() < until) {
+                return Ok(());
+            }
         }
         if let Some((i, _)) = WEB_NEXT.lock().unwrap().take() {
             freed.push(i);

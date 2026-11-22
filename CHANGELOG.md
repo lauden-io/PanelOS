@@ -1,5 +1,11 @@
 # Changelog
 
+## In development
+
+### Dashboard mode
+- What goes off a still dashboard no longer stays on the screen until the dashboard changes: a strip closed with its ×, the voice view, the pull to refresh disc, a ring or a status screen that ends. Before, the last picture stayed, up to a minute with a clock on the dashboard.
+- A folded status screen's strip sits at the very top (the dashboard has no status bar), and a pull down on it opens the quick settings.
+
 ## 0.0.8
 
 **Upgrading from 0.0.7**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-007)).
