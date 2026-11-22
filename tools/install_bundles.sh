@@ -8,7 +8,8 @@
 # The files (defaults: what tools/build_ui_bundle.sh and tools/build_web.sh make):
 #   UI_BUNDLE    /root/nspanel/out/panelos-ui.squashfs
 #   WEB_BUNDLE   /root/nspanel/br-web/images/rootfs.squashfs
-# Env: NSPANEL_SSH_KEY (default /root/.ssh/nspanel_dev), KNOWN_HOSTS, YES=1 (no questions)
+# Env: NSPANEL_SSH_KEY (default /root/.ssh/nspanel_dev), KNOWN_HOSTS, YES=1 (no questions),
+#      DRY_RUN=1 (only shows where the bundles would go and how; changes nothing)
 #
 # On the panel the UI bundle goes to /mnt/data/panelos-ui.squashfs when the data
 # partition is there (tools/remove_android.sh data), else to
@@ -189,6 +190,7 @@ if [ "$WANT_UI" = 1 ] && [ "$UIDEV" = 1 ]; then
   echo "  note: this panel runs the interface from the development folder /mnt/data/panelos-ui-dev;"
   echo "        the UI bundle is used only once that folder is gone"
 fi
+[ "${DRY_RUN:-}" = 1 ] && { echo "DRY_RUN=1: nothing changed"; exit 0; }
 if [ "$ask" = 1 ] && [ "${YES:-}" != 1 ]; then
   echo "Until the new bundle is in place, the panel shows the image's simple interface."
   read -r -p "Type yes to go on: " answer </dev/tty

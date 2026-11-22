@@ -247,7 +247,7 @@ tools/build_app.sh         # app only -> /root/nspanel/app-build/target/aarch64-
 GPU=1 tools/build_app.sh   # the GPU app (feature gpu) -> /root/nspanel/app-build-gpu/…; its UI bundle copy in /opt/panelos-ui/share/ui
 tools/build_web.sh         # the web bundle -> /root/nspanel/br-web/images/rootfs.squashfs (hours the first time)
 tools/build_ui_bundle.sh   # the GPU app, then the UI bundle -> /root/nspanel/out/panelos-ui.squashfs (BUILD=0: packs the last GPU build)
-tools/install_bundles.sh <panel IP> [ui] [web]   # puts the bundles on a panel over SSH (both without ui / web)
+tools/install_bundles.sh <panel IP> [ui] [web]   # puts the bundles on a panel over SSH (both without ui / web; DRY_RUN=1: only the plan)
 ```
 
 - The image starts the app from `/etc/init.d/S90nspanel-app` (restarted when it exits, output to syslog).
