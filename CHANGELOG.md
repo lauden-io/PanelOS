@@ -9,6 +9,7 @@
 
 ### Weather backgrounds
 - The swaying meadow with its sheen, the bending trees and the city's river are one picture the app draws up to 30 times a second instead of many picture strips: in strong wind the drawn scenes behind widgets hold 31–38 fps (before 30–33), the neutral scene on the weather details page 40 (before 27); they look and move as before (#81).
+- The drifting sky glides at every speed: the night sky, the dusk and dawn light and the twinkling stars moved a whole pixel at a time, a visible step every few frames in a breeze.
 
 ### Timers
 - On the synthwave timers page with two timers, the tens of seconds of a running time could stand still while the time ran on (a timer at zero still showing 20 s): each new digit is drawn fresh now.

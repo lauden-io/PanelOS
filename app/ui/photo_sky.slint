@@ -196,11 +196,10 @@ export component PhotoSky inherits Rectangle {
     Timer { interval: 600s; running: true; triggered => { root.reanchor(); } }
     property <float> ph-e: root.t - root.ph-t0;
 
-    // Sub-pixel: drawn at floor(d) and once more one pixel further with opacity = fraction.
+    // The renderer draws pictures at fractional positions (linear filtering; vendor/i-slint-renderer-skia), so the sky
+    // and its stars glide instead of stepping a whole pixel every few frames.
     property <float> dd: Math.mod(root.drift-p0 + root.ph-e * root.drift-v, 792);
-    property <float> di: Math.floor(root.dd);
-    property <float> df: root.dd - root.di;
-    property <length> dx: -root.di * 1px;
+    property <length> dx: -root.dd * 1px;
     property <float> tl: root.t;   // used by the mist layers
     property <float> wb: 0;
 
@@ -230,9 +229,6 @@ export component PhotoSky inherits Rectangle {
     property <color> line-acc: #ff9a52.mix(#ffcf6b, root.low);
     property <float> ra: root.sa * (1 - root.low) * 0.8 * root.sdisc;
     property <bool> moon-on: root.vector && root.moon-a > 0.01 && root.moon-py < root.hz + 30;
-    // always drawn (min 0.5 %): the renderer's alpha blend rounds down by ~0.5 level, so a frame
-    // without this layer would be a touch brighter and pop at every whole-pixel position
-    property <float> dfa: max(0.03, min(0.97, root.df));
     property <float> mt: Math.mod(root.t + 15.2, 17);
     property <int> mn: Math.floor((root.t + 15.2) / 17);
     property <bool> streaks: root.theme < 3 && (root.mood == 6 || ((root.mood == 0 || root.mood == 1) && root.wind >= 35));
@@ -284,11 +280,9 @@ export component PhotoSky inherits Rectangle {
                 source: (root.light-variant ? @image-url("wx-light/vline-moon-light.png") : @image-url("wx/vline-moon.png")); source-clip-x: root.moon-fr * 44; source-clip-y: 0; source-clip-width: 44; source-clip-height: 44; opacity: root.moon-a * root.mdisc; }
         }
 
-        // 1. sky photo: seamless 792 px tile, two copies, plus the sub-pixel copies
+        // 1. sky photo: seamless 792 px tile, two copies
         if !root.day-hidden: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
         if !root.day-hidden: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-        if !root.day-hidden: Image { x: root.sx + root.dx - 1px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
-        if !root.day-hidden: Image { x: root.sx + root.dx + 791px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.dfa * root.base-a; }
         if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
             source: root.gsky(root.theme, root.mood, 0);
@@ -514,7 +508,8 @@ export component PhotoSky inherits Rectangle {
 
     // 5b. grass sways in the wind: the meadow rows of the foreground are redrawn in 8 px strips,
     //     each shifted sideways by a small, smoothly varying amount (more in front, gusts push it
-    //     left); sub-pixel shifts drawn twice with opacity = fraction (min 3 %, see the sky)
+    //     left); sub-pixel shifts drawn twice with opacity = fraction (min 3 %: the renderer's alpha blend rounds down
+    //     by ~0.5 level, so a frame without the second strip would be a touch brighter)
     property <int> sway-y0: root.theme == 1 ? 400 : root.theme == 3 ? 428 : root.theme == 5 ? 440 : 328;
     // (the strips down to the bottom edge: rows further down are off the screen)
     property <int> layer-bottom: min(528, (root.height - root.fy) / 1px);
