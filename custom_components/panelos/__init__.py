@@ -12,12 +12,12 @@ integration gives each panel:
   and wake word sensors) and is shown as connected via this device;
 * the dashboard mode's settings (which Home Assistant dashboard the panel's
   web view shows, with or without its header and sidebar) and the assistant
-  mode's settings (weather, media player, quick tiles, full-screen
-  conversation), set in the integration's options;
+  mode's settings (weather, media player, full-screen conversation), set in
+  the integration's options;
 * how much the recorded sensors (illuminance, SoC temperature, Wi-Fi signal)
   must change before the panel sends a new value, also in the options;
 * actions that put something on a panel's screen: ``panelos.show_view``
-  (home, dashboard, weather, media, a camera) and ``panelos.notify``;
+  (the start page, dashboard, weather, media, a camera) and ``panelos.notify``;
 * critical alerts and status screens shared by every panel (``house.py``),
   with ``panelos.show_status`` / ``panelos.clear_status`` for the status
   screens an automation starts;
@@ -81,6 +81,7 @@ from .const import (
 )
 from .house import House
 from .notes import Notes
+from .view import view_request
 from .players import async_register_players_view
 from .sounds import async_register_views
 from .page import async_hide_page, async_setup_page, async_show_page, checked_page, split_quick_pages
@@ -112,7 +113,7 @@ SHOW_VIEW_SCHEMA = vol.Schema(
     {
         vol.Optional(CONF_PANEL_ID, default=""): cv.string,
         vol.Required("view"): vol.In(VIEWS),
-        vol.Optional("entity_id"): cv.entity_id,
+        vol.Optional("entity_id"): cv.entity_domain("camera"),
         vol.Optional("seconds", default=30): _SECONDS,
     }
 )
@@ -576,7 +577,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
             raise HomeAssistantError(
                 f"No PanelOS panel is connected{f' as {target}' if target else ''} (connected: {sorted(panels) or 'none'})"
             )
-        request["type"] = "view"
+        request = view_request(hass, request)
         async_dispatcher_send(hass, SIGNAL_SHOW, target, request)
 
     async def handle_notify(call: ServiceCall) -> None:

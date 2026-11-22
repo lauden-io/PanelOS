@@ -8,7 +8,6 @@
           "panel_id": "Panel ID (the panel's name, nspanel-pro for a panel without one)",
           "weather_entity": "Weather",
           "media_player_entity": "Media player",
-          "tile_entities": "Quick tiles",
           "show_conversation": "Full-screen conversation"
         }
       }
@@ -57,7 +56,6 @@
         "data": {
           "weather_entity": "Weather",
           "media_player_entity": "Media player",
-          "tile_entities": "Quick tiles",
           "show_conversation": "Full-screen conversation"
         }
       },
@@ -80,7 +78,7 @@
   "selector": {
     "view": {
       "options": {
-        "home": "Home screen",
+        "home": "Start page",
         "dashboard": "Dashboard",
         "weather": "Weather",
         "media": "Media player",

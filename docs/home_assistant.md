@@ -4,12 +4,12 @@ Custom integration for panels running PanelOS (`custom_components/panelos` in th
 
 - **The panel's device** (maker PanelOS, model for example NSPanel Pro 86 Gen1) with the display, the settings and the sensors as entities (see [Entities](#entities)).
 - **Dashboard mode settings** (integration options): which Home Assistant dashboard the panel's web view shows, with or without its header and sidebar.
-- **Assistant mode settings** (integration options): weather entity, media player, quick tiles (lights, switches, shutters, fans, thermostats, scenes, scripts, sensors, input booleans), full-screen conversation on/off.
+- **Assistant mode settings** (integration options): weather entity, media player, full-screen conversation on/off.
 - **Sensor reporting** (integration options): how much the illuminance, SoC temperature and Wi-Fi signal must change before the panel sends a new value (see below).
 - **The PanelOS page** in the sidebar (administrators): every setting of a panel in one place, beside a live picture of its screen (see [The PanelOS page](#the-panelos-page)).
 - **Critical alerts and status screens**, shared by every panel (each with its own panels on or off): the integration follows their sensors and shows them on the panels (see [Alerts and status screens](#alerts-and-status-screens)).
 - **Actions** that put something on a panel's screen (administrators and automations only):
-  - `panelos.show_view`: `view` = `home`, `dashboard`, `weather`, `media` or `camera` (with `entity_id: camera.…`), `seconds` (default 30, 0 = until someone touches the screen; after the seconds the panel goes back to the page it was on, unless someone paged meanwhile), `panel_id` (empty = every panel).
+  - `panelos.show_view`: `view` = `home` (the start page, the first in the page list), `dashboard`, `weather`, `media` or `camera` (with `entity_id: camera.…` the cameras page that has that camera, with it shown big; a camera no cameras page has comes alone on a page of its own), `seconds` (default 30; after the seconds the panel goes back to the page it was on, unless someone paged meanwhile; 0 = until someone touches the screen: the view stays and the screen stays on until the first touch, then the panel is as usual), `panel_id` (empty = every panel). A view whose page the panel lacks comes as a page of its own, gone once left. A page view comes over the dashboard of dashboard mode too, and the dashboard over the pages of assistant mode; the panel's own mode comes back when the seconds run out, or with 0 once nobody has used the panel for the screensaver's time after the touch.
   - `panelos.notify`: `panel_id` (one or several; none = every panel), `title` (up to 100 characters), `message` (up to 1000), `icon` (`mdi:…`), `level` (`info` / `warning`), `picture` (a camera entity or a JPEG address), `buttons` (up to three; a press fires `panelos_notification_action` with `notification_id`, `action`, `index` and `panel_id`), `until_answered`. Each panel also has a `notify` entity for `notify.send_message`.
   - `panelos.show_status` / `panelos.clear_status`: `screen` = the ID of a status screen whose trigger is "Automation" (as the PanelOS page shows it).
   - `panelos.critical_alert` / `panelos.clear_critical_alert`: `alert` = the ID of an own critical alert whose trigger is "Automation".
@@ -81,14 +81,14 @@ Up to PanelOS 0.0.3 the integration was called NSPanel Pro (`nspanel_pro`); sinc
 
 1. Write the new image to the panel (install guide, "Updating later").
 2. Install PanelOS as above, then remove the old **NSPanel Pro** integration (**Settings → Devices & services**, its entry, **Delete**) and the folder `custom_components/nspanel_pro`.
-3. Restart Home Assistant and add PanelOS ([Set up](#set-up)); set its options again (weather, media player, tiles, dashboard).
+3. Restart Home Assistant and add PanelOS ([Set up](#set-up)); set its options again (weather, media player, dashboard).
 
 The panel's settings and sensors move from its ESPHome device to the PanelOS device and keep their entity ids, history and settings; the ESPHome device keeps the voice satellite.
 
 ## Set up
 
 1. **Settings → Devices & services → Add integration**, search for **PanelOS** and select it.
-2. Panel ID: the name the panel was given at installation (the panel's settings show it under About), `nspanel-pro` for a panel without one. Then choose the weather entity, the media player and the quick tiles.
+2. Panel ID: the name the panel was given at installation (the panel's settings show it under About), `nspanel-pro` for a panel without one. Then choose the weather entity and the media player.
 3. The panel's device appears with its entities; they become available as soon as the panel connects. Switch the panel to the mode you want with its **Display mode** select (or on the panel: settings → Display mode).
 
 Options can be changed any time (**Configure** on the integration entry, then **Dashboard mode**, **Assistant mode** or **Sensor reporting**); the panel follows at once.

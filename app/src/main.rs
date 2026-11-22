@@ -200,8 +200,14 @@ pub struct UiState {
     /// Each player's cover (the music pages' and the music widgets' players), and the thread that fetches them.
     arts: HashMap<String, Art>,
     art_tx: Option<Sender<(String, Option<String>)>>,
-    /// When the dashboard shown by a show request goes by itself (a shown page view's time is its visit's).
+    /// When a show request's view goes by itself: the display mode comes back (the dashboard shown over the pages, or
+    /// the pages shown over the dashboard); a shown page's way back is its visit's.
     show_until: Option<Instant>,
+    /// A view shown until someone touches the screen: the touch count when it came (`visit::held`).
+    show_held: Option<u64>,
+    /// That view was touched while it showed another display mode than the panel's: the display mode comes back once
+    /// nobody has used the panel for a while (`visit::back_after`).
+    show_back: bool,
     /// When a notification's strip goes by itself.
     strip_until: Option<Instant>,
     /// When the light level was last sent to Home Assistant.
@@ -1533,12 +1539,52 @@ fn go_to_page(ui: &AppWindow, kind: &str) -> bool {
 fn go_to_cfg(ui: &AppWindow, cfg: usize) -> bool {
     let pages = ui.get_pages();
     let Some(i) = (0..pages.row_count()).find(|&i| pages.row_data(i).is_some_and(|p| p.cfg == cfg as i32)) else { return false };
-    if ui.get_page() != i as i32 {
+    go_to_index(ui, i as i32);
+    true
+}
+
+/// Goes to the page at place `i` in the pager.
+fn go_to_index(ui: &AppWindow, i: i32) {
+    if ui.get_page() != i {
         close_page_sheets(ui);
     }
-    ui.set_page(i as i32);
-    leave_temporary_page(ui, i as i32);
-    true
+    ui.set_page(i);
+    leave_temporary_page(ui, i);
+}
+
+/// Where the panel goes by itself: the start page (the first in the pager), the page at a place in the integration's
+/// list (else a page of the kind), a page of a kind, or a temporary page of a kind also when the pager has pages of it.
+/// A kind the pager lacks comes as a temporary page.
+#[derive(Clone, Copy)]
+enum Target<'a> {
+    Start,
+    Cfg(usize, &'a str),
+    Kind(&'a str),
+    Temporary(&'a str),
+}
+
+/// Goes to `target`: the page it is at (a new temporary page shows there 40 ms later), whether a temporary page came
+/// in, and whether it took over a temporary page of another kind. None when there is nothing to go to.
+fn go_to_target(ui: &AppWindow, target: Target) -> Option<(i32, bool, bool)> {
+    let went = match target {
+        Target::Start => {
+            let any = ui.get_pages().row_count() > 0;
+            if any {
+                go_to_index(ui, 0);
+            }
+            any
+        }
+        Target::Cfg(cfg, kind) => go_to_cfg(ui, cfg) || go_to_page(ui, kind),
+        Target::Kind(kind) => go_to_page(ui, kind),
+        Target::Temporary(_) => false,
+    };
+    if went {
+        return Some((ui.get_page(), false, false));
+    }
+    let (Target::Cfg(_, kind) | Target::Kind(kind) | Target::Temporary(kind)) = target else { return None };
+    let new = with_state(|s| s.temp_page.is_none());
+    let (at, took_over) = open_temporary_page(ui, kind)?;
+    Some((at as i32, new, took_over))
 }
 
 /// Leaving a page closes its sheets, editors and keyboard views (they never wait on a page nobody sees, and never
@@ -1576,25 +1622,25 @@ thread_local! {
 /// Goes to a page by itself (a timer rings, Home Assistant shows a view for some seconds) and remembers where it came
 /// from, so `end_visit` can go back there.
 fn visit_page(ui: &AppWindow, kind: &str, hold: Hold) {
+    visit_to(ui, Target::Kind(kind), hold);
+}
+
+/// The same for any target (`Target`).
+fn visit_to(ui: &AppWindow, target: Target, hold: Hold) {
     // the page's menus close (a ring or a shown view comes over them, also on the same page)
     close_page_sheets(ui);
-    let page = ui.get_page();
-    let mut v = Visit::base(VISIT.with(|c| c.get()), page);
-    let to = if go_to_page(ui, kind) {
-        ui.get_page()
-    } else {
-        let new = with_state(|s| s.temp_page.is_none());
-        let Some((at, took_over)) = open_temporary_page(ui, kind) else { return };
-        let at = at as i32;
-        if new {
-            v = v.inserted(at);
-        } else if took_over && v.from == at {
-            // the temporary page it came from now shows this: back to the page that one was opened next to
-            v.from = (at - 1).max(0);
-        }
-        at
-    };
-    VISIT.with(|c| c.set(Some(v.hold(to, hold))));
+    let v = Visit::base(VISIT.with(|c| c.get()), ui.get_page());
+    let Some((to, new, took_over)) = go_to_target(ui, target) else { return };
+    VISIT.with(|c| c.set(Some(v.temporary(to, new, took_over).hold(to, hold))));
+}
+
+/// A view shown without seconds: the panel goes there and stays. An earlier shown view's way back is dropped; a ring's
+/// stays, its pages kept in step when a temporary page comes.
+fn show_untimed(ui: &AppWindow, target: Target) {
+    close_page_sheets(ui);
+    end_show_visit();
+    let Some((to, new, took_over)) = go_to_target(ui, target) else { return };
+    VISIT.with(|c| c.set(c.get().map(|v| v.temporary(to, new, took_over))));
 }
 
 /// The ring stopped (`ring`) or the shown view's time is up: back to the page from before (or to the view still
@@ -1630,7 +1676,11 @@ fn end_show_visit() {
 fn open_temporary_page(ui: &AppWindow, kind: &str) -> Option<(usize, bool)> {
     let pages = ui.get_pages();
     let vec = pages.as_any().downcast_ref::<VecModel<PageSlot>>()?;
-    let slot = pages::plain_slot(kind, 0);
+    let mut slot = pages::plain_slot(kind, 0);
+    // a camera Home Assistant shows that no cameras page has: in a row of its own
+    if kind == "camera" {
+        slot.n = with_state(|s| cam::guest_row(s));
+    }
     if let Some(t) = with_state(|s| s.temp_page) {
         if t >= vec.row_count() {
             // still on its way in
@@ -1640,7 +1690,7 @@ fn open_temporary_page(ui: &AppWindow, kind: &str) -> Option<(usize, bool)> {
         if other || ui.get_page() != t as i32 {
             close_page_sheets(ui);
         }
-        if other {
+        if vec.row_data(t).is_some_and(|p| p != slot) {
             vec.set_row_data(t, slot);
         }
         ui.set_page(t as i32);
@@ -2863,37 +2913,56 @@ fn handle_show(ui: &AppWindow, v: &Value) {
     eprintln!("nspanel-app: show request {v}");
     wake(ui);
     ui.set_set_view(0);
-    // with seconds: shown until then, and back to where the panel was; without: it stays
+    // with seconds: shown until then, and back to where the panel was; 0: it stays, the screen awake until someone
+    // touches it
     let until = (seconds > 0).then(|| Instant::now() + Duration::from_secs(seconds));
     let chime = with_state(|s| v["chime"].as_bool().unwrap_or(false).then(|| s.player.clone()));
-    match v["view"].as_str().unwrap_or("home") {
-        "dashboard" => {
-            if ui.get_web_active() {
-                set_dashboard(ui, true);
-                with_state(|s| s.show_until = until);
-            }
+    let view = v["view"].as_str().unwrap_or("home");
+    let shown = if view == "dashboard" {
+        let web = ui.get_web_active();
+        if web {
+            set_dashboard(ui, true);
         }
-        "media" => match until {
-            Some(until) => visit_page(ui, "music", Hold::Show(until)),
-            None => {
-                end_show_visit();
-                go_to_page(ui, "music");
-            }
-        },
-        other => {
-            set_dashboard(ui, with_state(|s| s.settings.display_mode == "dashboard") && ui.get_web_active());
-            let kind = if ui.get_pages().iter().any(|p| p.kind == other) { other } else { "home" };
-            match until {
-                Some(until) => visit_page(ui, kind, Hold::Show(until)),
-                None => {
-                    end_show_visit();
-                    go_to_page(ui, kind);
-                }
-            }
+        web
+    } else {
+        // the pages, also over the dashboard of dashboard mode (it comes back with the time, or a while after the
+        // touch that ends a view shown until touched)
+        set_dashboard(ui, false);
+        let target = match visit::view_kind(view) {
+            None => Target::Start,
+            Some("camera") => camera_target(ui, v),
+            Some(kind) => Target::Kind(kind),
+        };
+        match until {
+            Some(until) => visit_to(ui, target, Hold::Show(until)),
+            None => show_untimed(ui, target),
         }
+        if view == "camera" {
+            with_state(|s| cam::refresh(ui, s));
+        }
+        true
+    };
+    if shown {
+        with_state(|s| {
+            s.show_until = until;
+            s.show_held = until.is_none().then(platform::touches);
+            s.show_back = false;
+        });
     }
     if let Some(player) = chime {
         player.play(voice::Sound::Chime);
+    }
+}
+
+/// The camera view: the cameras page that has the camera named (`entity_id`), with that camera big; a camera no cameras
+/// page has comes alone on a temporary cameras page; without a camera, the cameras page as it is.
+fn camera_target(ui: &AppWindow, v: &Value) -> Target<'static> {
+    match v["entity_id"].as_str().filter(|e| !e.is_empty()) {
+        None => Target::Kind("camera"),
+        Some(entity) => match cam::show_camera(ui, entity, v["name"].as_str().unwrap_or("")) {
+            Some(cfg) => Target::Cfg(cfg, "camera"),
+            None => Target::Temporary("camera"),
+        },
     }
 }
 
@@ -3802,9 +3871,19 @@ fn tick(ui: &AppWindow) {
                 ui.set_strip_on(false);
             }
         }
-        // The dashboard shown by a show request: back to the display mode when its time is up.
+        // A show request's view: back to the display mode when its time is up.
         if s.show_until.is_some_and(|t| Instant::now() >= t) {
             s.show_until = None;
+            set_dashboard(ui, s.settings.display_mode == "dashboard" && s.web.is_some());
+        }
+        // A view shown until someone touches the screen: the first touch ends its hold. If it showed another display
+        // mode than the panel's, that comes back once nobody has used the panel for a while.
+        if s.show_held.is_some() && !visit::held(s.show_held, platform::touches()) {
+            s.show_held = None;
+            s.show_back = ui.get_dashboard_mode() != (s.settings.display_mode == "dashboard" && s.web.is_some());
+        }
+        if s.show_back && platform::idle_time() >= visit::back_after(s.settings.screensaver_seconds) {
+            s.show_back = false;
             set_dashboard(ui, s.settings.display_mode == "dashboard" && s.web.is_some());
         }
         let idle = platform::idle_time();
@@ -3864,6 +3943,7 @@ fn tick(ui: &AppWindow) {
         let timeout = s.settings.screensaver_seconds;
         // (and not while a timer runs: its chips stay in view)
         let showing = s.show_until.is_some()
+            || s.show_held.is_some()
             || s.strip_until.is_some()
             || VISIT.with(|v| v.get()).is_some_and(|v| v.show.is_some())
             || ui.get_pop_on()
@@ -4710,6 +4790,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             arts: HashMap::new(),
             art_tx: None,
             show_until: None,
+            show_held: None,
+            show_back: false,
             strip_until: None,
             last_lux_report: Instant::now(),
             music_hold: None,

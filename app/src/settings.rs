@@ -36,7 +36,7 @@ pub struct Settings {
     /// Speaker volume, percent (codec digital volume: 100 % = 0 dB, 0 % = off).
     pub volume: u8,
     /// "dashboard" (native Home Assistant dashboard) or "assistant"
-    /// (clock, weather, media, quick tiles, full-screen conversation).
+    /// (the panel's own pages, full-screen conversation).
     pub display_mode: String,
     /// Last assistant mode configuration received from the PanelOS
     /// integration (kept so a restart starts with the right entities).
@@ -166,7 +166,7 @@ impl Reporting {
 
 /// What the assistant mode shows; set in Home Assistant (PanelOS
 /// integration options). Without the integration: the weather entity above,
-/// no media player, no tiles.
+/// no media player.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AssistantConfig {
@@ -174,7 +174,6 @@ pub struct AssistantConfig {
     pub from_integration: bool,
     pub weather_entity: String,
     pub media_player_entity: String,
-    pub tile_entities: Vec<String>,
     pub show_conversation: bool,
 }
 
@@ -261,5 +260,21 @@ impl Settings {
 
     pub fn screensaver_index(&self) -> i32 {
         SCREENSAVER_CHOICES.iter().position(|(s, _)| *s == self.screensaver_seconds).unwrap_or(0) as i32
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_of_an_earlier_version_still_load() {
+        // the assistant mode's quick tiles of earlier versions are left out
+        let stored = r#"{"theme": "dark", "volume": 40,
+            "assistant": {"from_integration": true, "weather_entity": "weather.example", "tile_entities": ["light.a"]}}"#;
+        let s: Settings = serde_json::from_str(stored).expect("loads");
+        assert_eq!((s.theme.as_str(), s.volume), ("dark", 40));
+        assert_eq!(s.assistant.weather_entity, "weather.example");
+        assert!(!serde_json::to_string(&s).unwrap().contains("tile_entities"));
     }
 }

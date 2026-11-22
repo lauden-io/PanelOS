@@ -65,7 +65,6 @@ from .const import (
     CONF_KEEP_RESOURCES,
     CONF_SHOW_SIDEBAR,
     CONF_SKIP_UNUSED,
-    CONF_TILES,
     CONF_WEATHER,
     CONF_ZOOM,
     CONF_LOADING_SCREEN,
@@ -82,6 +81,7 @@ from .const import (
     DND_MODES,
     DOMAIN,
     MAX_PAGES,
+    OLD_OPTIONS,
     PAGE_KINDS,
     POPUP_KINDS,
     REPORTING,
@@ -332,7 +332,6 @@ OPTIONS_SCHEMA = vol.Schema(
         vol.Optional(CONF_SHOW_SIDEBAR): bool,
         vol.Optional(CONF_WEATHER): vol.Any("", cv.entity_domain("weather")),
         vol.Optional(CONF_MEDIA_PLAYER): vol.Any("", cv.entity_domain("media_player")),
-        vol.Optional(CONF_TILES): vol.All([cv.entity_domain(list(TILE_DOMAINS))], vol.Length(max=24)),
         vol.Optional(CONF_SHOW_CONVERSATION): bool,
         vol.Optional(CONF_VOICE_LOOK): vol.All(vol.Coerce(int), vol.Range(min=0, max=3)),
         vol.Optional(CONF_VOICE_PLAYER): vol.In(VOICE_PLAYERS),
@@ -544,6 +543,8 @@ def ws_page_options(hass: HomeAssistant, connection: websocket_api.ActiveConnect
     for key in _EMPTY_CLEARS:
         if options.get(key) == "":
             options.pop(key)
+    for key in OLD_OPTIONS:
+        options.pop(key, None)
     hass.config_entries.async_update_entry(entry, options=options)
     connection.send_result(msg["id"])
 
