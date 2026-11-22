@@ -344,6 +344,12 @@ impl GpuWindow {
             buffers,
             display,
         });
+        // Development frame statistics: when the items are drawn into the canvas (before Skia's flush)
+        let _ = win.window.set_rendering_notifier(|state, _| {
+            if matches!(state, slint::RenderingState::AfterRendering) {
+                T_RECORDED.with(|c| c.set(Some(std::time::Instant::now())));
+            }
+        });
         win.window.dispatch_event(WindowEvent::Resized { size: size.to_logical(1.0) });
         Ok(win)
     }
@@ -373,12 +379,7 @@ impl GpuWindow {
         crate::glass::prepare();
         {
             use i_slint_renderer_skia::SkiaRendererExt;
-            let _ = self.renderer.render_transformed_with_post_callback(
-                0.0,
-                (0.0, 0.0),
-                self.size,
-                Some(&|_| T_RECORDED.with(|c| c.set(Some(std::time::Instant::now())))),
-            )?;
+            let _ = self.renderer.render_transformed(0.0, (0.0, 0.0), self.size)?;
         }
         note_frame(started.elapsed().as_secs_f32() * 1000.0, started);
         // Development: when the window stops / starts asking for animation frames.

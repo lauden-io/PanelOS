@@ -9,7 +9,7 @@ publish = false
 license = "AGPL-3.0-or-later"
 
 [dependencies]
-slint = { version = "1.18", default-features = false, features = [
+slint = { version = "1.19", default-features = false, features = [
     "compat-1-2",
     "std",
     "renderer-software",
@@ -17,7 +17,7 @@ slint = { version = "1.18", default-features = false, features = [
 ] }
 # PNG and JPEG decoding for the pictures read at run time (the GPU renderer turns it on
 # itself; the software renderer of the image's own app needs it too).
-i-slint-core = { version = "=1.18.1", default-features = false, features = ["image-decoders"] }
+i-slint-core = { version = "=1.19.0", default-features = false, features = ["image-decoders"] }
 drm = "0.15"
 libc = "0.2"
 serde = { version = "1", features = ["derive"] }
@@ -41,14 +41,14 @@ sha2 = "0.10"
 base64 = "0.22"
 # GPU renderer (feature "gpu"): Skia on OpenGL ES through EGL on a GBM surface.
 # The Skia renderer crate is Slint's own (same version as slint, pinned).
-i-slint-renderer-skia = { version = "=1.18.1", default-features = false, features = ["opengl"], optional = true }
+i-slint-renderer-skia = { version = "=1.19.0", default-features = false, features = ["opengl"], optional = true }
 gbm = { version = "0.18", default-features = false, features = ["drm-support"], optional = true }
 drm014 = { package = "drm", version = "0.14", optional = true }
 glutin = { version = "0.32", default-features = false, features = ["egl"], optional = true }
 raw-window-handle = { version = "0.6", optional = true }
 glow = { version = "0.18", optional = true }
 # The pictures the app draws itself (label tapes, handwriting): the renderer's own Skia.
-skia-safe = { version = "=0.153.3", default-features = false, features = ["gl"], optional = true }
+skia-safe = { version = "=0.157.0", default-features = false, features = ["gl"], optional = true }
 
 [features]
 default = []
@@ -56,7 +56,7 @@ default = []
 gpu = ["dep:i-slint-renderer-skia", "dep:gbm", "dep:drm014", "dep:glutin", "dep:raw-window-handle", "dep:glow", "dep:skia-safe"]
 
 [build-dependencies]
-slint-build = "1.18"
+slint-build = "1.19"
 cc = "1"
 prost-build = "0.14"
 protox = "0.10"
@@ -65,6 +65,6 @@ protox = "0.10"
 strip = true
 lto = "thin"
 
-# Slint's Skia renderer with two small changes (app/vendor/README.md).
+# Slint's Skia renderer with a small change (app/vendor/README.md).
 [patch.crates-io]
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }
