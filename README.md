@@ -54,7 +54,7 @@ Details: [docs/app.md](docs/app.md).
 
 - More devices: other NSPanel models (NSPanel Pro 120, NSPanel Pro Gen2), the Shelly Wall Display (MediaTek MT6580; mainline Linux support still to be checked) and Wall Display XL (Rockchip RK3566), and the ESP32-based NSPanel as a separate, smaller target (its screen is driven by its own controller over a serial link).
 - A 3D-printable adapter plate for mounting the US NSPanel on a European 60 mm wall box (screw spacing 83.5 mm vs 60 mm).
-- Ready-made images on GitHub Releases, so a user does not have to build. A release image must not carry a personal SSH key: the user's own key is added at install.
+- Ready-made images and bundles on GitHub Releases, so a user does not have to build. A release image must not carry a personal SSH key: the user's own key is added at install.
 - Native builds on Macs with Apple silicon and other arm64 computers: Buildroot's Bootlin toolchain only runs on x86-64 hosts, so an arm64 host needs Buildroot's own toolchain (built from source). Until then the build runs in an emulated x86-64 virtual machine (see [docs/install.md](docs/install.md#mac)).
 - Signed over-the-air updates from Home Assistant's Settings → Updates, written in the background into the second system slot (A/B: the recovery partition and, once the stock Android is removed, the boot partition). The panel stays usable while it updates and is out only for the restart; a failed update restarts into the previous version by itself and says so.
 - A wiki once more devices are supported.
@@ -70,7 +70,7 @@ Details: [docs/app.md](docs/app.md).
 
 Step-by-step guide, no Linux knowledge needed: **[docs/install.md](docs/install.md)**.
 
-In short: turn on developer mode and ADB in the eWeLink app, back up the panel, build the image on a Linux or WSL computer (it takes the stock bootloader's device tree from the backup), write PanelOS to its recovery partition over Wi-Fi ADB, make it the default boot, type the address of Home Assistant on the panel's setup screen (or pick it when found), and log in with the QR code on the screen.
+In short: turn on developer mode and ADB in the eWeLink app, back up the panel, build the image (it takes the stock bootloader's device tree from the backup) and the two bundles (the interface and the dashboard browser) on a Linux or WSL computer, write PanelOS to its recovery partition over Wi-Fi ADB, make it the default boot, put the bundles on it over SSH, type the address of Home Assistant on the panel's setup screen (or pick it when found), and log in with the QR code on the screen.
 
 ### The Home Assistant integration
 

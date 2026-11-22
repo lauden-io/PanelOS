@@ -58,12 +58,12 @@ The button opens steps 1–3 in your Home Assistant.
 
 ## Upgrading from 0.0.6
 
-1. Put the new UI bundle and the new web bundle on the panel (`docs/app.md`, "Build, run, develop"); the image stays as it is.
+1. Build the new web bundle and the new UI bundle and put them on the panel (`tools/build_web.sh`, `tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel IP>`; see the [install guide](install.md#updating-later), "Updating later"); the image stays as it is.
 2. Update the integration (Marketplace, HACS or a copy of the new `custom_components/panelos` folder) and restart Home Assistant. The settings stay; the panel's Home Assistant user is kept on its first connection (Device → About).
 
 ## Upgrading from 0.0.5
 
-1. Put the new UI bundle on the panel (`docs/app.md`, "Build, run, develop"); the image and the web bundle stay as they are.
+1. Build the new UI bundle and put it on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel IP> ui`; see the [install guide](install.md#updating-later), "Updating later"); the image and the web bundle stay as they are.
 2. Update the integration (Marketplace, HACS or a copy of the new `custom_components/panelos` folder) and restart Home Assistant. The settings stay.
 
 Music Assistant then finds the panel as a Sendspin player and pairs with it through Home Assistant by itself (see [docs/app.md](app.md#voice-satellite)).
@@ -72,7 +72,7 @@ Music Assistant then finds the panel as a Sendspin player and pairs with it thro
 
 Update the panel and the integration together: the new interface uses the integration's newer requests (timers through Home Assistant, PanelOS notifications, page settings from the panel).
 
-1. Write the new image to the panel (install guide, "Updating later") and put the UI bundle and the web bundle on it (`docs/app.md`, "Build, run, develop").
+1. Build the new image, web bundle and UI bundle, write the image to the panel and put the bundles on it ([install guide](install.md#updating-later), "Updating later", with the web bundle).
 2. Copy the new `custom_components/panelos` folder to Home Assistant and restart it. The settings stay; the PanelOS page loads its new version by itself.
 
 ## Upgrading from 0.0.3

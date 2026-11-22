@@ -245,12 +245,27 @@ Without `app.json` the app shows the setup screen "Connect to Home Assistant": H
 tools/build_image.sh       # builds host Rust + fontconfig, then the app (tools/build_app.sh), then the image with the app
 tools/build_app.sh         # app only -> /root/nspanel/app-build/target/aarch64-unknown-linux-gnu/release/nspanel-app
 GPU=1 tools/build_app.sh   # the GPU app (feature gpu) -> /root/nspanel/app-build-gpu/…; its UI bundle copy in /opt/panelos-ui/share/ui
+tools/build_web.sh         # the web bundle -> /root/nspanel/br-web/images/rootfs.squashfs (hours the first time)
+tools/build_ui_bundle.sh   # the GPU app, then the UI bundle -> /root/nspanel/out/panelos-ui.squashfs (BUILD=0: packs the last GPU build)
+tools/install_bundles.sh <panel IP> [ui] [web]   # puts the bundles on a panel over SSH (both without ui / web)
 ```
 
 - The image starts the app from `/etc/init.d/S90nspanel-app` (restarted when it exits, output to syslog).
-- The GPU interface runs from two bundles; without them the image's app runs with the software renderer:
+- The GPU interface runs from two bundles, SquashFS images (zstd) on the panel's storage:
   - the web bundle (`tools/build_web.sh`, `buildroot/configs/panelos_web_defconfig`): its `rootfs.squashfs` as `/mnt/persist/panelos-web.squashfs`, mounted at `/opt/panelos-web` (`S50panelos-web`); it brings WPE WebKit and the GPU libraries (Mesa Panfrost, GBM);
-  - the UI bundle (`GPU=1 tools/build_app.sh`): the app and the pictures and fonts of its pages (`bin/`, `share/`), as `/mnt/data/panelos-ui.squashfs` or `/mnt/persist/panelos-ui.squashfs`, mounted at `/opt/panelos-ui` (`S51panelos-ui`); for development a folder `/mnt/data/panelos-ui-dev` with the same layout is used instead.
+  - the UI bundle (`tools/build_ui_bundle.sh`): `bin/nspanel-app`, the GPU app, and `share/ui/`, the app's `ui/` folder without the `.slint` files (they are compiled into the app). The app opens its pictures, fonts, sounds and layout data by their absolute path under `/opt/panelos-ui/share/ui` (`PANELOS_UI_DIR`, set by `tools/build_app.sh`). On the panel it is `/mnt/data/panelos-ui.squashfs` or `/mnt/persist/panelos-ui.squashfs`, mounted at `/opt/panelos-ui` (`S51panelos-ui`).
+- The GPU app links the web bundle's libgbm and loads Mesa from it at run time: build the UI bundle after the web bundle, and again whenever the web bundle is built anew. `mksquashfs` comes from the web bundle's Buildroot host tools (`/root/nspanel/br-web/host/bin`), or from the distribution's `squashfs-tools`.
+- `tools/install_bundles.sh` puts the UI bundle on `/mnt/data` when that partition is there (install guide, step 14), else on `/mnt/persist`, and the web bundle on `/mnt/persist`. Each file is uploaded under a temporary name next to its place and checked (size, md5) while the app runs. Then a script on the panel, detached from the SSH session, checks the uploads again, stops the app, unmounts the bundles, renames the new files into place, mounts them and starts the app, with the development switches (`NSPANEL_*`, `PANELOS_*`, `WEBKIT_*`) it ran with. Without room for a second copy the upload goes to `/mnt/data` and is copied into place, or, without room there either, the old bundle is removed first (it asks). A bundle that is already on the panel is skipped; an upload that is complete on the panel is not repeated.
+- What runs, by what is on the panel:
+
+  | On the panel | App |
+  |---|---|
+  | both bundles | the UI bundle's app, drawing on the GPU |
+  | the UI bundle only | the image's app (the GPU app needs the web bundle's Mesa), with the bundle's pictures and fonts |
+  | no UI bundle | the image's app with the system font and without the pages' pictures |
+
+  The image's app is built with the software renderer and the same `PANELOS_UI_DIR`, so it takes its pictures and fonts from the UI bundle too; the image itself carries none of them, only DejaVu Sans. When the bundle's app ends within 30 s three times in a row, the image's app runs until the next restart (`S90nspanel-app`, `/tmp/nspanel-gpu-off`).
+- Development: a folder `/mnt/data/panelos-ui-dev` with the UI bundle's layout (`bin/nspanel-app`, `share/ui/`) is mounted instead of either bundle file when it exists. `tools/install_bundles.sh ui` still puts the file in place and says that the folder comes first; the file is used once the folder is moved away.
 - Development aids:
   - `NSPANEL_FIXTURE=<file>` renders a saved dashboard config + states without Home Assistant; the fixture may also carry `panel` (integration config), `forecast_hourly` and `forecast_daily`.
   - `NSPANEL_DEV_INPUT=/tmp/nspanel-input` creates a FIFO: lines `tap x y`, `down x y`, `move x y`, `up x y` act as touches, `swipe x1 y1 x2 y2 ms` is a swipe with a move every 16 ms, `pinch x y d1 d2 ms` two fingers one above the other round (x, y), d1 px apart, spreading to d2 px apart in `ms` (the second finger lands 40 ms after the first, a move every 16 ms, then both lift), JSON lines `{"web_load": url}`, `{"web_scroll_find": 1}` then `{"web_scroll": [px, ms]}` (a scripted scroll, no touches) and `{"web_skip": [path, ...]}` drive the web view for measurements, JSON lines are app commands (`{"show": {...}}` with the integration's fields, `{"assist": [state, heard, answer]}`, `{"page": n}`, `{"act": [what, value]}`, `{"config": {...}}` integration settings kept over Home Assistant's, `{"notes": {"kind": "added", "notes": {id: {...}}}}` a notification change as Home Assistant sends it, `{"connecting": true}`, `{"offline": n}`, `{"dark": true}`, `{"frame_stats": true}`, `{"glass_pass": false}` the rain on the glass's GPU pass off (`true` on again; `PANELOS_GLASS=0` starts without it), `{"saver": true}` the screensaver at once, `{"pages": ["kind:look", ...]}`, and test commands for the synthwave scene (`synth.rs`)).
