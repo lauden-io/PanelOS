@@ -38,6 +38,7 @@ type PhysicalBorderRadius = BorderRadius<f32, PhysicalPx>;
 mod cached_image;
 mod font_cache;
 mod itemrenderer;
+mod panelos_motion; // PanelOS: moving layers and texts are drawn at their sub-pixel place
 
 #[cfg(skia_backend_software)]
 pub mod software_surface;
@@ -439,6 +440,7 @@ pub struct SkiaRenderer {
     path_cache: ItemCache<Option<(Vector2D<f32, PhysicalPx>, skia_safe::Path)>>,
     box_shadow_cache: itemrenderer::SkiaBoxShadowCache,
     text_layout_cache: sharedparley::TextLayoutCache,
+    motion_cache: panelos_motion::MotionCache, // PanelOS
     rendering_metrics_collector: RefCell<Option<Rc<RenderingMetricsCollector>>>,
     rendering_first_time: Cell<bool>,
     surface: RefCell<Option<Box<dyn Surface>>>,
@@ -489,6 +491,7 @@ impl SkiaRenderer {
             path_cache: Default::default(),
             box_shadow_cache: Default::default(),
             text_layout_cache: Default::default(),
+            motion_cache: Default::default(), // PanelOS
             rendering_metrics_collector: Default::default(),
             rendering_first_time: Default::default(),
             surface: Default::default(),
@@ -627,6 +630,7 @@ impl SkiaRenderer {
         self.path_cache.clear_all();
         self.box_shadow_cache.clear();
         self.text_layout_cache.clear_all();
+        self.motion_cache.clear_all(); // PanelOS
     }
 
     /// Reset the surface to a new surface. (destroy the previously set surface if any)
@@ -839,6 +843,7 @@ impl SkiaRenderer {
             &self.path_cache,
             &self.text_layout_cache,
             &self.box_shadow_cache,
+            &self.motion_cache, // PanelOS
         );
 
         let scale_factor = ScaleFactor::new(window_inner.scale_factor());
@@ -1045,6 +1050,7 @@ impl i_slint_core::renderer::RendererSealed for SkiaRenderer {
         self.layer_cache.component_destroyed(component);
         self.path_cache.component_destroyed(component);
         self.text_layout_cache.component_destroyed(component);
+        self.motion_cache.component_destroyed(component); // PanelOS
 
         if let Some(partial_rendering_state) = self.partial_rendering_state() {
             partial_rendering_state.free_graphics_resources(component, items);

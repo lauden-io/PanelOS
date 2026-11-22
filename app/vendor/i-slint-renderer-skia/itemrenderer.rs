@@ -44,6 +44,14 @@ pub struct SkiaItemRenderer<'a> {
     path_cache: &'a ItemCache<Option<(Vector2D<f32, PhysicalPx>, skia_safe::Path)>>,
     text_layout_cache: &'a sharedparley::TextLayoutCache,
     box_shadow_cache: &'a SkiaBoxShadowCache,
+    // PanelOS: where layers and texts were drawn before (panelos_motion.rs), the
+    // time of this frame, whether another frame was asked for already, and
+    // whether the text being drawn moves vertically (its glyphs then leave the
+    // baseline snap off).
+    motion_cache: &'a crate::panelos_motion::MotionCache,
+    frame_time: std::cell::OnceCell<std::time::Instant>,
+    redraw_asked: std::cell::Cell<bool>,
+    free_baseline: bool,
 }
 
 impl<'a> SkiaItemRenderer<'a> {
@@ -62,6 +70,7 @@ impl<'a> SkiaItemRenderer<'a> {
         path_cache: &'a ItemCache<Option<(Vector2D<f32, PhysicalPx>, skia_safe::Path)>>,
         text_layout_cache: &'a sharedparley::TextLayoutCache,
         box_shadow_cache: &'a SkiaBoxShadowCache,
+        motion_cache: &'a crate::panelos_motion::MotionCache, // PanelOS
     ) -> Self {
         Self {
             canvas,
@@ -78,6 +87,10 @@ impl<'a> SkiaItemRenderer<'a> {
             path_cache,
             text_layout_cache,
             box_shadow_cache,
+            motion_cache,
+            frame_time: Default::default(),
+            redraw_asked: Default::default(),
+            free_baseline: false,
         }
     }
 
@@ -587,7 +600,19 @@ impl<'a> SkiaItemRenderer<'a> {
             i_slint_core::item_rendering::render_layer(self, item_rc)
         {
             self.canvas.translate(skia_safe::Vector::from((layer_offset.x, layer_offset.y)));
-            let _saved_canvas = self.pixel_align_origin_auto_restore();
+            // PanelOS: a layer moving on the screen (a scrolling title, the wandering
+            // clock) is drawn at its exact sub-pixel place along the axes it moves on
+            // (linear filtering), so it glides instead of stepping a whole pixel at a
+            // time; a still layer is snapped as upstream does, so it is no softer at
+            // rest. PANELOS_ALIGN_LAYERS=1 always snaps (measurements).
+            let (round_x, round_y) = match self.translation_origin() {
+                Some(origin) if !crate::panelos_motion::align_layers() => {
+                    let (moving_x, moving_y) = self.moving_axes(item_rc, origin);
+                    (!moving_x, !moving_y)
+                }
+                _ => (true, true),
+            };
+            let _saved_canvas = self.pixel_align_origin_axes_auto_restore(round_x, round_y);
             self.canvas.draw_image_with_sampling_options(
                 layer_image,
                 skia_safe::Point::default(),
@@ -599,6 +624,7 @@ impl<'a> SkiaItemRenderer<'a> {
     }
 
     // Snap the alignment anchor; the caller restores the canvas when this returns true.
+    #[allow(dead_code)] // PanelOS: the text uses `save_canvas_and_pixel_align_origin_axes`
     fn save_canvas_and_pixel_align_origin(&self, anchor: PhysicalPoint) -> bool {
         let local_to_device = self.canvas.local_to_device_as_3x3();
         if !local_to_device.is_translate() {
@@ -635,6 +661,100 @@ impl<'a> SkiaItemRenderer<'a> {
         self.canvas.translate(device_to_local.map_point(target_point));
 
         Some(restore_point)
+    }
+
+    // PanelOS: whether the item drawn at this device point (the canvas only
+    // translates it) moves along x and along y (panelos_motion.rs). While
+    // something moves, another frame is asked for, so that it is drawn snapped
+    // once it has stopped.
+    fn moving_axes(&self, item_rc: &ItemRc, device: skia_safe::Point) -> (bool, bool) {
+        let now = *self.frame_time.get_or_init(std::time::Instant::now);
+        let moving = self.motion_cache.moving(item_rc, device.x, device.y, now);
+        if (moving.0 || moving.1) && !self.redraw_asked.replace(true) {
+            self.window.request_redraw();
+        }
+        moving
+    }
+
+    // PanelOS: `pixel_align_origin_auto_restore` for the chosen axes only.
+    fn pixel_align_origin_axes_auto_restore(
+        &self,
+        round_x: bool,
+        round_y: bool,
+    ) -> Option<skia_safe::canvas::AutoRestoredCanvas<'_>> {
+        if !round_x && !round_y {
+            return None;
+        }
+        let local_to_device = self.canvas.local_to_device_as_3x3();
+        if !local_to_device.is_translate() || local_to_device.is_identity() {
+            return None;
+        }
+        let device_to_local = local_to_device.invert()?;
+        let mut target_point = local_to_device.map_point(skia_safe::Point::default());
+
+        if round_x {
+            target_point.x = target_point.x.round();
+        }
+        if round_y {
+            target_point.y = target_point.y.round();
+        }
+
+        let restore_point = skia_safe::AutoCanvasRestore::guard(self.canvas, true);
+
+        self.canvas.translate(device_to_local.map_point(target_point));
+
+        Some(restore_point)
+    }
+
+    // PanelOS: a text moving on the screen (the news crawl, a sliding sheet) is
+    // drawn from its exact sub-pixel place along the axes it moves on (Skia keeps
+    // the glyphs on quarter pixels; a vertical move also turns the baseline snap
+    // off); a still text is snapped as upstream does, so it is no softer at rest.
+    // PANELOS_ALIGN_TEXT=1 always snaps (measurements). Returns whether to round
+    // the anchor's x and y.
+    fn text_rounding(&self, item_rc: &ItemRc, anchor: PhysicalPoint) -> (bool, bool) {
+        if crate::panelos_motion::align_text() {
+            return (true, true);
+        }
+        let local_to_device = self.canvas.local_to_device_as_3x3();
+        if !local_to_device.is_translate() {
+            return (true, true);
+        }
+        let (moving_x, moving_y) =
+            self.moving_axes(item_rc, local_to_device.map_point(to_skia_point(anchor)));
+        (!moving_x, !moving_y)
+    }
+
+    // PanelOS: `save_canvas_and_pixel_align_origin` for the chosen axes only.
+    fn save_canvas_and_pixel_align_origin_axes(
+        &self,
+        anchor: PhysicalPoint,
+        (round_x, round_y): (bool, bool),
+    ) -> bool {
+        if !round_x && !round_y {
+            return false;
+        }
+        let local_to_device = self.canvas.local_to_device_as_3x3();
+        if !local_to_device.is_translate() {
+            return false;
+        }
+        let Some(device_to_local) = local_to_device.invert() else {
+            return false;
+        };
+        let mut target_point = local_to_device.map_point(to_skia_point(anchor));
+
+        if round_x {
+            target_point.x = target_point.x.round();
+        }
+        if round_y {
+            target_point.y = target_point.y.round();
+        }
+
+        self.canvas.save();
+
+        self.canvas.translate(device_to_local.map_point(target_point) - to_skia_point(anchor));
+
+        true
     }
 }
 
@@ -745,8 +865,12 @@ impl ItemRenderer for SkiaItemRenderer<'_> {
             horizontal,
             vertical,
         );
-        let restore = self.save_canvas_and_pixel_align_origin(anchor);
+        // PanelOS: snapped only while still (`text_rounding`)
+        let rounding = self.text_rounding(self_rc, anchor);
+        let restore = self.save_canvas_and_pixel_align_origin_axes(anchor, rounding);
+        self.free_baseline = !rounding.1;
         sharedparley::draw_text(self, text, Some(self_rc), size, Some(self.text_layout_cache));
+        self.free_baseline = false;
         if restore {
             self.canvas.restore();
         }
@@ -763,8 +887,12 @@ impl ItemRenderer for SkiaItemRenderer<'_> {
             text_input.horizontal_alignment(),
             text_input.vertical_alignment(),
         );
-        let restore = self.save_canvas_and_pixel_align_origin(anchor);
+        // PanelOS: snapped only while still (`text_rounding`)
+        let rounding = self.text_rounding(self_rc, anchor);
+        let restore = self.save_canvas_and_pixel_align_origin_axes(anchor, rounding);
+        self.free_baseline = !rounding.1;
         sharedparley::draw_text_input(self, text_input, self_rc, size, self.text_layout_cache);
+        self.free_baseline = false;
         if restore {
             self.canvas.restore();
         }
@@ -1191,6 +1319,7 @@ impl<'a> LayerRenderer<'a> for SkiaItemRenderer<'a> {
             self.path_cache,
             self.text_layout_cache,
             self.box_shadow_cache,
+            self.motion_cache, // PanelOS
         );
         sub_renderer.translate(-bounding_rect.origin.to_vector());
 
@@ -1284,6 +1413,11 @@ impl GlyphRenderer for SkiaItemRenderer<'_> {
         };
         let mut font = skia_safe::Font::from_typeface(type_face, font_size.get());
         font.set_subpixel(true);
+        // PanelOS: a text moving vertically keeps its glyphs on quarter pixels in y
+        // too (Skia rounds y to whole pixels while the baseline snap is on).
+        if self.free_baseline {
+            font.set_baseline_snap(false);
+        }
         // The typeface itself is cached (keyed on blob + variation settings, not synthesis), so
         // faux styling has to be applied to this per-draw-call `Font` instead: skewing or
         // emboldening the cached typeface would leak into every other run drawn with it.
