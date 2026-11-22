@@ -96,7 +96,7 @@ Measured again with 0.0.8 (ranges of several windows):
 | Stopwatch, nixie tubes, running | 43.2–55.1 |
 | Any other page while the stopwatch has the nixie look | 0 |
 
-With the moving rows of the drawn scenes as one picture from the app (after 0.0.8; at night, the second column with the strips as before, measured right after in the same conditions):
+With the moving rows of the drawn scenes as one picture from the app (0.0.9; at night, the second column with the strips as before, measured right after in the same conditions):
 
 | View | Frames a second | Strips |
 |---|---|---|

@@ -1,6 +1,6 @@
 [package]
 name = "nspanel-app"
-version = "0.0.8"
+version = "0.0.9"
 edition = "2021"
 description = "Native Home Assistant panel app for the Sonoff NSPanel Pro 86"
 publish = false

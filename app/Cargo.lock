@@ -2823,7 +2823,7 @@ dependencies = [
 
 [[package]]
 name = "nspanel-app"
-version = "0.0.8"
+version = "0.0.9"
 dependencies = [
  "alsa",
  "base64 0.22.1",
