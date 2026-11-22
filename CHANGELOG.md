@@ -2,6 +2,10 @@
 
 ## In development
 
+### Voice
+- "Stop" stops a ringing timer or alarm at once when the panel hears it, from 1.5 s after the ring's start; before, the speech recognition had to confirm it and over the ring it mostly heard nothing (#13).
+- Other speech over a ring is made louder before the speech recognition (the echo canceller leaves it very quiet) and, when the assistant's language is not English, recognized in English at the same time, so a stop phrase is understood more often (#13).
+
 ### Dashboard mode
 - What goes off a still dashboard no longer stays on the screen until the dashboard changes: a strip closed with its ×, the voice view, the pull to refresh disc, a ring or a status screen that ends. Before, the last picture stayed, up to a minute with a clock on the dashboard.
 - A folded status screen's strip sits at the very top (the dashboard has no status bar), and a pull down on it opens the quick settings.

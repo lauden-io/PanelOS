@@ -23,9 +23,56 @@ pub fn engine() -> Option<(String, String)> {
     ENGINE.lock().unwrap().clone()
 }
 
-/// The text of 16 kHz mono samples (blocking; call it off the audio thread).
+/// The text of 16 kHz mono samples in the panel's language (blocking; call it off the audio thread).
 pub fn recognize(samples: &[i16]) -> Result<String, String> {
     let (engine, language) = engine().ok_or("no speech recognition known for the panel")?;
+    recognize_in(&engine, &language, samples)
+}
+
+/// What is said over a ringing timer, for its stop words (blocking): made louder first (the echo canceller leaves
+/// speech 40 to 50 dB under full scale, and the recognition then often hears nothing), recognized in the panel's
+/// language and, when that is not English, in English at the same time (a Hungarian recognition mostly hears nothing
+/// in an English "Stop"). The texts heard, the panel's language first.
+pub fn recognize_ring(samples: &[i16]) -> Vec<String> {
+    let Some((engine, language)) = engine() else { return Vec::new() };
+    let loud = louder(samples);
+    let english = !language.to_lowercase().starts_with("en");
+    std::thread::scope(|s| {
+        let other = english.then(|| s.spawn(|| recognize_in(&engine, "en-US", &loud)));
+        let mut out = Vec::new();
+        match recognize_in(&engine, &language, &loud) {
+            Ok(text) => out.push(text),
+            Err(e) => eprintln!("nspanel-app: speech recognition ({language}): {e}"),
+        }
+        if let Some(Ok(result)) = other.map(|h| h.join()) {
+            match result {
+                Ok(text) => out.push(text),
+                Err(e) => {
+                    static TOLD: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+                    if !TOLD.swap(true, std::sync::atomic::Ordering::Relaxed) {
+                        eprintln!("nspanel-app: speech recognition in English: {e}");
+                    }
+                }
+            }
+        }
+        out
+    })
+}
+
+/// Quiet speech raised until its loudest sample is about 3 dB under full scale (at most 30 times), never clipped;
+/// louder speech stays as it is.
+pub fn louder(samples: &[i16]) -> Vec<i16> {
+    let peak = samples.iter().map(|&s| (s as i32).abs()).max().unwrap_or(0);
+    let gain = if peak == 0 { 1.0 } else { (23000.0 / peak as f32).clamp(1.0, 30.0) };
+    samples.iter().map(|&s| (s as f32 * gain).round().clamp(-32768.0, 32767.0) as i16).collect()
+}
+
+/// Of the texts heard in a piece of speech, the one that stops a ring, else the first one heard at all.
+pub fn ring_text(texts: &[String]) -> String {
+    texts.iter().find(|t| stops_ring(t)).or_else(|| texts.iter().find(|t| !t.is_empty())).cloned().unwrap_or_default()
+}
+
+fn recognize_in(engine: &str, language: &str, samples: &[i16]) -> Result<String, String> {
     let (ha_url, auth) = crate::sounds::ha().ok_or("no Home Assistant")?;
     let token = auth.access_token().map_err(|_| "no login".to_string())?;
     let bytes: Vec<u8> = samples.iter().flat_map(|s| s.to_le_bytes()).collect();
@@ -124,7 +171,7 @@ pub fn is_only_stop(text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_only_stop, is_stop, stops_ring};
+    use super::{is_only_stop, is_stop, louder, ring_text, stops_ring};
 
     #[test]
     fn an_english_stop_stops_the_ring() {
@@ -212,5 +259,31 @@ mod tests {
         assert!(!is_stop("Köszönöm szépen."));
         assert!(!is_stop(""));
         assert!(!is_stop("Set a one minute timer on the panel and then stop."));
+    }
+
+    #[test]
+    fn ring_speech_made_louder() {
+        let quiet = louder(&[0, 500, -1000, 250]);
+        assert_eq!(quiet, vec![0, 11500, -23000, 5750]);
+        // at most 30 times
+        assert_eq!(louder(&[100, -50]), vec![3000, -1500]);
+        // loud speech and silence stay as they are
+        assert_eq!(louder(&[30000, -20000]), vec![30000, -20000]);
+        assert_eq!(louder(&[0, 0]), vec![0, 0]);
+    }
+
+    #[test]
+    fn ring_text_picks_the_stop() {
+        let t = |v: &[&str]| v.iter().map(|s| s.to_string()).collect::<Vec<_>>();
+        // a Hungarian recognition hears nothing in an English "Stop", the English one hears it
+        assert_eq!(ring_text(&t(&["", "Stop."])), "Stop.");
+        assert_eq!(ring_text(&t(&["Nem.", "Stop."])), "Stop.");
+        assert_eq!(ring_text(&t(&["Állj!", ""])), "Állj!");
+        // what the recognitions made of the ring's leftover never stops it
+        for heard in [["Sztálin.", ""], ["Dub.", ""], ["No.", ""], ["", ""]] {
+            assert!(!stops_ring(&ring_text(&t(&heard))));
+        }
+        assert_eq!(ring_text(&t(&["Nem.", ""])), "Nem.");
+        assert_eq!(ring_text(&[]), "");
     }
 }

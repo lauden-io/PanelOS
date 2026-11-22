@@ -489,9 +489,13 @@ const RING_OVERLAP: usize = 16000;
 const RING_PREROLL: usize = 8000;
 /// At a ring's start the echo canceller is still learning the new sound for about a second, and its leftover
 /// sounds like speech to the ear and the "Stop" model (measured: a false piece of speech 1 s after every ring
-/// start, once a false "Stop"). Nothing is left unheard because of it: every piece and every "Stop" goes to the
-/// speech recognition, and only a stop word stops the ring; this much audio before a "Stop" goes with it.
+/// start, once a false "Stop"). A "Stop" then goes to the speech recognition with this much audio before it, and
+/// only a stop word stops the ring.
 const RING_STOP_AUDIO: usize = 24000;
+/// From this long after a ring's start the panel's own "Stop" stops it at once. Over a ring the speech recognition
+/// mostly hears nothing in a real "Stop" (a test with a person's voice: the model heard 11 of them in a minute, the
+/// recognition none).
+const RING_TRUST_STOP: Duration = Duration::from_millis(1500);
 
 /// While a timer rings: cuts out what someone says over the ring (the processed microphone signal; the ring's
 /// leftover level is the 40th percentile of the last 2 s), for the speech recognition. The ring itself plays on
@@ -597,16 +601,17 @@ fn hear_over_ring(samples: Vec<i16>, tx: &mpsc::Sender<String>) {
     std::thread::spawn(move || {
         let t0 = Instant::now();
         dump_ring_piece(&samples);
-        match crate::stt::recognize(&samples) {
-            Ok(text) => {
-                eprintln!(
-                    "nspanel-app: voice: heard over the ring: '{text}' ({:.1} s of speech, {} ms)",
-                    samples.len() as f32 / 16000.0,
-                    t0.elapsed().as_millis()
-                );
-                let _ = tx.send(text);
-            }
-            Err(e) => eprintln!("nspanel-app: voice: speech over the ring not recognized: {e}"),
+        let texts = crate::stt::recognize_ring(&samples);
+        if texts.is_empty() {
+            eprintln!("nspanel-app: voice: speech over the ring not recognized");
+        } else {
+            let heard = texts.iter().map(|t| format!("'{t}'")).collect::<Vec<_>>().join(" / ");
+            eprintln!(
+                "nspanel-app: voice: heard over the ring: {heard} ({:.1} s of speech, {} ms)",
+                samples.len() as f32 / 16000.0,
+                t0.elapsed().as_millis()
+            );
+            let _ = tx.send(crate::stt::ring_text(&texts));
         }
         BUSY.fetch_sub(1, Ordering::SeqCst);
     });
@@ -1195,6 +1200,7 @@ pub fn spawn(
         // A timer rings: the panel listens for "Stop" (and the wake words) itself, and holds the ring while
         // someone speaks.
         let mut ring_listen = false;
+        let mut ring_started = Instant::now();
         let mut ring_audio: std::collections::VecDeque<i16> = std::collections::VecDeque::new();
         // a ring's start: (raw, processed) energy per 100 ms for its first 3 s, for the log
         let mut ring_erle: Vec<(f64, f64)> = Vec::new();
@@ -1588,6 +1594,7 @@ pub fn spawn(
             if control.ringing.load(Ordering::SeqCst) && !muted && !aec.ptr.is_null() {
                 if !ring_listen {
                     ring_listen = true;
+                    ring_started = Instant::now();
                     ring_erle.clear();
                     erle_acc = (0.0, 0.0, 0);
                     ring_audio.clear();
@@ -1603,9 +1610,16 @@ pub fn spawn(
                 }
                 let heard = engine.process(chunk).cloned();
                 if let Some(word) = heard.as_ref().filter(|w| INTERNAL_WORDS.contains(&w.id.as_str())) {
-                    // "Stop": checked by the speech recognition (the ring's own start can sound like it)
-                    eprintln!("nspanel-app: voice: '{}' heard over the ring: checking it", word.phrase);
-                    hear_over_ring(ring_audio.iter().copied().collect(), &ring_tx);
+                    if ring_started.elapsed() >= RING_TRUST_STOP {
+                        eprintln!("nspanel-app: voice: '{}' heard over the ring -> stop", word.phrase);
+                        control.ringing.store(false, Ordering::SeqCst);
+                        player.stop();
+                        ui(VoiceUi::Stopped);
+                    } else {
+                        // the ring's own start can sound like "Stop": the speech recognition checks it
+                        eprintln!("nspanel-app: voice: '{}' heard at the ring's start: checking it", word.phrase);
+                        hear_over_ring(ring_audio.iter().copied().collect(), &ring_tx);
+                    }
                     engine.reset();
                 } else if let Some(word) = heard {
                     eprintln!("nspanel-app: voice: '{}' while the timer rings -> stop", word.phrase);
