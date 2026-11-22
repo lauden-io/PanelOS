@@ -22,13 +22,14 @@ Sendspin: from 0.0.7 a host that has not paired with the panel can only pair. Up
 
 The panel connects to:
 
-- **Home Assistant** (its URL in `app.json`): the login, the WebSocket session, the REST calls (camera pictures, calendars, to-do lists, sounds, speech recognition) and the web view's dashboard. Plain `http://` and `ws://` (see below).
-- **NTP:** `pool.ntp.org` (busybox `ntpd`, `S45ntp`), once Wi-Fi has an address. Until NTP has set the clock, the panel takes the time from Home Assistant.
+- **Home Assistant** (its URL in `app.json`): the login, the WebSocket session, the REST calls (camera pictures, calendars, to-do lists, the media player list, profile pictures, sounds, speech recognition) and the web view's dashboard. Plain `http://` and `ws://` (see below).
+- **NTP:** `pool.ntp.org` (busybox `ntpd`, `S45ntp`; an image built before 0.0.7 also asks a regional pool), once Wi-Fi has an address. Until NTP has set the clock, the panel takes the time from Home Assistant.
 - **Hosts named by Home Assistant**, without the login token:
   - artwork whose picture URL is on another host (a player's `entity_picture`), no redirects, up to 8 MB;
+  - a person's profile picture (People widget) when its address is on another host, no redirects, up to 8 MB;
   - a notification's picture when it is a full URL, up to 8 MB;
   - a URL Home Assistant plays on the panel's media player (see the ESPHome API).
-  Pictures are decoded by memory-safe Rust decoders (JPEG, PNG), at most 4096 × 4096 pixels.
+  Pictures are decoded by memory-safe Rust decoders (JPEG, PNG), at most 4096 × 4096 pixels (profile pictures 2048 × 2048).
 - **The web view** loads the dashboard from Home Assistant and whatever that page refers to (card resources, pictures), like any browser.
 
 The app itself speaks no TLS (its HTTP client is built without it), so it can only reach `http://` URLs.
@@ -50,7 +51,7 @@ While a timer or an alarm rings (and the microphones are not muted), the panel l
 ## Home Assistant connection
 
 - The panel logs in with Home Assistant's normal login (OAuth, QR code). The refresh token is in `/mnt/persist/nspanel/ha_auth.json` (0600) and never logged. Logging out revokes it in Home Assistant.
-- The app's own requests send the login token only to Home Assistant itself (camera, artwork, sounds, speech recognition), never to another host. The web view gets it too (below).
+- The app's own requests send the login token only to Home Assistant itself (camera, artwork, profile pictures, the media player list, sounds, speech recognition), never to another host. The web view gets it too (below).
 - **Pictures of the screen** for the PanelOS page in Home Assistant are taken only when an administrator has the page open, and go only to Home Assistant over the panel's own connection.
 - **No TLS yet:** the connection is plain `http://` and `ws://`, readable by anyone on the same network. Use the panel only in a network you trust, and pair it with a Home Assistant user that is not an administrator.
 
@@ -64,13 +65,14 @@ The view stays on that origin. A link, a script or a redirect that would put ano
 
 ## Home Assistant integration
 
-- **The PanelOS page** in the sidebar is for administrators only, and so are the WebSocket commands behind it (settings, pictures of the screen, the touch test, the proximity calibration, the alerts and statuses).
+- **The PanelOS page** in the sidebar is for administrators only, and so are the WebSocket commands behind it (settings, pictures of the screen, the touch test, the proximity calibration, the alerts and statuses, the alarms and their music, forgetting a panel's user).
 - **Its actions** (`panelos.show_view`, `notify`, `show_status`, `clear_status`, `critical_alert`, `clear_critical_alert`) are admin-only (`async_register_admin_service`).
 - **Uploaded sounds:** only administrators upload (`POST /api/panelos/sounds`). Any logged-in user can download one by its id (`/api/panelos/sound/<id>`), which is how the panels keep their copies.
+- **Media players:** any logged-in user can read the list of available media players (`GET /api/panelos/players`); the panels' music pages list them with it.
 - **The panel's own commands** (`panelos/subscribe`, `report`, `page_set`, `timer`, `notification`, `alive`, `log`, `screen`) accept only the panel's own Home Assistant user and administrators. Another user is refused, and so is a subscription for a panel that is not set up.
 - **The panel names its user.** On every connection it asks Home Assistant who it is logged in as (`auth/current_user`) and reports that user's id as the Panel user sensor of its ESPHome device. The sensor's state comes over the encrypted ESPHome connection, whose key only Home Assistant and the panel hold, and over Home Assistant's API only administrators can set an entity's state, so another user cannot pose as the panel, not even by connecting first. The integration counts the sensor only when the panel's ESPHome entry has a key. The panel's ESPHome entry is the one whose device name is the panel's ID; once the panel has reported its MAC address, an ESPHome entry of another device with that name is never taken for it. It keeps that user in the panel's entry (the PanelOS page shows it under Device, About), and when the panel is paired with another user the binding moves by itself and the old user's subscriptions end.
-- **A panel that names no user** (an older app, or the sensor unavailable) keeps the first user that is not an administrator to subscribe for it. Once a panel has named its user, that user stays kept through such a gap. The PanelOS page can forget the kept user of a panel that names none; the next user that connects is kept then. Removing the panel or deleting the user forgets it too. Without the sensor, administrators are never kept, so with a panel that logs in as an administrator the first other user to connect would be. Give each panel its own user that is not an administrator anyway (see "No TLS yet").
-- **Voice assistants** that use the Assist API get tools to start, list and cancel timers and to set, list and cancel alarms on a panel named by its room (`llm.py`; at most 20 alarms a panel), from any device.
+- **A panel that names no user** (an older app, or the sensor unavailable) keeps the first user that is not an administrator to subscribe for it. Once a panel has named its user, that user stays kept through such a gap. The PanelOS page can forget the kept user of a panel that names none; the next user that is not an administrator to connect is kept then. Removing the panel or deleting the user forgets it too. Without the sensor, administrators are never kept, so with a panel that logs in as an administrator the first other user to connect would be. Give each panel its own user that is not an administrator anyway (see "No TLS yet").
+- **Voice assistants** that use the Assist API get tools to start, list and cancel timers and to set, list and cancel alarms on a panel named by its room or name (`llm.py`; at most 20 alarms a panel), from any device.
 
 ## At the panel
 
@@ -112,7 +114,6 @@ These stay on while PanelOS is in development; they make testing and debugging p
 | `/mnt/data/panelos-ui-dev` | the UI from this directory instead of the bundle image (`S51panelos-ui`), and the development log copies (above) | whoever writes there replaces the app; the whole log on flash and in Home Assistant |
 | `NSPANEL_DEV_INPUT` | a FIFO (0600) that takes touches, gestures and app actions as if tapped, page changes and test states | root only |
 | `SIGUSR1` | screenshot to `/tmp/nspanel-screen.ppm` | may capture a message or a camera |
-| `SIGUSR2` | scrolls the dashboard one page | root only |
 | `/tmp/nspanel-voice-test.wav`, `/tmp/nspanel-voice-followup.wav` | sent to Home Assistant as speech instead of the microphones | root only |
 | `/tmp/nspanel-ring-dump` | every piece of speech heard over a ring also saved as a WAV (the last 20) | private speech in RAM |
 | `/tmp/nspanel-aec-cold`, `/tmp/nspanel-aec-warm` | echo canceller modes for measurements | root only |
