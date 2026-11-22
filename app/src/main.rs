@@ -2683,6 +2683,13 @@ fn is_home_assistant(url: &str) -> bool {
     }
 }
 
+/// Home Assistant's own addresses, asked on the running connection; None without an answer within 5 s.
+fn own_addresses(commands: &Sender<Command>) -> Option<ha::OwnAddresses> {
+    let (tx, rx) = mpsc::channel();
+    commands.send(Command::OwnAddresses(tx)).ok()?;
+    rx.recv_timeout(Duration::from_secs(5)).ok()
+}
+
 /// The mDNS browser (Home Assistant instances on the network, for the setup screen).
 static MDNS_BROWSER: std::sync::OnceLock<Arc<mdns::Browser>> = std::sync::OnceLock::new();
 
@@ -2710,7 +2717,8 @@ fn wifi_random() -> i32 {
 }
 
 /// Settings → Home Assistant: the setup screen with the address the panel uses, a back arrow; a new address that
-/// answers is saved and the app starts again with it (a different Home Assistant asks for the pairing again).
+/// answers is saved and the app starts again with it (an address Home Assistant counts as its own keeps the login;
+/// any other ends it and asks for the pairing again).
 fn open_ha_setup(ui: &AppWindow) {
     let Some(browser) = MDNS_BROWSER.get().cloned() else { return };
     let current = with_state(|s| s.config.as_ref().map(|c| c.ha_host_port()).unwrap_or_default());
@@ -2823,10 +2831,25 @@ fn setup_handlers(ui: &AppWindow, browser: Arc<mdns::Browser>) {
         ui.set_setup_message_kind(0);
         // opened from the settings: the address the panel uses now
         let now_url = with_state(|s| s.config.as_ref().map(|c| c.ha_url.trim_end_matches('/').to_string()));
+        // the connection to it, while it lasts: Home Assistant's own addresses are asked there
+        let commands = with_state(|s| s.commands.clone().filter(|_| s.connected));
         let weak = ui.as_weak();
         std::thread::spawn(move || {
-            let found = candidates.iter().find(|u| is_home_assistant(u)).cloned();
+            // only addresses every parser reads alike (a picked mDNS row can carry any URL)
+            let found = candidates.iter().filter(|u| auth::is_plain_address(u)).find(|u| is_home_assistant(u)).cloned();
             let same = found.is_some() && found.as_deref() == now_url.as_deref();
+            // before the new address is saved: the Home Assistant the panel is logged in to counts it among its own
+            // addresses (then the login goes along), or not, or does not answer now (then the login ends)
+            let same_ha = match (&found, &now_url) {
+                (Some(url), Some(old)) if !same => match commands.as_ref().and_then(own_addresses) {
+                    Some(own) => auth::same_home_assistant(url, old, &own.urls, &own.ips),
+                    None => {
+                        eprintln!("nspanel-app: setup: Home Assistant did not tell its own addresses");
+                        false
+                    }
+                },
+                _ => false,
+            };
             let saved = found.as_ref().filter(|_| !same).map(|url| {
                 let _ = std::fs::create_dir_all(PERSIST_DIR);
                 // the other settings in app.json stay (only the address changes); written whole, then renamed
@@ -2837,6 +2860,11 @@ fn setup_handlers(ui: &AppWindow, browser: Arc<mdns::Browser>) {
                 let tmp = format!("{path}.tmp");
                 std::fs::write(&tmp, text + "\n").and_then(|_| std::fs::rename(&tmp, &path))
             });
+            // a new address: the login goes along to the same Home Assistant; otherwise it ends at the one it was
+            // made for, and the new address pairs again
+            if let (Some(url), Some(Ok(()))) = (&found, &saved) {
+                auth::change_address(&auth_file(), now_url.as_deref(), url, same_ha, Duration::from_secs(3));
+            }
             let _ = slint::invoke_from_event_loop(move || {
                 let Some(ui) = weak.upgrade() else { return };
                 ui.set_setup_busy(false);
@@ -4475,6 +4503,12 @@ fn handle_act(ui: &AppWindow, what: &str, value: &str) {
     }
 }
 
+/// The login file. NSPANEL_AUTH: another one (with NSPANEL_CONFIG and NSPANEL_SETTINGS: a second
+/// Home Assistant for tests, the panel's own login untouched).
+fn auth_file() -> PathBuf {
+    PathBuf::from(std::env::var("NSPANEL_AUTH").unwrap_or_else(|_| format!("{PERSIST_DIR}/ha_auth.json")))
+}
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The GPU build runs with the web bundle's libraries (LD_LIBRARY_PATH from
     // the init script; the loader keeps its own copy for later dlopen calls).
@@ -4507,10 +4541,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // first session needs no reload (the integration's settings come with it).
     *shared.extra_entities.lock().unwrap() = vec!["sun.sun".into(), "zone.home".into(), settings.weather_entity.clone()];
     *shared.forecast_entity.lock().unwrap() = settings.weather_entity.clone();
-    // NSPANEL_AUTH: another login file (with NSPANEL_CONFIG and NSPANEL_SETTINGS: a second
-    // Home Assistant for tests, the panel's own login untouched).
-    let auth_file = std::env::var("NSPANEL_AUTH").unwrap_or_else(|_| format!("{PERSIST_DIR}/ha_auth.json"));
-    let auth = config.as_ref().ok().map(|c| Arc::new(Auth::load(&c.ha_url, PathBuf::from(&auth_file))));
+    let auth = config.as_ref().ok().map(|c| Arc::new(Auth::load(&c.ha_url, auth_file())));
 
     // Home Assistant client first, the display after: the first screen shows
     // the right time and current states instead of 1970 and empty pages.

@@ -80,6 +80,15 @@ DEFAULT_PAGES = [{"kind": kind} for kind in ("home", "weather", "music", "timers
 # Editing the weather pages' widgets on the panel itself (a long press, then holding the lock): off by default, the
 # layout is edited here; the panel sends its changes back as the page's widget list.
 CONF_HOME_EDIT = "home_edit"
+# What only that edit mode sends with panelos/page_set: a page's widgets. The integration takes them only while
+# editing on the panel is allowed; a page's look and the options of its menus on the panel are taken either way.
+PANEL_EDIT_OPTIONS = frozenset({"items"})
+
+
+def panel_edit(options: object) -> bool:
+    """Whether the options of a panelos/page_set change a page's widgets (the panel's edit mode)."""
+    return isinstance(options, dict) and not PANEL_EDIT_OPTIONS.isdisjoint(options)
+
 
 # When the screensaver may start (the idle time is the panel's own
 # "screensaver" setting): when the room is dark (darker than `lux`, from the

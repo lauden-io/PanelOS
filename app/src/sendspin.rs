@@ -15,6 +15,9 @@
 //!   then runs during the music (`roam`), as the stream breaks up anyway.
 //! - A new server's clock starts the time filter afresh; a session that hears nothing for 30 s (the clock exchanges
 //!   answer every 5 s) ends.
+//! - Any host may connect, so the connections are bounded: 8 at once, of them 4 not yet shown to be a paired server's
+//!   (a new one closes the oldest of those), the upgrade and the handshake within 30 s of the start (a watchdog closes
+//!   the socket then), WebSocket messages of at most 96 KiB (one Noise message is at most 64 KiB).
 //!
 //! The identity (Curve25519 key pair), the pairing PSK, the pairing records, volume and mute are kept in
 //! `/mnt/persist/nspanel/sendspin.json` (0600).
@@ -22,7 +25,7 @@
 use std::collections::VecDeque;
 use std::io::{ErrorKind, Read};
 use std::net::{TcpListener, TcpStream};
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::time::{Duration, Instant};
 
@@ -31,7 +34,8 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD as B64U;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use tungstenite::handshake::server::{ErrorResponse, Request, Response};
-use tungstenite::{Message, WebSocket};
+use tungstenite::protocol::WebSocketConfig;
+use tungstenite::{HandshakeError, Message, WebSocket};
 
 pub const PORT: u16 = 8928;
 const PATH: &str = "/sendspin";
@@ -557,6 +561,95 @@ pub fn panel_volume(percent: u8) {
 
 /// Each new connection gets a number; the admitted one is in ADMITTED.
 static CONN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Connections at once (one thread each); over it a new one is closed at once.
+const MAX_CONNS: usize = 8;
+/// Connections not yet shown to be a paired server's (the upgrade, the handshake, pairing-only sessions); over it the
+/// oldest of them is closed, so a host that holds connections open cannot keep Music Assistant out.
+const MAX_UNPAIRED: usize = 4;
+/// The WebSocket upgrade, the cleartext init and the Noise handshake are done within this.
+const HANDSHAKE_LIMIT: Duration = Duration::from_secs(30);
+/// The longest WebSocket message and frame: a Noise message is at most 65535 bytes (87 380 in base64 in the
+/// cleartext handshake), so the protocol needs nothing longer, before the handshake or after it.
+const WS_MAX: usize = 96 * 1024;
+
+static LIVE: AtomicUsize = AtomicUsize::new(0);
+static UNPAIRED: Mutex<Unpaired> = Mutex::new(Unpaired(VecDeque::new()));
+static REFUSED_LOGGED: Mutex<Option<Instant>> = Mutex::new(None);
+
+/// A connection not yet shown to be a paired server's.
+struct Waiting {
+    id: u64,
+    /// A handle of its socket: shutting it down ends the connection's reads and writes.
+    handle: TcpStream,
+    since: Instant,
+    /// Its Noise handshake is done (a pairing-only session): no handshake deadline any more.
+    handshaken: bool,
+}
+
+/// The connections not yet shown to be a paired server's, oldest first.
+struct Unpaired(VecDeque<Waiting>);
+
+impl Unpaired {
+    /// Counts connection `id` in (once); the oldest go while more than MAX_UNPAIRED wait. The ids closed.
+    fn add(&mut self, id: u64, handle: TcpStream, handshaken: bool) -> Vec<u64> {
+        if self.0.iter().any(|w| w.id == id) {
+            return Vec::new();
+        }
+        self.0.push_back(Waiting { id, handle, since: Instant::now(), handshaken });
+        let mut closed = Vec::new();
+        while self.0.len() > MAX_UNPAIRED {
+            if let Some(old) = self.0.pop_front() {
+                let _ = old.handle.shutdown(std::net::Shutdown::Both);
+                closed.push(old.id);
+            }
+        }
+        closed
+    }
+
+    fn remove(&mut self, id: u64) {
+        self.0.retain(|w| w.id != id);
+    }
+
+    fn handshaken(&mut self, id: u64) {
+        for w in self.0.iter_mut().filter(|w| w.id == id) {
+            w.handshaken = true;
+        }
+    }
+
+    /// Closes the connections whose handshake is not done HANDSHAKE_LIMIT after their start (at `now`): a read that
+    /// gets a byte now and then never times out, so the session's own deadline checks alone would not end it. The
+    /// ids closed.
+    fn close_overdue(&mut self, now: Instant) -> Vec<u64> {
+        let (overdue, rest): (VecDeque<Waiting>, VecDeque<Waiting>) =
+            std::mem::take(&mut self.0).into_iter().partition(|w| !w.handshaken && now.duration_since(w.since) >= HANDSHAKE_LIMIT);
+        self.0 = rest;
+        overdue
+            .into_iter()
+            .map(|w| {
+                let _ = w.handle.shutdown(std::net::Shutdown::Both);
+                w.id
+            })
+            .collect()
+    }
+}
+
+/// Connection `id` (`handle`: a handle of its socket) counts as unpaired (again).
+fn count_unpaired(id: u64, handle: TcpStream, handshaken: bool) {
+    for old in lock(&UNPAIRED).add(id, handle, handshaken) {
+        eprintln!("nspanel-app: sendspin: connection {old} closed (too many unpaired connections)");
+    }
+}
+
+/// A connection's place among the live ones, given back when its thread ends.
+struct Slot(u64);
+
+impl Drop for Slot {
+    fn drop(&mut self) {
+        lock(&UNPAIRED).remove(self.0);
+        LIVE.fetch_sub(1, Ordering::SeqCst);
+    }
+}
 /// The app is stopping: the session says goodbye ("restart"), so the server comes back as soon as the app runs again.
 static GOODBYE: AtomicBool = AtomicBool::new(false);
 static GOODBYE_SENT: AtomicBool = AtomicBool::new(false);
@@ -606,9 +699,31 @@ pub fn spawn(player: std::sync::Arc<crate::voice::Player>, volume: u8, set_volum
             }
         };
         eprintln!("nspanel-app: sendspin: player waiting on port {PORT}");
+        // the handshake deadline, checked every second
+        std::thread::spawn(|| loop {
+            std::thread::sleep(Duration::from_secs(1));
+            for old in lock(&UNPAIRED).close_overdue(Instant::now()) {
+                eprintln!("nspanel-app: sendspin: connection {old} closed (no handshake within {} s)", HANDSHAKE_LIMIT.as_secs());
+            }
+        });
         for conn in listener.incoming().flatten() {
+            // threads and buffers stay bounded whatever a host on the network does
+            if LIVE.load(Ordering::SeqCst) >= MAX_CONNS {
+                let mut logged = lock(&REFUSED_LOGGED);
+                let last: Option<Instant> = *logged;
+                if last.is_none_or(|t| t.elapsed() > Duration::from_secs(60)) {
+                    *logged = Some(Instant::now());
+                    eprintln!("nspanel-app: sendspin: {MAX_CONNS} connections open, a new one refused");
+                }
+                continue;
+            }
+            let Ok(handle) = conn.try_clone() else { continue };
             let id = CONN_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
-            std::thread::spawn(move || {
+            LIVE.fetch_add(1, Ordering::SeqCst);
+            let slot = Slot(id);
+            count_unpaired(id, handle, false);
+            let started = std::thread::Builder::new().spawn(move || {
+                let _slot = slot;
                 let peer = conn.peer_addr().map(|a| a.to_string()).unwrap_or_default();
                 match session(conn, id) {
                     Ok(why) => eprintln!("nspanel-app: sendspin: {peer} ended ({why})"),
@@ -616,6 +731,9 @@ pub fn spawn(player: std::sync::Arc<crate::voice::Player>, volume: u8, set_volum
                 }
                 release(id);
             });
+            if let Err(e) = started {
+                eprintln!("nspanel-app: sendspin: no thread for a connection: {e}");
+            }
         }
     });
 }
@@ -798,8 +916,9 @@ fn player_state() -> Value {
 }
 
 fn session(stream: TcpStream, id: u64) -> Result<String, String> {
+    let deadline = Instant::now() + HANDSHAKE_LIMIT;
     let _ = stream.set_nodelay(true);
-    stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+    stream.set_read_timeout(Some(Duration::from_millis(500))).map_err(|e| e.to_string())?;
     // the endpoint only, and never from a browser page (no Origin header)
     let check = |req: &Request, resp: Response| -> Result<Response, ErrorResponse> {
         if req.uri().path() != PATH || req.headers().contains_key("origin") {
@@ -809,11 +928,20 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
         }
         Ok(resp)
     };
-    let mut ws = tungstenite::accept_hdr(stream, check).map_err(|e| format!("upgrade: {e}"))?;
+    let config = WebSocketConfig::default().max_message_size(Some(WS_MAX)).max_frame_size(Some(WS_MAX));
+    let mut upgrade = tungstenite::accept_hdr_with_config(stream, check, Some(config));
+    let mut ws = loop {
+        match upgrade {
+            Ok(ws) => break ws,
+            // a read timed out: the request is still coming
+            Err(HandshakeError::Interrupted(mid)) if Instant::now() < deadline => upgrade = mid.handshake(),
+            Err(HandshakeError::Interrupted(_)) => return Err("upgrade timeout".into()),
+            Err(HandshakeError::Failure(e)) => return Err(format!("upgrade: {e}")),
+        }
+    };
     ws.get_ref().set_read_timeout(Some(Duration::from_millis(20))).map_err(|e| e.to_string())?;
 
     // cleartext init, then the Noise handshake
-    let deadline = Instant::now() + Duration::from_secs(30);
     let client_init = json!({"type": "client/init", "payload": {"client_id": client_id().unwrap_or_default(), "version": 1, "suite": SUITE}}).to_string();
     ws.send(Message::Text(client_init.clone().into())).map_err(|e| e.to_string())?;
     let server_init = text(&mut ws, deadline)?;
@@ -834,6 +962,7 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
         .map_err(|e| e.to_string())?;
     let h = hs.get_handshake_hash().to_vec();
     let transport = hs.into_transport_mode().map_err(|e| format!("transport: {e}"))?;
+    lock(&UNPAIRED).handshaken(id);
     eprintln!("nspanel-app: sendspin: connected to {} ({kind:?})", &server_id[..8.min(server_id.len())]);
     let mut c = Conn { ws, transport, kind, server_id, h, frag: None };
 
@@ -854,6 +983,8 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
     let mut best: Option<(i64, i64, i64)> = None; // (measurement, max_error, time_added)
     let mut synced = false;
     let started = Instant::now();
+    // a message under a long-term PSK has been read: a paired server's connection, not among the unpaired ones
+    let mut proven = false;
 
     loop {
         if GOODBYE.load(Ordering::SeqCst) {
@@ -922,6 +1053,10 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
 
         let Some((msg, at)) = c.recv()? else { continue };
         last_heard = Instant::now();
+        if c.kind == PskKind::LongTerm && !proven {
+            proven = true;
+            lock(&UNPAIRED).remove(id);
+        }
         // this connection plays on the panel: a paired server holding it as a player, with playback
         let plays = player_role && activities.iter().any(|a| a == "playback") && holds(id);
         if msg[0] == 4 {
@@ -1073,8 +1208,12 @@ fn session(stream: TcpStream, id: u64) -> Result<String, String> {
                 c.transport = hs.into_transport_mode().map_err(|e| format!("transport: {e}"))?;
                 c.kind = kind;
                 pairing_index = 0;
+                proven = false;
                 // what the session may do follows its keys: without a long-term PSK no player, no hold on the panel
                 if kind != PskKind::LongTerm {
+                    if let Ok(handle) = c.ws.get_ref().try_clone() {
+                        count_unpaired(id, handle, true);
+                    }
                     player_role = false;
                     state_sent = false;
                     if admitted {
@@ -1301,6 +1440,80 @@ mod tests {
             // the cursor jumps between early and late
             heard += (n as f64 * SAMPLE_US) as i64 + if n % 2 == 0 { 400 } else { -400 };
         }
+    }
+
+    /// A connected pair of sockets on the loopback: (the panel's side, the other host's).
+    fn socket_pair(listener: &TcpListener) -> (TcpStream, TcpStream) {
+        let other = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        (listener.accept().unwrap().0, other)
+    }
+
+    #[test]
+    fn a_new_unpaired_connection_closes_the_oldest() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut waiting = Unpaired(VecDeque::new());
+        let pairs: Vec<_> = (0..MAX_UNPAIRED + 2).map(|_| socket_pair(&listener)).collect();
+        for (i, (panel, _)) in pairs.iter().enumerate().take(MAX_UNPAIRED) {
+            assert!(waiting.add(i as u64, panel.try_clone().unwrap(), false).is_empty());
+        }
+        // counted once
+        assert!(waiting.add(0, pairs[0].0.try_clone().unwrap(), false).is_empty());
+        // one that paired leaves; the next new one then fits
+        waiting.remove(1);
+        assert!(waiting.add(MAX_UNPAIRED as u64, pairs[MAX_UNPAIRED].0.try_clone().unwrap(), false).is_empty());
+        assert_eq!(waiting.add(99, pairs[MAX_UNPAIRED + 1].0.try_clone().unwrap(), false), vec![0]);
+        assert_eq!(waiting.0.len(), MAX_UNPAIRED);
+        // the closed one's host sees the end, a waiting one's does not
+        let mut buf = [0u8; 1];
+        let mut closed = &pairs[0].1;
+        assert_eq!(closed.read(&mut buf).unwrap(), 0);
+        let open = &pairs[2].1;
+        open.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        assert!((&*open).read(&mut buf).is_err());
+    }
+
+    #[test]
+    fn a_handshake_not_done_in_time_is_closed() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let mut waiting = Unpaired(VecDeque::new());
+        let pairs: Vec<_> = (0..3).map(|_| socket_pair(&listener)).collect();
+        for (i, (panel, _)) in pairs.iter().enumerate() {
+            waiting.add(i as u64, panel.try_clone().unwrap(), i == 2);
+        }
+        // a pairing-only session (its handshake done) has no deadline
+        waiting.handshaken(1);
+        let start = Instant::now();
+        assert!(waiting.close_overdue(start + HANDSHAKE_LIMIT - Duration::from_secs(1)).is_empty());
+        assert_eq!(waiting.close_overdue(start + HANDSHAKE_LIMIT + Duration::from_secs(1)), vec![0]);
+        assert_eq!(waiting.0.iter().map(|w| w.id).collect::<Vec<_>>(), vec![1, 2]);
+        // the closed one's host sees the end, however slowly it was sending
+        let mut buf = [0u8; 1];
+        let mut closed = &pairs[0].1;
+        assert_eq!(closed.read(&mut buf).unwrap(), 0);
+        let open = &pairs[1].1;
+        open.set_read_timeout(Some(Duration::from_millis(50))).unwrap();
+        assert!((&*open).read(&mut buf).is_err());
+    }
+
+    #[test]
+    fn a_long_message_before_the_handshake_ends_the_session() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let host = std::thread::spawn(move || {
+            let stream = TcpStream::connect(addr).unwrap();
+            let (mut ws, _) = tungstenite::client(format!("ws://{addr}{PATH}"), stream).unwrap();
+            let _ = ws.read(); // client/init
+            let _ = ws.send(Message::Text("x".repeat(WS_MAX + 1).into()));
+            // until the panel closes
+            while ws.read().is_ok() {}
+        });
+        let (conn, _) = listener.accept().unwrap();
+        let started = Instant::now();
+        let result = session(conn, u64::MAX);
+        host.join().unwrap();
+        let e = result.unwrap_err();
+        assert!(e.contains("too long"), "{e}");
+        assert!(started.elapsed() < Duration::from_secs(5));
     }
 
     #[test]

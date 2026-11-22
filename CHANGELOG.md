@@ -23,6 +23,14 @@
 
 ### Panel app
 - Slint 1.19.0 (before 1.18.1). Among its fixes: a text drawn once into a layer no longer stops updating when the text cache drops it, which caused a timer digit to stand still. The renderer keeps the one PanelOS change (pictures at fractional positions, so slow movement stays smooth); the other one, a layer of a removed page, is fixed upstream.
+### Security
+- The Home Assistant login token goes only to the address it was made for. A new address set on the panel keeps the login only when it is another of that Home Assistant's own addresses (Home Assistant names them over the existing connection); otherwise the old login is revoked and the panel pairs again. The WebSocket follows no redirects.
+- Integration: a user who has not been shown to be the panel's own can no longer change which ESPHome device counts as the panel; a custom page's widgets sent from the panel are refused while "Allow editing on the panel" is off; new `panelos/ha_addresses` command.
+- Sendspin: at most 8 connections, 4 of them from hosts not yet shown to be paired; the handshake must be done within 30 s; messages up to 96 KiB.
+- Sound files: the lengths in a WAV header are bounded before anything is kept.
+- The development echo-canceller dump records nothing while the microphone is muted.
+- Build: dependencies only as locked, and the prebuilt Skia library only when its SHA-256 matches the pinned one.
+- docs/security.md corrected and completed.
 
 ### Docs
 - The install guide and the decisions say what `tools/build_image.sh` does with an image too big for the boot partition: it warns, and `tools/remove_android.sh` refuses to copy it.

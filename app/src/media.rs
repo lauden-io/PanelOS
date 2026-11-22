@@ -222,18 +222,29 @@ fn wav_header(r: &mut impl Read) -> Result<(u32, u16), String> {
         let len = u32::from_le_bytes([ch[4], ch[5], ch[6], ch[7]]);
         match &ch[0..4] {
             b"fmt " => {
+                // 16 to 40 bytes in any WAV: the length comes from the stream, so a longer one is refused before
+                // anything is allocated for it
+                if !(16..=64).contains(&len) {
+                    return Err(format!("WAV format chunk of {len} bytes"));
+                }
                 let mut f = vec![0u8; len as usize];
                 r.read_exact(&mut f).map_err(|e| e.to_string())?;
-                if f.len() >= 16 {
-                    channels = u16::from_le_bytes([f[2], f[3]]);
-                    rate = u32::from_le_bytes([f[4], f[5], f[6], f[7]]);
-                    bits = u16::from_le_bytes([f[14], f[15]]);
-                }
+                channels = u16::from_le_bytes([f[2], f[3]]);
+                rate = u32::from_le_bytes([f[4], f[5], f[6], f[7]]);
+                bits = u16::from_le_bytes([f[14], f[15]]);
             }
             b"data" => break,
             _ => {
-                let mut skip = vec![0u8; (len as usize).min(1 << 20)];
-                r.read_exact(&mut skip).map_err(|e| e.to_string())?;
+                // other chunks before the data (a LIST of tags) are small; skipped whole with their pad byte,
+                // without keeping them
+                let skip = len as u64 + (len & 1) as u64;
+                if skip > 1 << 20 {
+                    return Err(format!("WAV chunk of {len} bytes before the data"));
+                }
+                let skipped = std::io::copy(&mut (&mut *r).take(skip), &mut std::io::sink()).map_err(|e| e.to_string())?;
+                if skipped < skip {
+                    return Err("WAV stream ended in its header".into());
+                }
             }
         }
     }
@@ -241,4 +252,57 @@ fn wav_header(r: &mut impl Read) -> Result<(u32, u16), String> {
         return Err(format!("unsupported WAV stream ({rate} Hz, {channels} ch, {bits} bit)"));
     }
     Ok((rate, channels))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn chunk(id: &[u8; 4], body: &[u8], len: u32) -> Vec<u8> {
+        let mut c = id.to_vec();
+        c.extend_from_slice(&len.to_le_bytes());
+        c.extend_from_slice(body);
+        c
+    }
+
+    fn fmt(rate: u32, channels: u16) -> Vec<u8> {
+        let mut f = Vec::new();
+        f.extend_from_slice(&1u16.to_le_bytes());
+        f.extend_from_slice(&channels.to_le_bytes());
+        f.extend_from_slice(&rate.to_le_bytes());
+        f.extend_from_slice(&(rate * channels as u32 * 2).to_le_bytes());
+        f.extend_from_slice(&(channels * 2).to_le_bytes());
+        f.extend_from_slice(&16u16.to_le_bytes());
+        f
+    }
+
+    fn wav(chunks: &[Vec<u8>]) -> Vec<u8> {
+        let mut w = b"RIFF\xff\xff\xff\xffWAVE".to_vec();
+        for c in chunks {
+            w.extend_from_slice(c);
+        }
+        w
+    }
+
+    #[test]
+    fn a_stream_header_with_tags_before_the_data() {
+        let f = fmt(48000, 2);
+        let head = wav(&[chunk(b"LIST", b"INFOabc\0", 7), chunk(b"fmt ", &f, 16), chunk(b"data", &[], u32::MAX)]);
+        assert_eq!(wav_header(&mut &head[..]), Ok((48000, 2)));
+    }
+
+    #[test]
+    fn lengths_from_the_stream_allocate_nothing_large() {
+        let f = fmt(48000, 2);
+        // a format chunk "4 GiB long" is refused at once
+        let head = wav(&[chunk(b"fmt ", &f, u32::MAX)]);
+        assert!(wav_header(&mut &head[..]).unwrap_err().contains("format chunk"));
+        let head = wav(&[chunk(b"fmt ", &f[..8], 8)]);
+        assert!(wav_header(&mut &head[..]).is_err());
+        let head = wav(&[chunk(b"LIST", &[], u32::MAX), chunk(b"fmt ", &f, 16)]);
+        assert!(wav_header(&mut &head[..]).unwrap_err().contains("before the data"));
+        // a chunk longer than the stream
+        let head = wav(&[chunk(b"LIST", b"INFO", 100)]);
+        assert!(wav_header(&mut &head[..]).is_err());
+    }
 }

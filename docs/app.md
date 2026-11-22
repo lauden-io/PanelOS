@@ -282,6 +282,7 @@ tools/build_ui_bundle.sh   # the GPU app, then the UI bundle -> /root/nspanel/ou
 tools/install_bundles.sh <panel IP> [ui] [web]   # puts the bundles on a panel over SSH (both without ui / web; DRY_RUN=1: only the plan)
 ```
 
+- `tools/build_app.sh` builds with the crate versions in `app/Cargo.lock` as they are (`--locked`); after a change in `app/Cargo.toml`, `UPDATE_LOCK=1 tools/build_app.sh` resolves them again and writes the new `app/Cargo.lock`. The GPU build takes Skia only as the archive pinned in `tools/skia-binaries.sha256`; a new skia-bindings version needs a line there (the script names the missing key).
 - The image starts the app from `/etc/init.d/S90nspanel-app` (restarted when it exits, output to syslog).
 - The GPU interface runs from two bundles, SquashFS images (zstd) on the panel's storage:
   - the web bundle (`tools/build_web.sh`, `buildroot/configs/panelos_web_defconfig`): its `rootfs.squashfs` as `/mnt/persist/panelos-web.squashfs`, mounted at `/opt/panelos-web` (`S50panelos-web`); it brings WPE WebKit and the GPU libraries (Mesa Panfrost, GBM);

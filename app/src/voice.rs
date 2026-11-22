@@ -1247,7 +1247,8 @@ pub fn spawn(
         let mut clean: Vec<i16> = Vec::with_capacity(CHUNK + AEC_FRAME);
         let mut was_speaking = false;
         // Development: NSPANEL_AEC_DUMP=<file> writes microphone and processed
-        // samples (interleaved, 16 kHz, s16le) for checking the echo canceller.
+        // samples (interleaved, 16 kHz, s16le) for checking the echo canceller
+        // (nothing while the microphones are muted).
         let mut aec_dump = std::env::var("NSPANEL_AEC_DUMP").ok().and_then(|p| std::fs::File::create(p).ok());
         let mut state = State::Idle;
         let mut since = Instant::now();
@@ -1347,7 +1348,9 @@ pub fn spawn(
                     }
                 }
             }
-            if let Some(f) = aec_dump.as_mut() {
+            let muted = control.muted.load(Ordering::SeqCst);
+            // muted microphones are not recorded either
+            if let Some(f) = aec_dump.as_mut().filter(|_| !muted) {
                 use std::io::Write;
                 // Raw and processed frames line up from the end (the canceller keeps < 10 ms back).
                 let raw = &mono[frames - clean.len().min(frames)..frames];
@@ -1362,7 +1365,6 @@ pub fn spawn(
                 continue;
             }
             let chunk = &clean[..];
-            let muted = control.muted.load(Ordering::SeqCst);
 
             // Messages from Home Assistant
             while let Ok(msg) = from_api.try_recv() {

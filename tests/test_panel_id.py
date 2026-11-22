@@ -138,8 +138,11 @@ class TwoPanels(unittest.TestCase):
         hass, _a, b, _ = two_panels()
         hass.config_entries.entries.insert(0, esphome_entry("other", "kitchen", MAC_OTHER))
         self.assertEqual(panel.voice_entry(hass, "kitchen", panel.panel_mac(b)).entry_id, "vb")
-        # before the panel has reported its MAC address the name alone decides (as before)
+        # before the panel's MAC address is kept: the entry whose device names its user, else the first by name
+        self.assertEqual(panel.voice_entry(hass, "kitchen").entry_id, "vb")
+        hass.states.states["sensor.panel_b_user"] = State("unavailable")
         self.assertEqual(panel.voice_entry(hass, "kitchen").entry_id, "other")
+        self.assertEqual(panel.voice_entry(hass, "kitchen", panel.panel_mac(b)).entry_id, "vb")
 
     def test_an_esphome_entry_without_a_mac_unique_id_still_counts(self) -> None:
         hass = Hass([panel_entry("pa", "nspanel-pro", MAC_A), esphome_entry("va", "nspanel-pro", "nspanel-pro")], [], [])
