@@ -88,6 +88,8 @@ def _stubs() -> dict[str, types.ModuleType]:
         helpers,
         selector,
         _module(f"{PACKAGE}.resources", async_resources=None),
+        # the config flow checks the Panel ID with the panel module's rule
+        _module(f"{PACKAGE}.panel", checked_panel_id=panel.checked_panel_id),
     ]
     return {m.__name__: m for m in modules}
 
