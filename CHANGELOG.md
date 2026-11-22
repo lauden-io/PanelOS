@@ -23,7 +23,7 @@
 - Stopwatch, nixie look: the hundredths change in every frame, a frame draws only what lights, Start after Reset begins at zero, and the tubes flicker only while the stopwatch shows (#78, #110). A running stopwatch keeps no other page drawing.
 
 ### Thermostat
-- Every − / + press is one step from the value shown; a quick row of presses goes to the device as one value. A value the device does not report back within 15 s gives way to the device's real value (#53).
+- Every − / + press is one step from the value shown; a quick row of presses goes to the device as one value. A value the device does not report back within 30 s gives way to the device's real value (#53).
 - Wall look: the drum counter shows the setting while the knob turns, and a turn is set however the touch ends; the ring lock holds on every thermostat page (#51).
 
 ### Music
