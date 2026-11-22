@@ -58,6 +58,7 @@ mod todo;
 mod touch;
 mod visit;
 mod voice;
+mod warp;
 #[cfg(test)]
 mod warp_pics;
 mod web;
@@ -4888,6 +4889,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             handle_act(&ui, what.as_str(), value.as_str());
         }
     });
+    // the weather scenes' moving rows, drawn by the app when a scene asks (src/warp.rs)
+    ui.global::<Warp>().on_frame(|w| warp::frame(&w));
     let weak = ui.as_weak();
     ui.global::<Act>().on_act(move |what, value| {
         if let Some(ui) = weak.upgrade() {
@@ -4925,6 +4928,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         if let Some(ui) = weak.upgrade() {
             update_clock(&ui);
         }
+        // the weather scenes' moving rows: what is no longer shown lets its memory go
+        warp::tick();
     });
     let ticker = slint::Timer::default();
     let weak = ui.as_weak();
@@ -5040,6 +5045,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             #[cfg(feature = "gpu")]
             if let Some(b) = v.get("frame_stats").and_then(Value::as_bool) {
                 gpu::FRAME_STATS.store(b, Ordering::SeqCst);
+            }
+            // Development: the weather scenes' moving rows drawn by the scenes' own strips ({"warp": false}) or by the
+            // app again ({"warp": true}), to compare
+            if let Some(b) = v.get("warp").and_then(Value::as_bool) {
+                warp::set_enabled(b);
+                ui.window().request_redraw();
             }
             // Development: the glass drops' GPU pass off / on ({"glass_pass": false}, for measurements)
             if let Some(b) = v.get("glass_pass").and_then(Value::as_bool) {
