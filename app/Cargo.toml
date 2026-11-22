@@ -67,6 +67,6 @@ protox = "0.10"
 strip = true
 lto = "thin"
 
-# Slint's Skia renderer with a small change (app/vendor/README.md).
+# Slint's Skia renderer with small changes (app/vendor/README.md).
 [patch.crates-io]
 i-slint-renderer-skia = { path = "vendor/i-slint-renderer-skia" }

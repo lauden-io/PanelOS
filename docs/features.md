@@ -4,7 +4,7 @@
 
 - Its own interface for Home Assistant, drawn on the GPU (no browser): pages side by side without an end, a status bar, a quick shade, menus that open from what you tap; tap to act, drag to set values. Pages: custom (a living weather background or a synthwave scene with widgets), weather details (the same backgrounds with weather widgets), clock, music, timers / alarms / stopwatch, thermostat, quick controls, cameras, calendar, to-do, notifications; set per panel on the PanelOS page in Home Assistant.
 - Connect to Home Assistant over the WebSocket API; pairing by the QR-code login (OAuth), no token typing (see docs/decisions.md).
-- First start on the panel: Home Assistant found on the network (mDNS) or its address typed on a keypad.
+- First start on the panel: Home Assistant found on the network (mDNS) or its address (IP address or host name) typed on the keyboard.
 - Announced over mDNS like any ESPHome device, so Home Assistant discovers the panel (inside one network segment).
 - Outages: the panel keeps trying for good, shows what it waits for, and comes back by itself; no 1970 time on the screen.
 - Wi-Fi: while idle, about every 30 minutes, the panel moves to an access point of the same network that is at least 10 dB stronger, and away from one whose link is poor (access points that hide the network name included); power save is always off. Connection events are kept in a small log on the persistent partition.

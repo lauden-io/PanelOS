@@ -671,6 +671,7 @@ export component AppWindow inherits Window {
     in property <bool> setup: false;
     in property <[FoundHa]> setup-found;
     in-out property <string> setup-address: "";
+    in property <int> setup-key-layer: 0;      // its keyboard's page, as wifi-key-layer
     in property <string> setup-message: "";
     in property <int> setup-message-kind: 0;   // 0 info, 1 error, 2 success
     in property <int> setup-variant: 0;        // random, picked when the setup screen opens
@@ -1814,6 +1815,8 @@ export component AppWindow inherits Window {
     if root.setup: SetupScreen {
         found: root.setup-found;
         address: root.setup-address;
+        layer: root.setup-key-layer;
+        layout: root.kb-layout;
         message: root.setup-message;
         message-kind: root.setup-message-kind;
         variant: root.setup-variant;

@@ -45,7 +45,7 @@ PanelOS draws its own interface on the panel's GPU: no browser, no web page, eve
 
 - **Voice satellite**: on-device wake words (microWakeWord), Assist pipelines, echo cancellation, timers, announcements, follow-up listening.
 - **Dashboard mode** (secondary): a Home Assistant dashboard in a web view, custom cards included; within the limits of the panel's hardware, so a light, simple dashboard made for it works best ([docs/home_assistant.md](docs/home_assistant.md#dashboard-mode)).
-- **First-start setup on the panel**: Home Assistant found on the network (mDNS) or its address typed on a keypad; pairing with a QR code.
+- **First-start setup on the panel**: Home Assistant found on the network (mDNS) or its address (IP address or host name) typed on the keyboard; pairing with a QR code.
 - **Home Assistant device and page**: the PanelOS integration (`custom_components/panelos`) adds the panel as a device with its display, settings and sensors, and a PanelOS page in the sidebar where every panel's pages, looks, alerts, status screens, display and voice are set beside a live picture of its screen; it also shows views or messages on it; the voice satellite is an ESPHome device (announced over mDNS like any ESPHome device), connected via the panel.
 - **Fast boot**: from power on to your first page much faster than the stock firmware (about 53 s); the UI comes with the right time and current Home Assistant data. After a power cut it waits for Home Assistant and the network as long as it takes and comes back by itself.
 
@@ -109,7 +109,7 @@ paste `https://github.com/lauden-io/PanelOS`, download **PanelOS**, then restart
 - `branding/` the PanelOS logo, brand kit and guidelines
 - `tests/` integration tests (`python3 -m unittest discover -s tests`)
 - `testinit/` minimal PID 1 used for the first bring-up test boots
-- `tools/` build scripts (image, UI bundle, web bundle, app), putting the bundles on a panel, backup and restore, flashing over ADB or SSH, removing the stock Android, chain loader (`tools/chainload/`), resource image pack/unpack, DTB dump, pstore log, boot splash renderer (`tools/splash/`), wake word benchmark
+- `tools/` build scripts (image, UI bundle, web bundle, app), putting the bundles on a panel, backup and restore, flashing over ADB or SSH, removing the stock Android, chain loader (`tools/chainload/`), resource image pack/unpack, DTB dump, pstore log, boot splash renderer (`tools/splash/`), the night stars' splitter for the photo backgrounds (`tools/split_night_stars.py`), wake word benchmark
 - `backup/` local firmware backups, git-ignored, **never published**
 
 ## How it is made

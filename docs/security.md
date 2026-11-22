@@ -56,7 +56,7 @@ The app itself speaks no TLS (its HTTP client is built without it), so it can on
 
 ## Speech while a timer or an alarm rings
 
-While a timer or an alarm rings (and the microphones are not muted), the panel listens over the ring for a stop phrase, outside any voice run (`app/src/voice.rs`, `app/src/stt.rs`). A piece of speech (at most 2.5 s, with half a second before it) and every "Stop" the wake word engine hears go to Home Assistant's speech-to-text (`POST /api/stt/<engine>`, the engine and language of the panel's own assistant), at most three at a time. The text only decides whether the ring stops: it never goes to an assistant. It is written to the system log ("heard over the ring").
+While a timer or an alarm rings (and the microphones are not muted), the panel listens over the ring for a stop phrase, outside any voice run (`app/src/voice.rs`, `app/src/stt.rs`). A piece of speech (at most 2.5 s, with half a second before it), and a "Stop" the wake word engine hears in the ring's first 1.5 s (with the 1.5 s before it; a later one stops the ring on the panel alone), go to Home Assistant's speech-to-text (`POST /api/stt/<engine>`, the engine and language of the panel's own assistant, and English as well when that language is not English), at most three pieces at a time. The text only decides whether the ring stops: it never goes to an assistant. It is written to the system log ("heard over the ring").
 
 ## Home Assistant connection
 

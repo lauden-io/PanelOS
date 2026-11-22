@@ -276,9 +276,9 @@ The panel's settings show the name under **About** as its **Panel ID**. A panel 
 On the panel's setup screen:
 
 - If your Home Assistant is listed (the panel found it on the network), tap it. When the panel found several, tap the row and pick yours.
-- Otherwise type its IP address on the keypad, plus `:8123` if your Home Assistant uses that port (installations from before 2026.8 and Docker installations do; Home Assistant OS installed since 2026.8 uses port 80). Without a port the panel tries 8123 first, then 80. Tap **Connect**.
+- Otherwise type its address on the keyboard: its IP address (**?123** shows the digits) or a host name your network's DNS knows, plus `:8123` if your Home Assistant uses that port (installations from before 2026.8 and Docker installations do; Home Assistant OS installed since 2026.8 uses port 80). Without a port the panel tries 8123 first, then 80. Tap **Connect**.
 
-The panel checks that Home Assistant answers at that address, saves it, and shows a **QR code** a moment later. If it says that Home Assistant did not answer, check the IP address and the port.
+The panel checks that Home Assistant answers at that address, saves it, and shows a **QR code** a moment later. If it says that Home Assistant did not answer, check the address and the port.
 
 Alternatively, from the computer. First store the address of Home Assistant (leave out `:8123` if your Home Assistant uses port 80):
 
@@ -443,7 +443,7 @@ See [restore.md](restore.md), case A (case D once the stock Android is removed, 
 ## If something goes wrong
 
 - **The panel shows the Sonoff screen / stock firmware again:** PanelOS was not made the default (step 9) or found no network. Repeat from step 8.
-- **The setup screen says Home Assistant did not answer:** check the IP address and the port (`:8123` or none) in Home Assistant under Settings → System → Network.
+- **The setup screen says Home Assistant did not answer:** check the address and the port (`:8123` or none) in Home Assistant under Settings → System → Network. The panel looks a host name up over DNS, so a `.local` name works only when your router's DNS knows it; the IP address always works.
 - **The panel says that its Wi-Fi has no connection or that Home Assistant is not answering:** the panel keeps trying by itself, no restart needed (**Try now** tries at once); check the Wi-Fi and that Home Assistant runs. **Change Wi-Fi** or **Change Home Assistant** on that screen picks another network or address.
 - **The screen stays black for minutes:** unplug the power for 10 seconds. If it still does not start, follow [restore.md](restore.md), case C.
 - **`tools/install_bundles.sh` says there is not enough room:** until step 14, both bundles (about 230 MB) share the small persistent partition (384 MiB) with the settings and the browser's cache. This shows what takes the room:

@@ -2,6 +2,8 @@
 
 ## In development
 
+**Upgrading from 0.0.8**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-008)).
+
 ### Voice
 - "Stop" stops a ringing timer or alarm at once when the panel hears it, from 1.5 s after the ring's start; before, the speech recognition had to confirm it and over the ring it mostly heard nothing (#13).
 - Other speech over a ring is made louder before the speech recognition (the echo canceller leaves it very quiet) and, when the assistant's language is not English, recognized in English at the same time, so a stop phrase is understood more often (#13).
@@ -9,7 +11,7 @@
 
 ### Weather backgrounds
 - The swaying meadow with its sheen, the bending trees and the city's river are one picture the app draws up to 30 times a second instead of many picture strips: in strong wind the drawn scenes behind widgets hold 31–38 fps (before 30–33), the neutral scene on the weather details page 40 (before 27); they look and move as before (#81).
-- The drifting sky glides at every speed: the night sky, the dusk and dawn light and the twinkling stars moved a whole pixel at a time, a visible step every few frames in a breeze.
+- The drifting sky glides at every speed: the night sky and the dusk and dawn light moved a whole pixel at a time, a visible step every few frames in a breeze.
 - At night the photo themes' stars stand nearly still while the clouds drift on with the wind, pass over the stars and hide them; the clear night's sky with the Milky Way stays with its stars. The app draws the stars as one picture, so the starry night draws faster.
 
 ### Timers
@@ -26,6 +28,8 @@
 ### Panel app
 - Slint 1.19.0 (before 1.18.1). Among its fixes: a text drawn once into a layer no longer stops updating when the text cache drops it, which caused a timer digit to stand still. The renderer keeps the PanelOS change for pictures at fractional positions (slow movement stays smooth); the other one, a layer of a removed page, is fixed upstream.
 - The wander clock, the title marquee, the news crawl and a few smaller moving parts glide instead of stepping a pixel at a time; what stands still is drawn as sharp as before.
+- The Home Assistant address (setup screen, Settings → Home Assistant) is typed on the full keyboard instead of the number pad, so a host name can be entered as well as an IP address (#119).
+
 ### Security
 - The Home Assistant login token goes only to the address it was made for. A new address set on the panel keeps the login only when it is another of that Home Assistant's own addresses (Home Assistant names them over the existing connection); otherwise the old login is revoked and the panel pairs again. The WebSocket follows no redirects.
 - Integration: a user who has not been shown to be the panel's own can no longer change which ESPHome device counts as the panel; a custom page's widgets sent from the panel are refused while "Allow editing on the panel" is off; new `panelos/ha_addresses` command.

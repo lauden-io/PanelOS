@@ -644,7 +644,7 @@ export component PairingScreen inherits Rectangle {
 }
 
 // First start without settings: Home Assistant found on the network (mDNS),
-// or its address typed on a keypad.
+// or its address typed on the keyboard.
 export struct FoundHa {
     name: string,
     url: string,
@@ -678,37 +678,205 @@ component MessageLine inherits HorizontalLayout {
     }
 }
 
-// Number pad key; same height and rows as the letter keyboard.
-component KeyButton inherits Rectangle {
+// On-screen keyboard: letters (lower / upper case) and two symbol pages.
+// Every page has the same key grid (10 / 9 / shift + 7 + back / bottom row),
+// so a key never moves when the page changes. Keys send their text; special
+// keys send "shift", "symbols", "layout", "back", "enter". Holding a letter
+// shows its accented forms above it (popup-options).
+component Key inherits Rectangle {
     in property <string> label;
     in property <string> icon;
     in property <bool> primary: false;
-    in property <bool> small: false;     // shortcut keys with longer text
-    callback clicked;
+    in property <color> accent: Theme.accent;   // the primary key's colour (the screen's action colour)
+    in property <bool> active: false;
+    in property <bool> caption: false;   // small, muted label (space bar: language)
+    in property <string> value: self.label;
+    in property <bool> has-variants;     // a long press shows its accented forms
+    callback pressed-key(string);
+    callback held(string, length, length);   // long press: the key's value, its centre x and top y (window)
+    callback slide(length);                  // the finger's x (window) while held
+    callback let-go();
+    property <bool> long;
+    property <bool> swallow;             // the release after a long press types nothing more
     height: Theme.key-height;
-    // Equal columns whatever the label.
     preferred-width: 10px;
-    horizontal-stretch: 1;
     border-radius: 10px;
-    background: root.primary ? (touch.pressed ? Theme.text.with-alpha(0.8) : Theme.text)
-        : (touch.pressed ? Theme.surface-pressed : Theme.surface-raised);
-    touch := TouchArea {
-        clicked => { root.clicked(); }
-    }
-    HorizontalLayout {
-        alignment: center;
-        spacing: 6px;
-        if root.label != "": Text {
-            text: root.label;
-            font-size: root.primary || root.small ? Theme.font-body : 22px;
-            font-weight: root.primary || root.small ? Theme.weight-strong : 400;
-            color: root.primary ? Theme.background : Theme.text;
-            vertical-alignment: center;
+    background: root.primary ? (t.pressed ? Theme.text.with-alpha(0.8) : Theme.text)
+        : root.active ? Theme.surface-pressed
+        : (t.pressed ? Theme.surface-pressed : Theme.surface-raised);
+    Timer {
+        interval: 400ms;
+        running: root.has-variants && t.pressed && !root.long;
+        triggered => {
+            root.long = true;
+            root.held(root.value, root.absolute-position.x + root.width / 2, root.absolute-position.y);
         }
-        if root.icon != "": Icon {
-            text: root.icon;
-            font-size: 22px;
-            color: root.primary ? Theme.background : Theme.text;
+    }
+    t := TouchArea {
+        pointer-event(e) => {
+            if e.kind == PointerEventKind.down {
+                root.swallow = false;
+                root.long = false;
+            }
+            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) && root.long {
+                root.long = false;
+                root.swallow = true;
+                root.let-go();
+            }
+        }
+        moved => { if root.long { root.slide(root.absolute-position.x + self.mouse-x); } }
+        clicked => {
+            if root.swallow { root.swallow = false; } else { root.pressed-key(root.value); }
+        }
+    }
+    if root.label != "": Text {
+        text: root.label;
+        font-size: root.caption ? Theme.font-caption : root.primary ? Theme.font-label : 20px;
+        font-weight: root.primary ? Theme.weight-strong : Theme.weight-regular;
+        color: root.primary ? Theme.background : root.caption ? Theme.muted : Theme.text;
+        horizontal-alignment: center;
+        vertical-alignment: center;
+    }
+    if root.icon != "": Icon {
+        text: root.icon;
+        font-size: 22px;
+        color: root.primary ? Theme.background : Theme.text;
+    }
+}
+
+export component Keyboard inherits Rectangle {
+    in property <int> layer: 0;          // 0 lower case, 1 upper case, 2 symbols, 3 more symbols
+    in property <int> layout: 0;         // letters: 0 Latin, 1 Cyrillic (globe key switches)
+    in property <string> enter-label: "Connect";
+    in property <color> accent: Theme.accent;    // enter key and accent picker: the screen's action colour
+    // Long press on a letter: its accented forms, where to show them, which one the finger is on.
+    in property <string> held-key;
+    in property <[string]> popup-options;
+    in property <length> popup-x;
+    in property <length> popup-y;
+    in property <int> popup-selected: -1;
+    callback key(string);
+    height: 4 * Theme.key-height + 3 * Theme.key-gap;
+    // the accented forms of a letter (Hungarian first), shown on a long press
+    pure function variants(k: string) -> [string] {
+        return k == "a" ? ["á", "ä", "à", "â", "å"] : k == "A" ? ["Á", "Ä", "À", "Â", "Å"]
+            : k == "e" ? ["é", "ë", "è", "ê"] : k == "E" ? ["É", "Ë", "È", "Ê"]
+            : k == "i" ? ["í", "ï", "ì", "î"] : k == "I" ? ["Í", "Ï", "Ì", "Î"]
+            : k == "o" ? ["ó", "ö", "ő", "ô", "ò", "ø"] : k == "O" ? ["Ó", "Ö", "Ő", "Ô", "Ò", "Ø"]
+            : k == "u" ? ["ú", "ü", "ű", "û", "ù"] : k == "U" ? ["Ú", "Ü", "Ű", "Û", "Ù"]
+            : k == "c" ? ["ç", "č", "ć"] : k == "C" ? ["Ç", "Č", "Ć"]
+            : k == "s" ? ["š", "ß", "ś"] : k == "S" ? ["Š", "Ś"]
+            : k == "z" ? ["ž", "ź", "ż"] : k == "Z" ? ["Ž", "Ź", "Ż"]
+            : k == "n" ? ["ñ", "ń"] : k == "N" ? ["Ñ", "Ń"]
+            : k == "y" ? ["ý", "ÿ"] : k == "Y" ? ["Ý"]
+            : k == "е" ? ["ё"] : k == "Е" ? ["Ё"] : k == "ь" ? ["ъ"] : k == "Ь" ? ["Ъ"]
+            : [];
+    }
+    // the held key, its forms, where they show and which one the finger is on
+    property <string> h-key;
+    property <[string]> h-opts: root.variants(root.h-key);
+    property <length> h-x;
+    property <length> h-y;
+    property <int> h-sel;
+    function hold(v: string, cx: length, top: length) {
+        root.h-key = v;
+        root.h-x = Math.max(0px, Math.min(root.width - (root.h-opts.length * 42px + 8px), cx - root.absolute-position.x - (root.h-opts.length * 42px + 8px) / 2));
+        root.h-y = top - root.absolute-position.y - 58px;
+        root.h-sel = 0;
+    }
+    function slide-to(fx: length) {
+        root.h-sel = Math.max(0, Math.min(root.h-opts.length - 1, Math.floor((fx - root.absolute-position.x - root.h-x - 4px) / 42px)));
+    }
+    function release() {
+        if root.h-key != "" && root.h-sel >= 0 && root.h-sel < root.h-opts.length {
+            root.key(root.h-opts[root.h-sel]);
+        }
+        root.h-key = "";
+    }
+    property <[string]> pop-opts: root.h-key != "" ? root.h-opts : root.popup-options;
+    property <[string]> row1: root.layer == 3 ? ["[", "]", "{", "}", "<", ">", "^", "~", "`", "|"]
+        : root.layer == 2 ? ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
+        : root.layout == 1 ? (root.layer == 1 ? ["Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х"] : ["й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х"])
+        : root.layer == 1 ? ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]
+        : ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
+    property <[string]> row2: root.layer == 3 ? ["_", "=", "\\", "?", "€", "£", "¥", "§", "°"]
+        : root.layer == 2 ? ["@", "#", "$", "%", "&", "*", "-", "+", "("]
+        : root.layout == 1 ? (root.layer == 1 ? ["Ф", "Ы", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Э"] : ["ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э"])
+        : root.layer == 1 ? ["A", "S", "D", "F", "G", "H", "J", "K", "L"]
+        : ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
+    property <[string]> row3: root.layer == 3 ? ["…", "«", "»", "„", "”", "¿", "¡"]
+        : root.layer == 2 ? [")", "!", "\"", "'", ":", ";", "/"]
+        : root.layout == 1 ? (root.layer == 1 ? ["Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю"] : ["я", "ч", "с", "м", "и", "т", "ь", "б", "ю"])
+        : root.layer == 1 ? ["Z", "X", "C", "V", "B", "N", "M"]
+        : ["z", "x", "c", "v", "b", "n", "m"];
+    // Half-key indent on the second row, as on Latin keyboards (all pages).
+    property <bool> indent: root.layout == 0 || root.layer >= 2;
+    VerticalLayout {
+        spacing: Theme.key-gap;
+        HorizontalLayout {
+            spacing: 5px;
+            for k in root.row1: Key { horizontal-stretch: 1; label: k; active: k == root.held-key || k == root.h-key; has-variants: root.variants(k).length > 0;
+                pressed-key(v) => { root.key(v); } held(v, x, y) => { root.hold(v, x, y); } slide(x) => { root.slide-to(x); } let-go => { root.release(); } }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            if root.indent: Rectangle { horizontal-stretch: 0.5; preferred-width: 1px; }
+            for k in root.row2: Key { horizontal-stretch: 1; label: k; active: k == root.held-key || k == root.h-key; has-variants: root.variants(k).length > 0;
+                pressed-key(v) => { root.key(v); } held(v, x, y) => { root.hold(v, x, y); } slide(x) => { root.slide-to(x); } let-go => { root.release(); } }
+            if root.indent: Rectangle { horizontal-stretch: 0.5; preferred-width: 1px; }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            Key {
+                horizontal-stretch: 1.5;
+                // Letters: shift; symbols: the other symbol page.
+                icon: root.layer == 1 ? "\u{F0632}" : root.layer == 0 ? "\u{F0636}" : "";
+                label: root.layer == 2 ? "=\\<" : root.layer == 3 ? "?123" : "";
+                active: root.layer == 1;
+                value: "shift";
+                pressed-key(v) => { root.key(v); }
+            }
+            for k in root.row3: Key { horizontal-stretch: 1; label: k; active: k == root.held-key || k == root.h-key; has-variants: root.variants(k).length > 0;
+                pressed-key(v) => { root.key(v); } held(v, x, y) => { root.hold(v, x, y); } slide(x) => { root.slide-to(x); } let-go => { root.release(); } }
+            Key { horizontal-stretch: 1.5; icon: "\u{F0B5C}"; value: "back"; pressed-key(v) => { root.key(v); } }
+        }
+        HorizontalLayout {
+            spacing: 5px;
+            Key { horizontal-stretch: 1.5; label: root.layer >= 2 ? "abc" : "?123"; value: "symbols"; pressed-key(v) => { root.key(v); } }
+            Key { horizontal-stretch: 1; icon: "\u{F059F}"; value: "layout"; pressed-key(v) => { root.key(v); } }
+            Key { horizontal-stretch: 1; label: ","; pressed-key(v) => { root.key(v); } }
+            Key { horizontal-stretch: 3; caption: true; label: root.layout == 1 ? "Русский" : "English"; value: " "; pressed-key(v) => { root.key(v); } }
+            Key { horizontal-stretch: 1; label: "."; pressed-key(v) => { root.key(v); } }
+            Key { horizontal-stretch: 2.5; primary: true; accent: root.accent; label: root.enter-label; value: "enter"; pressed-key(v) => { root.key(v); } }
+        }
+    }
+
+    // Accented forms of the held letter; sliding the finger picks one.
+    if root.pop-opts.length > 0: Rectangle {
+        x: root.h-key != "" ? root.h-x : root.popup-x;
+        y: root.h-key != "" ? root.h-y : root.popup-y;
+        width: root.pop-opts.length * 42px + 8px;
+        height: 54px;
+        border-radius: 12px;
+        background: Theme.surface-raised;
+        border-width: 1px;
+        border-color: Theme.outline;
+        drop-shadow-blur: 14px;
+        drop-shadow-color: #00000070;
+        HorizontalLayout {
+            padding: 4px;
+            for o[i] in root.pop-opts: Rectangle {
+                width: 42px;
+                border-radius: 9px;
+                background: i == (root.h-key != "" ? root.h-sel : root.popup-selected) ? Theme.text : transparent;
+                Text {
+                    text: o;
+                    font-size: 22px;
+                    color: i == (root.h-key != "" ? root.h-sel : root.popup-selected) ? Theme.background : Theme.text;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                }
+            }
         }
     }
 }
@@ -716,6 +884,8 @@ component KeyButton inherits Rectangle {
 export component SetupScreen inherits Rectangle {
     in property <[FoundHa]> found;
     in property <string> address;
+    in property <int> layer: 0;
+    in property <int> layout: 0;
     in property <string> message;
     in property <int> message-kind: 0;   // 0 info, 1 error, 2 success
     in property <bool> busy;
@@ -748,7 +918,7 @@ export component SetupScreen inherits Rectangle {
     background: Theme.background;
     TouchArea {}
 
-    // Everything above the keypad.
+    // Everything above the keyboard.
     VerticalLayout {
         x: 0;
         y: 0;
@@ -934,33 +1104,37 @@ export component SetupScreen inherits Rectangle {
             }
         }
 
-        // Typed address with a caret.
+        // Typed address with a caret; a long one moves left, so its end stays in view.
         Rectangle {
             height: 50px;
             border-radius: Theme.radius-small;
             background: Theme.surface;
             border-width: 2px;
             border-color: root.message-kind == 1 ? Theme.danger : Theme.accent;
-            HorizontalLayout {
-                padding-left: 16px;
-                padding-right: 16px;
-                spacing: 2px;
-                alignment: start;
-                if root.address != "": Text {
-                    text: root.address;
-                    font-size: 22px;
-                    color: Theme.text;
-                    vertical-alignment: center;
-                }
-                VerticalLayout {
-                    alignment: center;
-                    Rectangle { width: 2px; height: 26px; background: Theme.accent; }
-                }
-                if root.address == "": Text {
-                    text: "192.168.0.10";
-                    font-size: 22px;
-                    color: Theme.faint;
-                    vertical-alignment: center;
+            Rectangle {
+                x: 16px;
+                width: parent.width - 32px;
+                clip: true;
+                HorizontalLayout {
+                    x: min(0px, parent.width - self.preferred-width);
+                    width: self.preferred-width;
+                    spacing: 2px;
+                    if root.address != "": Text {
+                        text: root.address;
+                        font-size: 22px;
+                        color: Theme.text;
+                        vertical-alignment: center;
+                    }
+                    VerticalLayout {
+                        alignment: center;
+                        Rectangle { width: 2px; height: 26px; background: Theme.accent; }
+                    }
+                    if root.address == "": Text {
+                        text: "192.168.0.10";
+                        font-size: 22px;
+                        color: Theme.faint;
+                        vertical-alignment: center;
+                    }
                 }
             }
         }
@@ -973,40 +1147,19 @@ export component SetupScreen inherits Rectangle {
         }
     }
 
-    // Phone-like keypad in the shared keyboard block.
-    GridLayout {
+    // The full keyboard, as for the Wi-Fi password; its ?123 key switches to the digits.
+    Keyboard {
         x: Theme.pad;
         y: Theme.keyboard-top;
         width: root.width - 2 * Theme.pad;
-        spacing-horizontal: 6px;
-        spacing-vertical: Theme.key-gap;
-        Row {
-            KeyButton { label: "1"; clicked => { root.key("1"); } }
-            KeyButton { label: "2"; clicked => { root.key("2"); } }
-            KeyButton { label: "3"; clicked => { root.key("3"); } }
-            KeyButton { icon: "\u{F0B5C}"; clicked => { root.key("back"); } }
-        }
-        Row {
-            KeyButton { label: "4"; clicked => { root.key("4"); } }
-            KeyButton { label: "5"; clicked => { root.key("5"); } }
-            KeyButton { label: "6"; clicked => { root.key("6"); } }
-            KeyButton { label: ":8123"; small: true; clicked => { root.key(":8123"); } }
-        }
-        Row {
-            KeyButton { label: "7"; clicked => { root.key("7"); } }
-            KeyButton { label: "8"; clicked => { root.key("8"); } }
-            KeyButton { label: "9"; clicked => { root.key("9"); } }
-            KeyButton { label: ":"; clicked => { root.key(":"); } }
-        }
-        Row {
-            KeyButton { label: "."; clicked => { root.key("."); } }
-            KeyButton { label: "0"; clicked => { root.key("0"); } }
-            KeyButton {
-                colspan: 2;
-                primary: true;
-                label: root.busy ? "…" : "Connect";
-                icon: root.busy ? "" : "\u{F0054}";
-                clicked => { root.connect(); }
+        layer: root.layer;
+        layout: root.layout;
+        enter-label: root.busy ? "…" : "Connect";
+        key(k) => {
+            if k == "enter" {
+                root.connect();
+            } else {
+                root.key(k);
             }
         }
     }
@@ -1264,209 +1417,6 @@ export component WifiScreen inherits Rectangle {
             ThemeSwitch {
                 selected: root.theme-mode;
                 changed(m) => { root.theme-changed(m); }
-            }
-        }
-    }
-}
-
-// On-screen keyboard: letters (lower / upper case) and two symbol pages.
-// Every page has the same key grid (10 / 9 / shift + 7 + back / bottom row),
-// so a key never moves when the page changes. Keys send their text; special
-// keys send "shift", "symbols", "layout", "back", "enter". Holding a letter
-// shows its accented forms above it (popup-options).
-component Key inherits Rectangle {
-    in property <string> label;
-    in property <string> icon;
-    in property <bool> primary: false;
-    in property <color> accent: Theme.accent;   // the primary key's colour (the screen's action colour)
-    in property <bool> active: false;
-    in property <bool> caption: false;   // small, muted label (space bar: language)
-    in property <string> value: self.label;
-    in property <bool> has-variants;     // a long press shows its accented forms
-    callback pressed-key(string);
-    callback held(string, length, length);   // long press: the key's value, its centre x and top y (window)
-    callback slide(length);                  // the finger's x (window) while held
-    callback let-go();
-    property <bool> long;
-    property <bool> swallow;             // the release after a long press types nothing more
-    height: Theme.key-height;
-    preferred-width: 10px;
-    border-radius: 10px;
-    background: root.primary ? (t.pressed ? Theme.text.with-alpha(0.8) : Theme.text)
-        : root.active ? Theme.surface-pressed
-        : (t.pressed ? Theme.surface-pressed : Theme.surface-raised);
-    Timer {
-        interval: 400ms;
-        running: root.has-variants && t.pressed && !root.long;
-        triggered => {
-            root.long = true;
-            root.held(root.value, root.absolute-position.x + root.width / 2, root.absolute-position.y);
-        }
-    }
-    t := TouchArea {
-        pointer-event(e) => {
-            if e.kind == PointerEventKind.down {
-                root.swallow = false;
-                root.long = false;
-            }
-            if (e.kind == PointerEventKind.up || e.kind == PointerEventKind.cancel) && root.long {
-                root.long = false;
-                root.swallow = true;
-                root.let-go();
-            }
-        }
-        moved => { if root.long { root.slide(root.absolute-position.x + self.mouse-x); } }
-        clicked => {
-            if root.swallow { root.swallow = false; } else { root.pressed-key(root.value); }
-        }
-    }
-    if root.label != "": Text {
-        text: root.label;
-        font-size: root.caption ? Theme.font-caption : root.primary ? Theme.font-label : 20px;
-        font-weight: root.primary ? Theme.weight-strong : Theme.weight-regular;
-        color: root.primary ? Theme.background : root.caption ? Theme.muted : Theme.text;
-        horizontal-alignment: center;
-        vertical-alignment: center;
-    }
-    if root.icon != "": Icon {
-        text: root.icon;
-        font-size: 22px;
-        color: root.primary ? Theme.background : Theme.text;
-    }
-}
-
-export component Keyboard inherits Rectangle {
-    in property <int> layer: 0;          // 0 lower case, 1 upper case, 2 symbols, 3 more symbols
-    in property <int> layout: 0;         // letters: 0 Latin, 1 Cyrillic (globe key switches)
-    in property <string> enter-label: "Connect";
-    in property <color> accent: Theme.accent;    // enter key and accent picker: the screen's action colour
-    // Long press on a letter: its accented forms, where to show them, which one the finger is on.
-    in property <string> held-key;
-    in property <[string]> popup-options;
-    in property <length> popup-x;
-    in property <length> popup-y;
-    in property <int> popup-selected: -1;
-    callback key(string);
-    height: 4 * Theme.key-height + 3 * Theme.key-gap;
-    // the accented forms of a letter (Hungarian first), shown on a long press
-    pure function variants(k: string) -> [string] {
-        return k == "a" ? ["á", "ä", "à", "â", "å"] : k == "A" ? ["Á", "Ä", "À", "Â", "Å"]
-            : k == "e" ? ["é", "ë", "è", "ê"] : k == "E" ? ["É", "Ë", "È", "Ê"]
-            : k == "i" ? ["í", "ï", "ì", "î"] : k == "I" ? ["Í", "Ï", "Ì", "Î"]
-            : k == "o" ? ["ó", "ö", "ő", "ô", "ò", "ø"] : k == "O" ? ["Ó", "Ö", "Ő", "Ô", "Ò", "Ø"]
-            : k == "u" ? ["ú", "ü", "ű", "û", "ù"] : k == "U" ? ["Ú", "Ü", "Ű", "Û", "Ù"]
-            : k == "c" ? ["ç", "č", "ć"] : k == "C" ? ["Ç", "Č", "Ć"]
-            : k == "s" ? ["š", "ß", "ś"] : k == "S" ? ["Š", "Ś"]
-            : k == "z" ? ["ž", "ź", "ż"] : k == "Z" ? ["Ž", "Ź", "Ż"]
-            : k == "n" ? ["ñ", "ń"] : k == "N" ? ["Ñ", "Ń"]
-            : k == "y" ? ["ý", "ÿ"] : k == "Y" ? ["Ý"]
-            : k == "е" ? ["ё"] : k == "Е" ? ["Ё"] : k == "ь" ? ["ъ"] : k == "Ь" ? ["Ъ"]
-            : [];
-    }
-    // the held key, its forms, where they show and which one the finger is on
-    property <string> h-key;
-    property <[string]> h-opts: root.variants(root.h-key);
-    property <length> h-x;
-    property <length> h-y;
-    property <int> h-sel;
-    function hold(v: string, cx: length, top: length) {
-        root.h-key = v;
-        root.h-x = Math.max(0px, Math.min(root.width - (root.h-opts.length * 42px + 8px), cx - root.absolute-position.x - (root.h-opts.length * 42px + 8px) / 2));
-        root.h-y = top - root.absolute-position.y - 58px;
-        root.h-sel = 0;
-    }
-    function slide-to(fx: length) {
-        root.h-sel = Math.max(0, Math.min(root.h-opts.length - 1, Math.floor((fx - root.absolute-position.x - root.h-x - 4px) / 42px)));
-    }
-    function release() {
-        if root.h-key != "" && root.h-sel >= 0 && root.h-sel < root.h-opts.length {
-            root.key(root.h-opts[root.h-sel]);
-        }
-        root.h-key = "";
-    }
-    property <[string]> pop-opts: root.h-key != "" ? root.h-opts : root.popup-options;
-    property <[string]> row1: root.layer == 3 ? ["[", "]", "{", "}", "<", ">", "^", "~", "`", "|"]
-        : root.layer == 2 ? ["1", "2", "3", "4", "5", "6", "7", "8", "9", "0"]
-        : root.layout == 1 ? (root.layer == 1 ? ["Й", "Ц", "У", "К", "Е", "Н", "Г", "Ш", "Щ", "З", "Х"] : ["й", "ц", "у", "к", "е", "н", "г", "ш", "щ", "з", "х"])
-        : root.layer == 1 ? ["Q", "W", "E", "R", "T", "Y", "U", "I", "O", "P"]
-        : ["q", "w", "e", "r", "t", "y", "u", "i", "o", "p"];
-    property <[string]> row2: root.layer == 3 ? ["_", "=", "\\", "?", "€", "£", "¥", "§", "°"]
-        : root.layer == 2 ? ["@", "#", "$", "%", "&", "*", "-", "+", "("]
-        : root.layout == 1 ? (root.layer == 1 ? ["Ф", "Ы", "В", "А", "П", "Р", "О", "Л", "Д", "Ж", "Э"] : ["ф", "ы", "в", "а", "п", "р", "о", "л", "д", "ж", "э"])
-        : root.layer == 1 ? ["A", "S", "D", "F", "G", "H", "J", "K", "L"]
-        : ["a", "s", "d", "f", "g", "h", "j", "k", "l"];
-    property <[string]> row3: root.layer == 3 ? ["…", "«", "»", "„", "”", "¿", "¡"]
-        : root.layer == 2 ? [")", "!", "\"", "'", ":", ";", "/"]
-        : root.layout == 1 ? (root.layer == 1 ? ["Я", "Ч", "С", "М", "И", "Т", "Ь", "Б", "Ю"] : ["я", "ч", "с", "м", "и", "т", "ь", "б", "ю"])
-        : root.layer == 1 ? ["Z", "X", "C", "V", "B", "N", "M"]
-        : ["z", "x", "c", "v", "b", "n", "m"];
-    // Half-key indent on the second row, as on Latin keyboards (all pages).
-    property <bool> indent: root.layout == 0 || root.layer >= 2;
-    VerticalLayout {
-        spacing: Theme.key-gap;
-        HorizontalLayout {
-            spacing: 5px;
-            for k in root.row1: Key { horizontal-stretch: 1; label: k; active: k == root.held-key || k == root.h-key; has-variants: root.variants(k).length > 0;
-                pressed-key(v) => { root.key(v); } held(v, x, y) => { root.hold(v, x, y); } slide(x) => { root.slide-to(x); } let-go => { root.release(); } }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            if root.indent: Rectangle { horizontal-stretch: 0.5; preferred-width: 1px; }
-            for k in root.row2: Key { horizontal-stretch: 1; label: k; active: k == root.held-key || k == root.h-key; has-variants: root.variants(k).length > 0;
-                pressed-key(v) => { root.key(v); } held(v, x, y) => { root.hold(v, x, y); } slide(x) => { root.slide-to(x); } let-go => { root.release(); } }
-            if root.indent: Rectangle { horizontal-stretch: 0.5; preferred-width: 1px; }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            Key {
-                horizontal-stretch: 1.5;
-                // Letters: shift; symbols: the other symbol page.
-                icon: root.layer == 1 ? "\u{F0632}" : root.layer == 0 ? "\u{F0636}" : "";
-                label: root.layer == 2 ? "=\\<" : root.layer == 3 ? "?123" : "";
-                active: root.layer == 1;
-                value: "shift";
-                pressed-key(v) => { root.key(v); }
-            }
-            for k in root.row3: Key { horizontal-stretch: 1; label: k; active: k == root.held-key || k == root.h-key; has-variants: root.variants(k).length > 0;
-                pressed-key(v) => { root.key(v); } held(v, x, y) => { root.hold(v, x, y); } slide(x) => { root.slide-to(x); } let-go => { root.release(); } }
-            Key { horizontal-stretch: 1.5; icon: "\u{F0B5C}"; value: "back"; pressed-key(v) => { root.key(v); } }
-        }
-        HorizontalLayout {
-            spacing: 5px;
-            Key { horizontal-stretch: 1.5; label: root.layer >= 2 ? "abc" : "?123"; value: "symbols"; pressed-key(v) => { root.key(v); } }
-            Key { horizontal-stretch: 1; icon: "\u{F059F}"; value: "layout"; pressed-key(v) => { root.key(v); } }
-            Key { horizontal-stretch: 1; label: ","; pressed-key(v) => { root.key(v); } }
-            Key { horizontal-stretch: 3; caption: true; label: root.layout == 1 ? "Русский" : "English"; value: " "; pressed-key(v) => { root.key(v); } }
-            Key { horizontal-stretch: 1; label: "."; pressed-key(v) => { root.key(v); } }
-            Key { horizontal-stretch: 2.5; primary: true; accent: root.accent; label: root.enter-label; value: "enter"; pressed-key(v) => { root.key(v); } }
-        }
-    }
-
-    // Accented forms of the held letter; sliding the finger picks one.
-    if root.pop-opts.length > 0: Rectangle {
-        x: root.h-key != "" ? root.h-x : root.popup-x;
-        y: root.h-key != "" ? root.h-y : root.popup-y;
-        width: root.pop-opts.length * 42px + 8px;
-        height: 54px;
-        border-radius: 12px;
-        background: Theme.surface-raised;
-        border-width: 1px;
-        border-color: Theme.outline;
-        drop-shadow-blur: 14px;
-        drop-shadow-color: #00000070;
-        HorizontalLayout {
-            padding: 4px;
-            for o[i] in root.pop-opts: Rectangle {
-                width: 42px;
-                border-radius: 9px;
-                background: i == (root.h-key != "" ? root.h-sel : root.popup-selected) ? Theme.text : transparent;
-                Text {
-                    text: o;
-                    font-size: 22px;
-                    color: i == (root.h-key != "" ? root.h-sel : root.popup-selected) ? Theme.background : Theme.text;
-                    horizontal-alignment: center;
-                    vertical-alignment: center;
-                }
             }
         }
     }

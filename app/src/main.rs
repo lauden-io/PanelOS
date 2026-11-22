@@ -2695,7 +2695,7 @@ fn own_addresses(commands: &Sender<Command>) -> Option<ha::OwnAddresses> {
 static MDNS_BROWSER: std::sync::OnceLock<Arc<mdns::Browser>> = std::sync::OnceLock::new();
 
 /// First start without settings: the setup screen lists Home Assistant found
-/// on the network (mDNS) and takes an address on a keypad. Once Home Assistant
+/// on the network (mDNS) and takes an address on the keyboard. Once Home Assistant
 /// answers at the address, it is saved to app.json and the app restarts (the
 /// supervisor starts it again), which then shows the pairing QR code.
 fn start_setup(ui: &AppWindow, browser: Arc<mdns::Browser>, reason: &str) {
@@ -2723,8 +2723,9 @@ fn wifi_random() -> i32 {
 fn open_ha_setup(ui: &AppWindow) {
     let Some(browser) = MDNS_BROWSER.get().cloned() else { return };
     let current = with_state(|s| s.config.as_ref().map(|c| c.ha_host_port()).unwrap_or_default());
-    // the keypad types digits, dots and colons: the address as host:port
+    // the address as host:port, the keyboard on its small letters
     ui.set_setup_address(current.into());
+    ui.set_setup_key_layer(0);
     ui.set_setup_message("".into());
     ui.set_setup_message_kind(0);
     ui.set_setup_variant(wifi_random());
@@ -2785,14 +2786,34 @@ fn setup_handlers(ui: &AppWindow, browser: Arc<mdns::Browser>) {
     });
     std::mem::forget(found_timer);
 
+    // the keyboard's keys, as on the Wi-Fi password screen ("enter" is Connect)
     let weak = ui.as_weak();
     ui.on_setup_key(move |k| {
         let Some(ui) = weak.upgrade() else { return };
+        let layer = ui.get_setup_key_layer();
         let mut text = ui.get_setup_address().to_string();
-        if k == "back" {
-            text.pop();
-        } else if text.len() < 40 {
-            text.push_str(&k);
+        match k.as_str() {
+            "back" => {
+                text.pop();
+            }
+            "shift" => ui.set_setup_key_layer(match layer {
+                0 => 1,
+                1 => 0,
+                2 => 3,
+                _ => 2,
+            }),
+            "symbols" => ui.set_setup_key_layer(if layer >= 2 { 0 } else { 2 }),
+            "layout" => ui.set_kb_layout(1 - ui.get_kb_layout().clamp(0, 1)),
+            k => {
+                // an address has no spaces; the longest is a scheme, a 253-character host name and a port
+                if !k.chars().any(char::is_whitespace) && text.chars().count() < 270 {
+                    text.push_str(k);
+                }
+                // one capital, then small letters again
+                if layer == 1 {
+                    ui.set_setup_key_layer(0);
+                }
+            }
         }
         ui.set_setup_address(text.into());
     });
@@ -2894,7 +2915,7 @@ fn setup_handlers(ui: &AppWindow, browser: Arc<mdns::Browser>) {
                     }
                     _ => {
                         ui.set_setup_message(
-                            "Home Assistant did not answer at this address. Check the IP address and the port (:8123 or none).".into(),
+                            "Home Assistant did not answer at this address. Check the address and the port (:8123 or none).".into(),
                         );
                         ui.set_setup_message_kind(1);
                     }
@@ -5525,6 +5546,24 @@ mod tests {
         assert!(touch_test_hit((24.0, -32.0)));
         assert!(!touch_test_hit((30.0, 30.0)));
         assert!(!touch_test_hit((200.0, 0.0)));
+    }
+
+    #[test]
+    fn a_typed_host_name_is_tried_like_an_ip_address() {
+        assert_eq!(setup_candidates("192.168.0.10"), ["http://192.168.0.10:8123", "http://192.168.0.10"]);
+        assert_eq!(setup_candidates("homeassistant.local"), ["http://homeassistant.local:8123", "http://homeassistant.local"]);
+        assert_eq!(setup_candidates(" homeassistant.local:8123/ "), ["http://homeassistant.local:8123"]);
+        assert_eq!(setup_candidates("http://ha.example.org"), ["http://ha.example.org"]);
+        assert!(setup_candidates("  ").is_empty());
+        // the setup's address check takes a host name, also with a capital typed
+        for typed in ["homeassistant.local", "ha-proxy.example.org:8443", "HomeAssistant.local:8123"] {
+            for url in setup_candidates(typed) {
+                assert!(auth::is_plain_address(&url), "{url}");
+            }
+        }
+        // and still refuses what two parsers could read differently
+        assert!(!auth::is_plain_address(&setup_candidates("evil.example\\@192.0.2.10")[0]));
+        assert!(!auth::is_plain_address(&setup_candidates("user@homeassistant.local")[0]));
     }
 
     #[test]

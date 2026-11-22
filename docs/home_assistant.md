@@ -56,6 +56,11 @@ The button opens steps 1–3 in your Home Assistant.
 5. From the unpacked ZIP, copy the folder `custom_components/panelos` into that `custom_components` folder. The result is `config/custom_components/panelos`, with the `__init__.py` and `manifest.json` files directly inside.
 6. Restart Home Assistant: **Settings → System**, the power icon at the top right, **Restart Home Assistant**.
 
+## Upgrading from 0.0.8
+
+1. Build the new UI bundle and put it on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel IP> ui`; see the [install guide](install.md#updating-later), "Updating later"); the image and the web bundle stay as they are.
+2. Update the integration (Marketplace, HACS or a copy of the new `custom_components/panelos` folder) and restart Home Assistant. The settings stay.
+
 ## Upgrading from 0.0.7
 
 1. Build the new UI bundle and put it on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel IP> ui`; see the [install guide](install.md#updating-later), "Updating later"); the image and the web bundle stay as they are.
@@ -145,7 +150,7 @@ On the panel's device (this integration):
 
 The entities keep their last state for 30 s after the panel went away (a Wi-Fi hiccup, the app restarting), and turn unavailable only when it is still away then. The buttons are available only while the panel is connected. A reload of the integration keeps the last states and the 30 s as well.
 
-On the voice device (ESPHome): the Assist satellite, the media player (see [The panel's media player](#the-panels-media-player)), Volume, Mute microphone, and the Wake level, Wake SNR and Wake score sensors (sent with every wake word, see [app.md](app.md#esphome-native-api)), Panel user (diagnostic: the id of the Home Assistant user the panel is logged in as; only that user and administrators may act as the panel, see "How it talks to the panel"), plus the selects Home Assistant creates for satellites (Assistant, Wake word, Finished speaking detection). The two wake word selects follow what the panel listens for: Home Assistant itself takes a satellite's wake word into them only when it has exactly one, so the integration sets them to the panel's words whenever they differ (also after a change on the panel or on the PanelOS page).
+On the voice device (ESPHome): the Assist satellite, the media player (see [The panel's media player](#the-panels-media-player)), Volume, Mute microphone, and the Wake level, Wake SNR and Wake score sensors (sent with every wake word, see [app.md](app.md#esphome-native-api)), Panel user (diagnostic: the id of the Home Assistant user the panel is logged in as; only that user and administrators may act as the panel, see "How it talks to the panel"), plus the selects Home Assistant creates for satellites (Assistant and Assistant 2, Wake word and Wake word 2, Finished speaking detection). The two wake word selects follow what the panel listens for (it reports its words as `wake_words` in `panelos/report`): Home Assistant itself takes a satellite's wake word into them only when it has exactly one, so the integration sets them to the panel's words whenever they differ (also after a change on the panel or on the PanelOS page).
 
 Up to PanelOS 0.0.3 the panel's display, settings and sensors were on the ESPHome device. The integration takes these entities over with the same entity ids, history and settings. If the panel still runs an older PanelOS, they stay on the ESPHome device until it is updated, then move.
 
