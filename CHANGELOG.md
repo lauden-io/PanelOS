@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.0.8 (in development)
+
+**Upgrading from 0.0.7**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md)).
+
+### Several panels
+- Several panels in one Home Assistant: each panel's ID is the short name it gets at installation. It is the PanelOS entry's Panel ID, `panel_id` in actions and messages, the ESPHome device and mDNS name, and part of its device names ("NSPanel Pro (kitchen)"). A panel without a name stays `nspanel-pro`, with all its devices and entities (#114).
+- Settings → About shows the Panel ID; the PanelOS page's Add a panel fills in a panel that asks for its settings.
+
+### Time
+- The panel follows Home Assistant's time zone: clocks, the screensaver, alarms, timers, the calendar, to-do dates and notification times. A change in Home Assistant reaches the panel at once; before its first connection a panel uses Central European time (#112).
+
+### Voice
+- Do not disturb with voice answers not let through: the assistant still listens and answers on the screen, without its listening chime and without speaking, and a silent answer stays on the screen a little longer. The PanelOS page no longer shows a calls option (#113).
+- A timer that starts ringing during a voice run is stopped at the run's end only by a stop phrase; any other sentence goes to the assistant. An English "stop" also counts when a speech recognition of another language writes it as it sounds (#13).
+- Setting and cancelling a panel's alarms by voice answers and refreshes the PanelOS page (#109).
+
+### Alarms, timers and stopwatch
+- Switching off or deleting a snoozed alarm (on the panel, on the PanelOS page or by voice) ends its snooze; a snoozed alarm shows on until its snooze rings (#105).
+- The alarm editor's sounds ring as they are named, and a sound picked on the panel stays after a change from Home Assistant.
+- A timer's label takes at most 30 characters, on the panel and in the integration; a longer name is cut (#90).
+- Stopwatch, nixie look: the hundredths change in every frame, a frame draws only what lights, Start after Reset begins at zero, and the tubes flicker only while the stopwatch shows (#78, #110). A running stopwatch keeps no other page drawing.
+
+### Thermostat
+- Every − / + press is one step from the value shown; a quick row of presses goes to the device as one value. A value the device does not report back within 15 s gives way to the device's real value (#53).
+- Wall look: the drum counter shows the setting while the knob turns, and a turn is set however the touch ends; the ring lock holds on every thermostat page (#51).
+
+### Music
+- A player picked in Play on shows at once and stays; a player without a cover shows no cover of the one before; pausing with the turntable's arm stops the time at once (#49).
+- Cassette: the keys and the volume sit clear of the page dots; the volume is held for half a second before it drags, the page does not turn meanwhile, and a tap sets the volume there; the half cassette's keys work (#35).
+
+### Menus and settings
+- A drag never changes a checkbox, a switch, a segmented control or a choice in a list, in every menu and settings page; only a tap does (#104).
+- The settings list shows that it goes on: the last row shown fades out until the list reaches its end (#107).
+- The thermostat's and the music page's buttons take taps, not drags.
+
+### Pages and backgrounds
+- The clock page takes every face, nixie, LCD quartz and twin-bell included (#106).
+- Synthwave: every scene shows its dawn view in the morning, and a new sun position glides in; a scene picked on the panel shows at once, whichever page has the synthwave background (#117).
+- Drawn weather scenes draw their still parts once into layers and nothing hidden; the synthwave palms come from one picture each (#81, #82).
+
+### Home Assistant
+- `panelos.show_view`: a camera view shows the camera given in `entity_id`; `seconds: 0` keeps the view until someone touches the screen; `home` shows the start page; weather, media and camera views come as a page of their own when the panel has none, and page views show over the dashboard too.
+- The old Quick tiles option is gone from the setup and the Assistant mode options.
+- The integration sets up a panel whose quick controls pages had more than eight tiles (#111).
+
+### Security
+- A panel's Home Assistant user is the one the panel reports over its encrypted ESPHome connection (the Panel user sensor); the integration accepts the panel's commands only from that user and administrators. A panel with an older app keeps the first user that connects, as before (#108).
+
+### Connection and installation
+- Wi-Fi takeover at installation reads each network saved in the stock firmware on its own (the one in use, else the first complete one); open and hidden networks and special characters work, WEP and enterprise networks are not taken over (#115).
+- The roam check compares a network name's own bytes, so names with accents, emoji, quotes or spaces work (#68).
+- `tools/build_ui_bundle.sh` builds the UI bundle and `tools/install_bundles.sh` puts the UI and web bundles on a panel; the install guide builds and installs both.
+- The image packs its system files with xz and leaves out FlatBuffers' compiler; the build checks the image against the boot partition (#116).
+
 ## 0.0.7
 
 **Upgrading from 0.0.6**: put the new UI bundle (new fonts and pictures) and the new web bundle on the panel and update the integration, then restart Home Assistant ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-006)).
