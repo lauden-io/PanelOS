@@ -150,8 +150,8 @@ export component PhotoSky inherits Rectangle {
     property <length> fy: -24px;
     // Sideways drift of the sky photo (its clouds move behind the trees and mountains).
     // Seamless 792 px tile (no mirroring); the speed follows the wind: one round takes 180 s when
-    // calm, 66 s in a breeze, 33 s in strong wind; the clear night's sky creeps (480 s; the stars nearly stand, see
-    // stars-on).
+    // calm, 66 s in a breeze, 33 s in strong wind; the drawn themes' clear night creeps (480 s). The photo themes'
+    // clear-night photo (no clouds, the Milky Way) moves with its stars instead (cdx, see stars-on).
     property <bool> strong-wind: root.wind >= 35 || root.mood == 6;
     property <float> drift: root.clear-night ? 1.65 : root.misty ? 1.2
         : root.strong-wind ? 9 : root.wind >= 15 ? 6.6 : root.stormy ? 5 : 4.4;
@@ -217,18 +217,25 @@ export component PhotoSky inherits Rectangle {
 
     // The night stars of the photo themes (the stars of the clear, cloudy and snowy night photos): one picture of the
     // rows with stars, made by the app at most 15 times a second while the scene is on screen (src/stars.rs). The stars
-    // stand on the screen but for a creep of 0.3 px a second, twinkle, and fade where the drifting photo's clouds cover
-    // them; they fade in with the night picture at twilight.
+    // stand on the screen but for a creep of 0.3 px a second (in steps of 1/15 s), twinkle, and fade where the drifting
+    // photo's clouds cover them; they fade in with the night picture at twilight.
     property <int> star-m: root.night-any ? root.mood : root.nmood;
     property <float> star-k: root.night-any ? 1 : Math.pow(root.nmix, 1.5);
-    property <float> creep: Math.mod(root.t * 0.3, 792);
+    property <float> creep: Math.mod(Math.floor(root.t * 15) / 15 * 0.3, 792);
+    // The clear-night photo (no clouds, but the Milky Way) moves with its stars wherever it shows, as the condition or
+    // as the night picture at twilight: the stars' own offset, the very one of the app's picture while it shows (its
+    // snapshot), so the photo and the stars never part. The photos with clouds drift with the wind (dx).
+    property <float> star-off: root.rust-stars ? root.stars-in.creep : root.creep;
+    property <length> cdx: -root.star-off * 1px;
+    property <length> day-dx: !root.vector && root.mood == 7 ? root.cdx : root.dx;
+    property <length> night-dx: !root.vector && root.nmood == 7 ? root.cdx : root.dx;
     property <bool> stars-on: root.live && !root.vector && root.star-k > 0.01;
     property <StarsIn> stars-in;
     property <bool> stars-ready;
     function stars-snap() {
         let ts = Math.floor(root.t * 15) / 15;
         root.stars-in = {
-            theme: root.theme, mood: root.star-m, t: ts, creep: Math.mod(ts * 0.3, 792),
+            theme: root.theme, mood: root.star-m, t: ts, creep: root.creep,
             dd: Math.mod(root.drift-p0 + (ts - root.ph-t0) * root.drift-v, 792), alpha: root.star-k,
             x0: Math.round(-root.sx / 1px), w: Math.round(min(root.width / 1px, 792 + root.sx / 1px)),
             top: Math.round(-root.sy / 1px), bottom: Math.round(min(root.land, (root.height - root.sy) / 1px)),
@@ -319,8 +326,8 @@ export component PhotoSky inherits Rectangle {
         }
 
         // 1. sky photo: seamless 792 px tile, two copies
-        if !root.day-hidden: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
-        if !root.day-hidden: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.day-hidden: Image { x: root.sx + root.day-dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
+        if !root.day-hidden: Image { x: root.sx + root.day-dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.mood); opacity: root.base-a; }
         if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
             x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; opacity: root.dk * root.gk;
             source: root.gsky(root.theme, root.mood, 0);
@@ -338,19 +345,19 @@ export component PhotoSky inherits Rectangle {
             source: root.gsky(root.theme, root.mood, 1);
         }
 
-        if root.nmix > 0: Image { x: root.sx + root.dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
-        if root.nmix > 0: Image { x: root.sx + root.dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
+        if root.nmix > 0: Image { x: root.sx + root.night-dx; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
+        if root.nmix > 0: Image { x: root.sx + root.night-dx + 792px; y: root.sy; width: 792px; height: 528px; source: root.sky(root.theme, root.nmood); opacity: root.nmix; }
 
         // 2. the night stars of the photo themes: the app's picture (see stars-on), or without it (its cover map still
-        //    loading, the PC preview) the clear night's stars from the lists below, creeping the same way but without
-        //    the clouds' cover; irregular scintillation, a soft glow around a small bright core
+        //    loading, the PC preview) the clear night's stars from the lists below, with the clear-night photo's offset
+        //    (star-off) but without the clouds' cover; irregular scintillation, a soft glow around a small bright core
         if root.rust-stars: Image {
             x: root.sx + root.stars-in.x0 * 1px; y: root.sy + root.stars-in.top * 1px;
             width: root.stars-img.width * 1px; height: root.stars-img.height * 1px; source: root.stars-img;
         }
         if root.star-a > 0.01 && root.theme == 0 && !root.rust-stars: Rectangle {
             for s[i] in [{x: 331, y: 91, b: 0.34}, {x: 333, y: 77, b: 0.31}, {x: 204, y: 70, b: 0.28}, {x: 111, y: 57, b: 0.27}, {x: 789, y: 158, b: 0.27}, {x: 229, y: 77, b: 0.24}, {x: 786, y: 93, b: 0.24}, {x: 219, y: 69, b: 0.24}, {x: 219, y: 68, b: 0.24}, {x: 281, y: 21, b: 0.22}, {x: 109, y: 150, b: 0.22}, {x: 224, y: 18, b: 0.21}, {x: 300, y: 19, b: 0.20}, {x: 685, y: 18, b: 0.20}, {x: 389, y: 112, b: 0.20}, {x: 650, y: 152, b: 0.20}, {x: 186, y: 0, b: 0.20}, {x: 576, y: 226, b: 0.20}, {x: 555, y: 38, b: 0.20}, {x: 248, y: 98, b: 0.19}, {x: 182, y: 128, b: 0.19}, {x: 708, y: 103, b: 0.19}, {x: 161, y: 50, b: 0.19}, {x: 708, y: 5, b: 0.18}, {x: 199, y: 26, b: 0.18}, {x: 255, y: 16, b: 0.18}, {x: 319, y: 26, b: 0.18}, {x: 756, y: 37, b: 0.17}, {x: 213, y: 50, b: 0.17}, {x: 216, y: 77, b: 0.17}, {x: 269, y: 61, b: 0.17}, {x: 170, y: 158, b: 0.16}, {x: 587, y: 29, b: 0.16}, {x: 432, y: 88, b: 0.16}, {x: 39, y: 4, b: 0.16}, {x: 129, y: 124, b: 0.15}, {x: 746, y: 49, b: 0.15}, {x: 318, y: 21, b: 0.15}, {x: 321, y: 5, b: 0.15}, {x: 192, y: 164, b: 0.15}, {x: 732, y: 4, b: 0.15}, {x: 773, y: 158, b: 0.15}, {x: 195, y: 20, b: 0.15}, {x: 390, y: 31, b: 0.15}, {x: 389, y: 31, b: 0.15}, {x: 267, y: 21, b: 0.15}, {x: 549, y: 199, b: 0.14}, {x: 296, y: 41, b: 0.14}, {x: 191, y: 183, b: 0.14}, {x: 239, y: 52, b: 0.14}, {x: 210, y: 25, b: 0.14}, {x: 77, y: 68, b: 0.14}, {x: 644, y: 215, b: 0.14}, {x: 242, y: 86, b: 0.14}, {x: 119, y: 90, b: 0.14}, {x: 154, y: 23, b: 0.14}, {x: 715, y: 14, b: 0.14}, {x: 295, y: 24, b: 0.14}, {x: 281, y: 41, b: 0.14}, {x: 663, y: 25, b: 0.13}, {x: 144, y: 9, b: 0.13}, {x: 362, y: 91, b: 0.13}, {x: 203, y: 115, b: 0.13}, {x: 785, y: 167, b: 0.13}, {x: 766, y: 33, b: 0.13}, {x: 765, y: 86, b: 0.13}, {x: 395, y: 19, b: 0.13}, {x: 533, y: 172, b: 0.13}, {x: 123, y: 27, b: 0.12}, {x: 328, y: 163, b: 0.12}, {x: 202, y: 101, b: 0.12}, {x: 500, y: 20, b: 0.12}, {x: 499, y: 20, b: 0.12}, {x: 2, y: 67, b: 0.12}, {x: 551, y: 54, b: 0.12}, {x: 440, y: 147, b: 0.12}, {x: 197, y: 92, b: 0.12}, {x: 237, y: 7, b: 0.12}, {x: 764, y: 101, b: 0.12}, {x: 363, y: 56, b: 0.12}, {x: 68, y: 87, b: 0.12}, {x: 332, y: 109, b: 0.12}, {x: 26, y: 19, b: 0.12}, {x: 527, y: 60, b: 0.11}, {x: 240, y: 14, b: 0.11}, {x: 207, y: 9, b: 0.11}, {x: 249, y: 9, b: 0.11}, {x: 543, y: 198, b: 0.11}, {x: 222, y: 80, b: 0.11}, {x: 191, y: 85, b: 0.11}, {x: 286, y: 37, b: 0.11}, {x: 615, y: 55, b: 0.11}, {x: 140, y: 168, b: 0.11}, {x: 554, y: 24, b: 0.11}, {x: 314, y: 0, b: 0.11}, {x: 248, y: 45, b: 0.11}, {x: 375, y: 11, b: 0.11}, {x: 728, y: 143, b: 0.11}, {x: 137, y: 131, b: 0.11}, {x: 128, y: 73, b: 0.11}, {x: 436, y: 99, b: 0.11}, {x: 496, y: 149, b: 0.11}, {x: 671, y: 15, b: 0.11}, {x: 173, y: 131, b: 0.11}, {x: 173, y: 130, b: 0.11}, {x: 153, y: 151, b: 0.11}, {x: 232, y: 87, b: 0.11}, {x: 231, y: 40, b: 0.11}, {x: 199, y: 54, b: 0.11}, {x: 213, y: 98, b: 0.10}]: Rectangle {
-                property <length> p1: root.sx - root.creep * 1px + s.x * 1px;
+                property <length> p1: root.sx + root.cdx + s.x * 1px;
                 property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
                 property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
                                                 * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
@@ -362,7 +369,7 @@ export component PhotoSky inherits Rectangle {
         }
         if root.star-a > 0.01 && root.theme == 1 && !root.rust-stars: Rectangle {
             for s[i] in [{x: 244, y: 95, b: 0.46}, {x: 4, y: 40, b: 0.39}, {x: 199, y: 14, b: 0.36}, {x: 702, y: 64, b: 0.35}, {x: 244, y: 77, b: 0.32}, {x: 780, y: 178, b: 0.32}, {x: 38, y: 140, b: 0.31}, {x: 17, y: 119, b: 0.31}, {x: 169, y: 14, b: 0.30}, {x: 306, y: 14, b: 0.28}, {x: 761, y: 189, b: 0.27}, {x: 762, y: 189, b: 0.27}, {x: 768, y: 35, b: 0.26}, {x: 789, y: 120, b: 0.24}, {x: 765, y: 21, b: 0.24}, {x: 719, y: 35, b: 0.24}, {x: 495, y: 2, b: 0.24}, {x: 177, y: 33, b: 0.23}, {x: 219, y: 17, b: 0.23}, {x: 477, y: 38, b: 0.23}, {x: 170, y: 41, b: 0.23}, {x: 559, y: 98, b: 0.22}, {x: 505, y: 8, b: 0.22}, {x: 192, y: 10, b: 0.22}, {x: 643, y: 208, b: 0.22}, {x: 503, y: 27, b: 0.22}, {x: 92, y: 81, b: 0.21}, {x: 191, y: 38, b: 0.21}, {x: 151, y: 16, b: 0.21}, {x: 49, y: 172, b: 0.21}, {x: 367, y: 80, b: 0.21}, {x: 231, y: 22, b: 0.20}, {x: 14, y: 129, b: 0.20}, {x: 250, y: 186, b: 0.20}, {x: 319, y: 114, b: 0.19}, {x: 563, y: 231, b: 0.18}, {x: 139, y: 115, b: 0.18}, {x: 278, y: 47, b: 0.18}, {x: 277, y: 47, b: 0.18}, {x: 459, y: 99, b: 0.18}, {x: 111, y: 89, b: 0.18}, {x: 247, y: 118, b: 0.18}, {x: 604, y: 12, b: 0.17}, {x: 788, y: 56, b: 0.17}, {x: 133, y: 10, b: 0.17}, {x: 751, y: 207, b: 0.17}, {x: 328, y: 135, b: 0.17}, {x: 282, y: 18, b: 0.17}, {x: 218, y: 12, b: 0.17}, {x: 159, y: 66, b: 0.17}, {x: 608, y: 118, b: 0.16}, {x: 579, y: 20, b: 0.16}, {x: 8, y: 7, b: 0.16}, {x: 583, y: 150, b: 0.16}, {x: 748, y: 122, b: 0.15}, {x: 536, y: 10, b: 0.15}, {x: 625, y: 34, b: 0.15}, {x: 640, y: 131, b: 0.15}, {x: 106, y: 92, b: 0.15}, {x: 524, y: 127, b: 0.15}, {x: 235, y: 83, b: 0.15}, {x: 468, y: 46, b: 0.15}, {x: 551, y: 39, b: 0.15}, {x: 730, y: 91, b: 0.15}, {x: 240, y: 101, b: 0.15}, {x: 386, y: 152, b: 0.15}, {x: 28, y: 62, b: 0.15}, {x: 220, y: 80, b: 0.14}, {x: 501, y: 86, b: 0.14}, {x: 671, y: 77, b: 0.14}, {x: 146, y: 115, b: 0.14}, {x: 98, y: 95, b: 0.14}, {x: 767, y: 54, b: 0.14}, {x: 527, y: 203, b: 0.14}, {x: 511, y: 120, b: 0.14}, {x: 257, y: 30, b: 0.14}, {x: 244, y: 38, b: 0.14}, {x: 126, y: 102, b: 0.14}, {x: 233, y: 71, b: 0.14}, {x: 756, y: 179, b: 0.14}, {x: 25, y: 85, b: 0.14}, {x: 178, y: 50, b: 0.14}, {x: 61, y: 199, b: 0.14}, {x: 770, y: 131, b: 0.14}, {x: 0, y: 68, b: 0.14}, {x: 186, y: 16, b: 0.14}, {x: 711, y: 126, b: 0.13}, {x: 319, y: 8, b: 0.13}, {x: 259, y: 63, b: 0.13}, {x: 232, y: 54, b: 0.13}, {x: 293, y: 44, b: 0.13}, {x: 769, y: 82, b: 0.13}, {x: 571, y: 67, b: 0.13}, {x: 146, y: 3, b: 0.13}, {x: 263, y: 178, b: 0.13}, {x: 126, y: 119, b: 0.13}, {x: 733, y: 109, b: 0.13}, {x: 563, y: 3, b: 0.13}, {x: 472, y: 27, b: 0.13}, {x: 245, y: 112, b: 0.12}, {x: 719, y: 29, b: 0.12}, {x: 4, y: 174, b: 0.12}, {x: 55, y: 114, b: 0.12}, {x: 43, y: 124, b: 0.12}, {x: 333, y: 1, b: 0.12}, {x: 157, y: 87, b: 0.12}, {x: 764, y: 162, b: 0.12}, {x: 454, y: 147, b: 0.12}, {x: 168, y: 134, b: 0.12}, {x: 136, y: 174, b: 0.12}]: Rectangle {
-                property <length> p1: root.sx - root.creep * 1px + s.x * 1px;
+                property <length> p1: root.sx + root.cdx + s.x * 1px;
                 property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
                 property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
                                                 * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);
@@ -374,7 +381,7 @@ export component PhotoSky inherits Rectangle {
         }
         if root.star-a > 0.01 && root.theme == 2 && !root.rust-stars: Rectangle {
             for s[i] in [{x: 707, y: 38, b: 0.07}, {x: 303, y: 42, b: 0.07}, {x: 688, y: 108, b: 0.06}]: Rectangle {
-                property <length> p1: root.sx - root.creep * 1px + s.x * 1px;
+                property <length> p1: root.sx + root.cdx + s.x * 1px;
                 property <length> p2: self.p1 < -8px ? self.p1 + 792px : self.p1;
                 property <float> tw: 0.55 + 0.45 * Math.sin((root.t * (2.1 + Math.mod(i * 7, 11) / 4) + i * 0.71) * 1rad)
                                                 * Math.sin((root.t * (0.9 + Math.mod(i * 5, 7) / 5) + i * 1.3) * 1rad);

@@ -429,6 +429,51 @@ mod tests {
     }
 
     #[test]
+    fn the_clear_night_photo_moves_with_its_stars() {
+        // the page: the clear-night photo (as the condition and as the night picture at twilight) and the fallback
+        // lists lie at cdx, the stars' offset: the snapshot's creep while the app's picture shows, else the same creep
+        let src = include_str!("../ui/photo_sky.slint").replace("\r\n", "\n");
+        for line in [
+            "property <float> star-off: root.rust-stars ? root.stars-in.creep : root.creep;",
+            "property <length> cdx: -root.star-off * 1px;",
+            "property <length> day-dx: !root.vector && root.mood == 7 ? root.cdx : root.dx;",
+            "property <length> night-dx: !root.vector && root.nmood == 7 ? root.cdx : root.dx;",
+            "theme: root.theme, mood: root.star-m, t: ts, creep: root.creep,",
+        ] {
+            assert!(src.contains(line), "{line}");
+        }
+        let uses = |what: &str, at: &str| {
+            let lines: Vec<&str> = src.lines().filter(|l| l.contains(what)).collect();
+            lines.len() == 2 && lines.iter().all(|l| l.contains(&format!("x: root.sx + {at}")))
+        };
+        assert!(uses("source: root.sky(root.theme, root.mood);", "root.day-dx"));
+        assert!(uses("source: root.sky(root.theme, root.nmood);", "root.night-dx"));
+        let lists: Vec<&str> = src.lines().filter(|l| l.contains("property <length> p1:")).collect();
+        assert_eq!(lists.len(), 3);
+        assert!(lists.iter().all(|l| l.contains("root.sx + root.cdx + s.x * 1px")));
+        // condition 7 is the photo themes' clear night, the one night photo without clouds (no cover map); the others
+        // with stars drift with the wind under them
+        for t in 0..3 {
+            for m in 0..18 {
+                if let Some(set) = set_of(t, m) {
+                    assert_eq!(set.cover.is_none(), m == 7, "{t} {m}");
+                    assert_eq!(set.sky.contains("-clear-night-"), m == 7, "{t} {m}");
+                }
+            }
+        }
+        // the photo at layer column -creep, a star at its creeping place: under every star lies, at any time, the very
+        // pixel of the photo it was painted on
+        for creep in [0.0f32, 0.02, 0.3, 17.25, 400.02, 791.98] {
+            for st in set_of(0, 7).unwrap().stars.iter().step_by(7) {
+                let lx = star_x(st.x, creep, 24);
+                let under = (lx + creep).rem_euclid(TILE);
+                let off = (under - st.x).abs();
+                assert!(off.min(TILE - off) < 1e-3, "creep {creep} star {} under {under}", st.x);
+            }
+        }
+    }
+
+    #[test]
     fn the_picture_covers_the_star_rows() {
         let s = snapshot(7);
         let set = set_of(0, 7).unwrap();
