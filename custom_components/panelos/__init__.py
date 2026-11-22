@@ -342,6 +342,8 @@ async def ws_log(hass: HomeAssistant, connection: websocket_api.ActiveConnection
         vol.Optional("alarms"): list,
         # the player picked on the panel's music page (music commands said to the panel go there)
         vol.Optional("music_player"): str,
+        # the wake words the panel listens for (Home Assistant's wake word selects of its voice device follow them)
+        vol.Optional("wake_words"): [str],
     }
 )
 @callback

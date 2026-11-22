@@ -88,6 +88,9 @@ pub struct DeviceState {
     /// The id of the Home Assistant user the panel is logged in as ("" until Home Assistant has said it, see
     /// `set_panel_user`).
     pub ha_user: String,
+    /// The wake words the panel listens for (ids, the first first): the integration keeps Home Assistant's own wake
+    /// word selects of the voice device in line with them.
+    pub wake_words: Vec<String>,
 }
 
 /// Requests from Home Assistant, carried out on the UI thread.

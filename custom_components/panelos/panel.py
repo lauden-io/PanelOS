@@ -79,6 +79,7 @@ from .const import (
     SIGNAL_SHOW,
 )
 from .resources import async_resource_list
+from .wake_words import WakeWordSelects
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -90,6 +91,8 @@ _OPTIONS_MAX = 200
 _CAP_MAX = 24
 _CAPS_MAX = 32
 _ALARMS_MAX = 20
+# the wake words a panel reports (it listens for at most two)
+_WAKE_WORDS_MAX = 4
 _MISSING = object()
 
 type Send = Callable[[dict[str, Any]], None]
@@ -738,6 +741,8 @@ class Panel:
         self.hass = hass
         self.entry = entry
         self.panel_id: str = {**entry.data, **entry.options}.get(CONF_PANEL_ID, "")
+        # Home Assistant's own wake word selects of the voice device, kept in line with the panel's wake words
+        self.wake_word_selects = WakeWordSelects(hass, self._voice_entry)
         self.states: dict[str, Any] = {}
         self.options: dict[str, list[str]] = {}
         self.device_id: str | None = None
@@ -973,6 +978,7 @@ class Panel:
             self.hass.bus.async_listen(er.EVENT_ENTITY_REGISTRY_UPDATED, self._sensors_changed, event_filter=self._is_sensor)
         )
         self.entry.async_on_unload(self._stop_user_sensor)
+        self.entry.async_on_unload(self.wake_word_selects.stop)
         # A dashboard saved in Home Assistant may need other card resources.
         self.entry.async_on_unload(self.hass.bus.async_listen("lovelace_updated", self._lovelace_updated))
         # Dashboards and resources are there once Home Assistant has started.
@@ -982,6 +988,8 @@ class Panel:
     def _started(self, _hass: HomeAssistant) -> None:
         # a callback: it runs in the event loop (a plain function would run in a worker thread)
         self.refresh_skip()
+        # the selects as Home Assistant restored them (an older panel does not report its wake words)
+        self.wake_word_selects.schedule(30)
 
     @callback
     def _lovelace_updated(self, event: Event) -> None:
@@ -1206,6 +1214,8 @@ class Panel:
                     changed.add(key)
         if isinstance(device := msg.get("device"), dict):
             self._device_reported(device)
+        if isinstance(words := msg.get("wake_words"), list):
+            self.wake_word_selects.reported([w[:_TEXT_MAX] for w in words[:_WAKE_WORDS_MAX] if isinstance(w, str)])
         if isinstance(alarms := msg.get("alarms"), list):
             clean = [_alarm(a) for a in alarms[:_ALARMS_MAX] if isinstance(a, dict)]
             if clean != self.alarms:

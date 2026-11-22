@@ -415,12 +415,16 @@ fn session(
                         if msg["success"] == false {
                             let why = msg["error"]["message"].as_str().unwrap_or("").to_string();
                             eprintln!("nspanel-app: device report not accepted: {why}");
-                            if why.contains("alarms") && !report.no_alarms {
+                            let (no_alarms, no_music_player, no_wake_words) = (report.no_alarms, report.no_music_player, report.no_wake_words);
+                            if why.contains("alarms") && !no_alarms {
                                 // An integration from before the alarms: everything again, without them.
-                                report = Report { linked: true, no_alarms: true, no_music_player: report.no_music_player, ..Default::default() };
-                            } else if why.contains("music_player") && !report.no_music_player {
+                                report = Report { linked: true, no_alarms: true, no_music_player, no_wake_words, ..Default::default() };
+                            } else if why.contains("music_player") && !no_music_player {
                                 // An integration from before the music player: everything again, without it.
-                                report = Report { linked: true, no_alarms: report.no_alarms, no_music_player: true, ..Default::default() };
+                                report = Report { linked: true, no_alarms, no_music_player: true, no_wake_words, ..Default::default() };
+                            } else if why.contains("wake_words") && !no_wake_words {
+                                // An integration from before the wake words: everything again, without them.
+                                report = Report { linked: true, no_alarms, no_music_player, no_wake_words: true, ..Default::default() };
                             } else {
                                 // An older integration without panelos/report.
                                 report.linked = false;
@@ -604,6 +608,10 @@ struct Report {
     alarms: Option<Value>,
     /// The integration does not take alarms (older than the alarms on its page).
     no_alarms: bool,
+    /// The wake words last sent.
+    wake_words: Option<Vec<String>>,
+    /// The integration does not take the wake words (older than its wake word selects follow-up).
+    no_wake_words: bool,
     pending: HashSet<u64>,
     checked: Option<Instant>,
 }
@@ -629,7 +637,16 @@ impl Report {
         let music_player =
             (!self.no_music_player && self.music_player.as_deref() != Some(snapshot.music_player.as_str())).then(|| snapshot.music_player.clone());
         let alarms = (!self.no_alarms && !snapshot.alarms.is_null() && self.alarms.as_ref() != Some(&snapshot.alarms)).then(|| snapshot.alarms.clone());
-        if states.is_empty() && options.is_empty() && dashboard.is_none() && music_player.is_none() && alarms.is_none() && self.device_sent {
+        let wake_words =
+            (!self.no_wake_words && self.wake_words.as_ref() != Some(&snapshot.wake_words)).then(|| snapshot.wake_words.clone());
+        if states.is_empty()
+            && options.is_empty()
+            && dashboard.is_none()
+            && music_player.is_none()
+            && alarms.is_none()
+            && wake_words.is_none()
+            && self.device_sent
+        {
             return None;
         }
         let mut msg = json!({"type": "panelos/report", "panel_id": crate::panel_id::get()});
@@ -651,6 +668,10 @@ impl Report {
         if let Some(a) = alarms {
             msg["alarms"] = a.clone();
             self.alarms = Some(a);
+        }
+        if let Some(w) = wake_words {
+            msg["wake_words"] = w.clone().into();
+            self.wake_words = Some(w);
         }
         if !states.is_empty() {
             msg["states"] = states.into();

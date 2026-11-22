@@ -10,6 +10,9 @@
 - What goes off a still dashboard no longer stays on the screen until the dashboard changes: a strip closed with its ×, the voice view, the pull to refresh disc, a ring or a status screen that ends. Before, the last picture stayed, up to a minute with a clock on the dashboard.
 - A folded status screen's strip sits at the very top (the dashboard has no status bar), and a pull down on it opens the quick settings.
 
+### Integration
+- Home Assistant's Wake word and Wake word 2 selects of the panel's voice device show the panel's wake words: Home Assistant kept them at "No wake word" for a panel with two, and picking one of them then left the panel with only that word. The panel reports its wake words, and the integration sets the selects whenever they differ, also after a change on the panel or on the PanelOS page.
+
 ## 0.0.8
 
 **Upgrading from 0.0.7**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-007)).

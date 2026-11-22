@@ -3630,7 +3630,7 @@ fn report_device(s: &mut UiState) {
     let before = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h),
+        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h, d.wake_words.clone()),
     );
     d.theme = s.settings.theme.clone();
     d.time_24h = s.settings.time_24h;
@@ -3652,11 +3652,12 @@ fn report_device(s: &mut UiState) {
     crate::sendspin::panel_volume(s.settings.volume);
     d.alarms = serde_json::to_value(crate::alarms::reported(&s.settings.alarms)).unwrap_or_default();
     d.music_player = media_entity(s);
+    d.wake_words = s.settings.wake_words.clone();
     d.ready = true;
     let after = (
         (d.theme.clone(), d.brightness, d.auto_brightness, d.screensaver_seconds, d.screensaver_style.clone()),
         (d.proximity_wake, d.screen_on, d.dashboard.clone(), d.presence, d.display_mode.clone(), d.volume),
-        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h),
+        (d.mic_muted, d.alarms.clone(), d.child_lock, d.rain_on_glass, d.lightning, d.time_24h, d.wake_words.clone()),
     );
     if lux_changed {
         d.lux = s.lux.map(|l| l.round());
