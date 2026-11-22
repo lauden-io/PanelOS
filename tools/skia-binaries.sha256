@@ -1,0 +1,7 @@
+# The GPU app's prebuilt Skia (rust-skia/skia-binaries releases on GitHub), checked by tools/build_app.sh before
+# skia-bindings gets it. One line per skia-bindings version and binaries key: the version, the key and the SHA-256 of
+# skia-binaries-<key>.tar.gz. The key is the one skia-bindings' build script makes: the first 20 characters of the
+# rust-skia commit (the sha1 in the crate's .cargo_vcs_info.json), the target and the Skia features, as in the
+# release's file names. tools/build_app.sh works it out before the build and names it when it is missing here.
+0.153.3 b7f043e0b1e2a850e702-aarch64-unknown-linux-gnu-ganesh-gl-jpegd-jpege-pdf-vulkan 82da2256fd0ce9419527f72ca4e9858a13c14d23073da1e618dc596397f65560
+0.157.0 30669978c3f39a73e8a7-aarch64-unknown-linux-gnu-ganesh-gl-jpegd-jpege-pdf-vulkan 97867bf5aebc2c5197199db5f1356a76d420b821be1776a3e5fb69510b1693f7

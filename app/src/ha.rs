@@ -39,6 +39,44 @@ pub enum Command {
     Notification { id: String, answer: String, button: Option<i32> },
     /// Any other websocket command of Home Assistant (its type and data; the id is added).
     Raw(Value),
+    /// Home Assistant's own addresses (the panel's address changes), answered on the sender.
+    OwnAddresses(std::sync::mpsc::Sender<OwnAddresses>),
+}
+
+/// The addresses Home Assistant gives as its own.
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct OwnAddresses {
+    /// Its internal and external URL (get_config; the external one is missing for a local-only user).
+    pub urls: Vec<String>,
+    /// Its IP addresses (the PanelOS integration's panelos/ha_addresses; none from an older integration).
+    pub ips: Vec<String>,
+}
+
+/// Home Assistant's own addresses being asked for: two requests, answered together.
+struct OwnAsk {
+    config_id: u64,
+    ips_id: u64,
+    got: OwnAddresses,
+    left: u8,
+    reply: std::sync::mpsc::Sender<OwnAddresses>,
+}
+
+/// Takes what an answer gives of Home Assistant's own addresses: get_config's (`config`) URLs, or the integration's
+/// IP addresses. An error (an older integration) gives none.
+fn take_own_addresses(msg: &Value, config: bool, into: &mut OwnAddresses) {
+    if msg["success"] != true {
+        return;
+    }
+    if config {
+        for key in ["internal_url", "external_url"] {
+            if let Some(url) = msg["result"][key].as_str().filter(|u| !u.is_empty()) {
+                into.urls.push(url.to_string());
+            }
+        }
+    } else {
+        let list = msg["result"]["addresses"].as_array().into_iter().flatten();
+        into.ips.extend(list.filter_map(Value::as_str).take(64).map(String::from));
+    }
 }
 
 pub enum Event {
@@ -191,6 +229,12 @@ fn apply_compressed(states: &mut HashMap<String, EntityState>, ev: &Value) -> Ve
     changed
 }
 
+/// Opens the WebSocket without following redirects: the access token goes to the address configured, never to one a
+/// redirect names.
+fn open(ws_url: &str) -> tungstenite::Result<(Socket, tungstenite::handshake::client::Response)> {
+    tungstenite::client::connect_with_config(ws_url, None, 0)
+}
+
 fn session(
     ws_url: &str,
     shared: &Shared,
@@ -210,7 +254,7 @@ fn session(
         Err(TokenError::Retry(e)) => return Err(e),
     };
 
-    let (mut ws, response) = tungstenite::connect(ws_url).map_err(|e| format!("connect: {e}"))?;
+    let (mut ws, response) = open(ws_url).map_err(|e| format!("connect: {e}"))?;
     // No battery-backed clock: until NTP has run, take Home Assistant's time.
     if let Some(date) = response.headers().get("date").and_then(|v| v.to_str().ok()) {
         if crate::clock::set_from_http_date(date) {
@@ -311,6 +355,7 @@ fn session(
     // (at most 2 s), so a setting made on the panel just before is not lost with this connection
     let mut page_sets: Vec<u64> = Vec::new();
     let mut reload_at: Option<Instant> = None;
+    let mut own_ask: Option<OwnAsk> = None;
     loop {
         if reload_at.is_some_and(|t| page_sets.is_empty() || Instant::now() >= t) {
             return Ok(());
@@ -403,6 +448,14 @@ fn session(
                     send_json(&mut ws, &msg)?;
                     page_sets.push(next_id);
                 }
+                Command::OwnAddresses(reply) => {
+                    next_id += 1;
+                    let config_id = next_id;
+                    send_json(&mut ws, &json!({"id": config_id, "type": "get_config"}))?;
+                    next_id += 1;
+                    send_json(&mut ws, &json!({"id": next_id, "type": "panelos/ha_addresses"}))?;
+                    own_ask = Some(OwnAsk { config_id, ips_id: next_id, got: OwnAddresses::default(), left: 2, reply });
+                }
             }
         }
 
@@ -467,6 +520,17 @@ fn session(
                     }
                     Some("result") if msg["id"] == panel_id => report = Report { linked: true, ..Default::default() },
                     Some("result") if msg["id"] == user_id => take_user(&msg, &shared.device),
+                    Some("result") if own_ask.as_ref().is_some_and(|a| msg["id"] == a.config_id || msg["id"] == a.ips_id) => {
+                        if let Some(mut ask) = own_ask.take() {
+                            take_own_addresses(&msg, msg["id"] == ask.config_id, &mut ask.got);
+                            ask.left -= 1;
+                            if ask.left == 0 {
+                                let _ = ask.reply.send(ask.got);
+                            } else {
+                                own_ask = Some(ask);
+                            }
+                        }
+                    }
                     Some("result") if msg["id"].as_u64().is_some_and(|id| timer_starts.contains_key(&id)) => {
                         if let Some((seconds, name)) = msg["id"].as_u64().and_then(|id| timer_starts.remove(&id)) {
                             if msg["success"] != true {
@@ -805,6 +869,44 @@ pub fn spawn(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_websocket_follows_no_redirect() {
+        use std::io::{Read, Write};
+        use std::net::TcpListener;
+        let elsewhere = TcpListener::bind("127.0.0.1:0").unwrap();
+        let there = elsewhere.local_addr().unwrap();
+        elsewhere.set_nonblocking(true).unwrap();
+        let ha = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = ha.local_addr().unwrap();
+        let server = std::thread::spawn(move || {
+            let (mut s, _) = ha.accept().unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = s.read(&mut buf);
+            let _ = write!(s, "HTTP/1.1 301 Moved Permanently\r\nLocation: ws://{there}/api/websocket\r\nContent-Length: 0\r\n\r\n");
+        });
+        let result = open(&format!("ws://{addr}/api/websocket"));
+        server.join().unwrap();
+        assert!(matches!(result, Err(tungstenite::Error::Http(ref r)) if r.status() == 301));
+        assert!(elsewhere.accept().is_err(), "the redirect was followed");
+    }
+
+    #[test]
+    fn own_addresses_from_the_answers() {
+        let mut got = OwnAddresses::default();
+        let config = json!({"id": 5, "type": "result", "success": true,
+            "result": {"internal_url": "http://192.0.2.10:8123", "external_url": "https://remote.example.net", "location_name": "Home"}});
+        take_own_addresses(&config, true, &mut got);
+        let ips = json!({"id": 6, "type": "result", "success": true, "result": {"addresses": ["192.0.2.10", "2001:db8::10", 7]}});
+        take_own_addresses(&ips, false, &mut got);
+        assert_eq!(got.urls, vec!["http://192.0.2.10:8123", "https://remote.example.net"]);
+        assert_eq!(got.ips, vec!["192.0.2.10", "2001:db8::10"]);
+        // a local-only user (no external URL), an older integration (unknown command)
+        let mut got = OwnAddresses::default();
+        take_own_addresses(&json!({"success": true, "result": {"internal_url": "http://192.0.2.10:8123", "external_url": null}}), true, &mut got);
+        take_own_addresses(&json!({"success": false, "error": {"code": "unknown_command", "message": "Unknown command."}}), false, &mut got);
+        assert_eq!(got, OwnAddresses { urls: vec!["http://192.0.2.10:8123".into()], ips: vec![] });
+    }
 
     #[test]
     fn current_user_from_the_answer() {

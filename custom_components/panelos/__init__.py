@@ -61,6 +61,7 @@ from homeassistant.helpers.service import async_register_admin_service
 from homeassistant.helpers.start import async_at_started
 
 from .const import (
+    CONF_HOME_EDIT,
     CONF_PAGES,
     CONF_PANEL_ID,
     DEFAULT_PAGES,
@@ -77,8 +78,10 @@ from .const import (
     SIGNAL_PANEL_USER,
     SIGNAL_SHOW,
     VIEWS,
+    panel_edit,
     timer_label,
 )
+from .addresses import own_addresses
 from .house import House
 from .notes import Notes
 from .view import view_request
@@ -292,6 +295,26 @@ def ws_alive(hass: HomeAssistant, connection: websocket_api.ActiveConnection, ms
     connection.send_result(msg["id"])
 
 
+@websocket_api.websocket_command({vol.Required("type"): "panelos/ha_addresses"})
+@websocket_api.async_response
+async def ws_ha_addresses(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
+    """Home Assistant's own IP addresses (`addresses.own_addresses`): a panel whose Home Assistant address is changed
+    keeps its login when the new address is one of them. Only for a connection that holds a panel's subscription (the
+    panel's own user or an administrator) and for administrators: Home Assistant shows its network adapters to
+    administrators only, and other users have no need of them. An empty list without Home Assistant's network
+    integration."""
+    if not connection.user.is_admin and not any(cid == id(connection) for _, cid, _ in links(hass).values()):
+        connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
+        return
+    try:
+        from homeassistant.components.network import async_get_adapters  # noqa: PLC0415
+
+        adapters = await async_get_adapters(hass)
+    except Exception:  # noqa: BLE001 - no network integration, or it failed: no addresses
+        adapters = []
+    connection.send_result(msg["id"], {"addresses": own_addresses(adapters)})
+
+
 # A development panel's system log (it sends its new lines every second): kept in
 # /config/panelos/logs/<panel id>.log, turned over at 5 MB, three old files kept.
 LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -357,7 +380,7 @@ def ws_report(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
     if not panel.linked_on(id(connection)):
         connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
         return
-    panel.apply_report(msg)
+    panel.apply_report(msg, connection.user)
     connection.send_result(msg["id"])
 
 
@@ -375,8 +398,9 @@ def ws_report(hass: HomeAssistant, connection: websocket_api.ActiveConnection, m
 )
 @callback
 def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection, msg: dict[str, Any]) -> None:
-    """A page's look, entities or some of its options set on the panel itself (its menus, on that page); `index`
-    counts the pages it shows, so each page of a kind is set apart."""
+    """A page's look, entities or some of its options set on the panel itself (its menus, on that page; its widgets
+    only while editing on the panel is allowed); `index` counts the pages it shows, so each page of a kind is set
+    apart."""
     panel = _loaded_panel(hass, msg["panel_id"])
     if panel is None:
         connection.send_error(msg["id"], "not_found", f"No PanelOS entry for the panel '{msg['panel_id']}'")
@@ -385,6 +409,10 @@ def ws_page_set(hass: HomeAssistant, connection: websocket_api.ActiveConnection,
         connection.send_error(msg["id"], "not_subscribed", _NOT_SUBSCRIBED)
         return
     entry = panel.entry
+    # a page's widgets come only from the panel's edit mode, which "Allow editing on the panel" opens
+    if panel_edit(msg.get("options")) and not {**entry.data, **entry.options}.get(CONF_HOME_EDIT, False):
+        connection.send_error(msg["id"], "not_allowed", "Editing on the panel is off for this panel")
+        return
     pages = [dict(p) for p in {**entry.data, **entry.options}.get(CONF_PAGES, DEFAULT_PAGES)]
     shown = [i for i, p in enumerate(pages) if i == 0 or not p.get("hidden")]
     if msg["index"] >= len(shown):
@@ -502,6 +530,7 @@ async def async_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
     websocket_api.async_register_command(hass, ws_subscribe)
     websocket_api.async_register_command(hass, ws_report)
     websocket_api.async_register_command(hass, ws_alive)
+    websocket_api.async_register_command(hass, ws_ha_addresses)
     websocket_api.async_register_command(hass, ws_log)
     websocket_api.async_register_command(hass, ws_page_set)
     websocket_api.async_register_command(hass, ws_timer)

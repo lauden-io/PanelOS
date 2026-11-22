@@ -2860,6 +2860,7 @@ dependencies = [
  "symphonia-core",
  "tungstenite",
  "ureq",
+ "url",
 ]
 
 [[package]]

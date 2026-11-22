@@ -79,13 +79,15 @@ from .const import (
     SIGNAL_SHOW,
 )
 from .resources import async_resource_list
+from .voice_pick import Candidate, kept_mac, pick, plain_mac
 from .wake_words import WakeWordSelects
 
 _LOGGER = logging.getLogger(__name__)
 
 KEY_DOMAIN = {key: domain for domain, keys in ENTITY_KEYS.items() for key in keys}
 _SELECT_KEYS = frozenset(ENTITY_KEYS["select"])
-_DEVICE_FIELDS = ("name", "manufacturer", "model", "sw_version", "hw_version", "mac")
+# what the panel reports of its device (its MAC address is kept apart: `reported_mac`)
+_DEVICE_FIELDS = ("name", "manufacturer", "model", "sw_version", "hw_version")
 _TEXT_MAX = 255
 _OPTIONS_MAX = 200
 _CAP_MAX = 24
@@ -231,31 +233,11 @@ _USER_SENSOR_IDS = ("/text_sensor/Panel user", "-text_sensor-panel_user")
 _USER_ID = re.compile(r"[0-9a-f]{32}")
 
 
-def _plain_mac(value: Any) -> str | None:
-    """A MAC address as 12 lower-case hex digits; None for anything else."""
-    if not isinstance(value, str):
-        return None
-    plain = value.replace(":", "").replace("-", "").lower()
-    return plain if len(plain) == 12 and all(c in "0123456789abcdef" for c in plain) else None
-
-
 def panel_mac(entry: ConfigEntry) -> str | None:
-    """The MAC address the panel reported (None until it did)."""
+    """The MAC address the panel's entry keeps (None until there is one): reported by the panel, and kept only when an
+    administrator reported it or the panel's ESPHome device confirmed it (`reported_mac`)."""
     device = entry.data.get(CONF_DEVICE)
     return device.get("mac") if isinstance(device, dict) else None
-
-
-def voice_entry(hass: HomeAssistant, panel_id: str, mac: str | None = None) -> ConfigEntry | None:
-    """The panel's ESPHome entry (voice satellite): the one with the panel id as its device name. Once the panel has
-    reported its MAC address, an ESPHome entry of another device with that name is not it."""
-    wanted = _plain_mac(mac)
-    for entry in hass.config_entries.async_entries("esphome"):
-        if entry.data.get(_ESPHOME_DEVICE_NAME) != panel_id:
-            continue
-        if wanted and (theirs := _plain_mac(entry.unique_id)) and theirs != wanted:
-            continue
-        return entry
-    return None
 
 
 def _user_sensor_of(hass: HomeAssistant, voice: ConfigEntry | None) -> str | None:
@@ -267,22 +249,71 @@ def _user_sensor_of(hass: HomeAssistant, voice: ConfigEntry | None) -> str | Non
     return None
 
 
+def _voice_candidates(hass: HomeAssistant, panel_id: str) -> list[tuple[ConfigEntry, str | None, Candidate]]:
+    """The ESPHome entries with the panel id as their device name, each with its "Panel user" sensor and what decides
+    whether it is the panel's: its MAC address, its key and the user its sensor shows."""
+    found = []
+    for entry in hass.config_entries.async_entries("esphome"):
+        if entry.data.get(_ESPHOME_DEVICE_NAME) != panel_id:
+            continue
+        entity_id = _user_sensor_of(hass, entry)
+        state = hass.states.get(entity_id) if entity_id else None
+        user = state.state if state is not None and _USER_ID.fullmatch(state.state) else None
+        found.append((entry, entity_id, Candidate(plain_mac(entry.unique_id), bool(entry.data.get(_ESPHOME_KEY)), user)))
+    return found
+
+
+def _picked(hass: HomeAssistant, panel_id: str, mac: str | None) -> tuple[ConfigEntry, str | None, Candidate] | None:
+    found = _voice_candidates(hass, panel_id)
+    at = pick([candidate for _, _, candidate in found], mac)
+    return found[at] if at is not None else None
+
+
+def voice_entry(hass: HomeAssistant, panel_id: str, mac: str | None = None) -> ConfigEntry | None:
+    """The panel's ESPHome entry (voice satellite), of the ones with the panel id as their device name: the one of the
+    MAC address the panel's entry keeps while it is there; else one whose device names its user first
+    (`voice_pick.pick`). While none names a user, an ESPHome entry of another device is never taken for it."""
+    picked = _picked(hass, panel_id, mac)
+    return picked[0] if picked else None
+
+
 def user_sensor(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
     """The entity id of the panel's "Panel user" sensor (a text sensor of its ESPHome device), None without one."""
-    return _user_sensor_of(hass, voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""), panel_mac(entry)))
+    picked = _picked(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""), panel_mac(entry))
+    return picked[1] if picked else None
+
+
+def user_sensors(hass: HomeAssistant, entry: ConfigEntry) -> list[str]:
+    """The "Panel user" sensors of every ESPHome entry with the panel id as its device name: without the entry of the
+    kept MAC address the one whose device names its user becomes the panel's, so all of them are followed."""
+    found = _voice_candidates(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""))
+    return [entity_id for _, entity_id, _ in found if entity_id]
 
 
 def reported_user(hass: HomeAssistant, entry: ConfigEntry) -> str | None:
     """The id of the Home Assistant user the panel says it is logged in as (its "Panel user" sensor), None when it
     says none: an older panel, the sensor missing, disabled, unavailable or empty, or an ESPHome entry without a key.
     Only an ESPHome entry with a key counts: the sensor's state then comes over the encrypted connection that only the
-    panel can answer (over Home Assistant's API only administrators can set an entity's state)."""
-    voice = voice_entry(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""), panel_mac(entry))
-    if voice is None or not voice.data.get(_ESPHOME_KEY):
-        return None
-    entity_id = _user_sensor_of(hass, voice)
-    state = hass.states.get(entity_id) if entity_id else None
-    return state.state if state is not None and _USER_ID.fullmatch(state.state) else None
+    panel can answer (over Home Assistant's API only administrators can set an entity's state). Which ESPHome entry is
+    the panel's follows only from Home Assistant's own data (`voice_entry`), so no user can hide the sensor."""
+    picked = _picked(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""), panel_mac(entry))
+    return picked[2].named if picked else None
+
+
+def reported_mac(hass: HomeAssistant, entry: ConfigEntry, mac: Any, user: User | None) -> str | None:
+    """The MAC address the panel's entry keeps after a device report from this user: the reported one when the user is
+    an administrator, or when the panel's ESPHome device confirms it (an ESPHome entry with the panel id, that MAC
+    address and a key names this user) and no entry of the kept one is there any more; else the one kept before
+    (`voice_pick.kept_mac`). A user who connected first for a panel that named nobody therefore cannot point the panel
+    at another ESPHome entry (also not at a device of its own given the panel's name), or at none."""
+    found = _voice_candidates(hass, {**entry.data, **entry.options}.get(CONF_PANEL_ID, ""))
+    return kept_mac(
+        panel_mac(entry),
+        mac,
+        user.id if user is not None else None,
+        bool(user is not None and user.is_admin),
+        [candidate for _, _, candidate in found],
+    )
 
 
 @callback
@@ -776,8 +807,9 @@ class Panel:
         self.skip: list[str] = []
         self.resources: list[dict[str, Any]] = []
         self._skip_task: asyncio.Task | None = None
-        # The "Panel user" sensor of the panel's ESPHome device that is followed, and how to stop following it.
-        self._user_sensor: str | None = None
+        # The "Panel user" sensors of the ESPHome devices with the panel's name that are followed, and how to stop
+        # following them.
+        self._user_sensors: list[str] = []
         self._unsub_user_sensor: Callable[[], None] | None = None
 
     def unique_id(self, key: str) -> str:
@@ -999,16 +1031,18 @@ class Panel:
 
     # -- the panel's user --------------------------------------------------
     # The panel reports the Home Assistant user it is logged in as on its ESPHome device ("Panel user"); a change moves
-    # the binding (`user_reported`).
+    # the binding (`user_reported`). The sensors of every ESPHome device with the panel's name are followed: the one
+    # that names a user becomes the panel's once the entry of the kept MAC address is gone (a panel replaced by
+    # another one, the old panel's ESPHome entry deleted).
 
     @callback
     def _follow_user_sensor(self) -> None:
-        entity_id = user_sensor(self.hass, self.entry)
-        if entity_id != self._user_sensor:
+        sensors = user_sensors(self.hass, self.entry)
+        if sensors != self._user_sensors:
             self._stop_user_sensor()
-            self._user_sensor = entity_id
-            if entity_id is not None:
-                self._unsub_user_sensor = async_track_state_change_event(self.hass, [entity_id], self._user_sensor_changed)
+            self._user_sensors = sensors
+            if sensors:
+                self._unsub_user_sensor = async_track_state_change_event(self.hass, sensors, self._user_sensor_changed)
         user_reported(self.hass, self.entry)
 
     @callback
@@ -1016,7 +1050,7 @@ class Panel:
         if self._unsub_user_sensor is not None:
             self._unsub_user_sensor()
             self._unsub_user_sensor = None
-        self._user_sensor = None
+        self._user_sensors = []
 
     @callback
     def _user_sensor_changed(self, _event: Event) -> None:
@@ -1200,7 +1234,8 @@ class Panel:
     # -- reports -----------------------------------------------------------
 
     @callback
-    def apply_report(self, msg: dict[str, Any]) -> None:
+    def apply_report(self, msg: dict[str, Any], user: User | None) -> None:
+        """A report of the panel (`user`: the user of the connection that sent it)."""
         changed: set[str] = set()
         for key, value in (msg.get("states") or {}).items():
             if key in KEY_DOMAIN and _scalar(value) and self.states.get(key, _MISSING) != value:
@@ -1213,7 +1248,7 @@ class Panel:
                     self.options[key] = clean
                     changed.add(key)
         if isinstance(device := msg.get("device"), dict):
-            self._device_reported(device)
+            self._device_reported(device, user)
         if isinstance(words := msg.get("wake_words"), list):
             self.wake_word_selects.reported([w[:_TEXT_MAX] for w in words[:_WAKE_WORDS_MAX] if isinstance(w, str)])
         if isinstance(alarms := msg.get("alarms"), list):
@@ -1267,8 +1302,11 @@ class Panel:
             self.skip = skip
             async_dispatcher_send(self.hass, SIGNAL_CONFIG_UPDATED, self.panel_id)
 
-    def _device_reported(self, device: dict[str, Any]) -> None:
+    def _device_reported(self, device: dict[str, Any], user: User | None) -> None:
         info = {key: device[key][:64] for key in _DEVICE_FIELDS if isinstance(device.get(key), str) and device[key]}
+        # the MAC address picks the panel's ESPHome entry: a new one only when confirmed (see `reported_mac`)
+        if mac := reported_mac(self.hass, self.entry, device.get("mac"), user):
+            info["mac"] = mac
         caps = device.get("caps")
         if isinstance(caps, list):
             caps = sorted({c[:_CAP_MAX] for c in caps[:_CAPS_MAX] if isinstance(c, str) and c})
