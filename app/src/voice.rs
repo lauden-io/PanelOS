@@ -1130,7 +1130,7 @@ fn fetch_and_play(url: &str, ha_url: &str, player: &Player) -> Result<(), String
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut std::io::Read::take(resp.into_reader(), 16 * 1024 * 1024), &mut bytes)
         .map_err(|e| e.to_string())?;
-    // Answers come as WAV; announcements from Home Assistant as MP3.
+    // Answers come as WAV; announcements from Home Assistant as WAV or MP3.
     let (rate, channels, data) = parse_wav(&bytes).or_else(|| decode_mp3(&bytes)).ok_or("neither a 16-bit WAV nor an MP3 file")?;
     player.play(Sound::Pcm { rate, channels, data });
     std::thread::sleep(Duration::from_millis(300));
