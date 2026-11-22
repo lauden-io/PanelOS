@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.0.8 (in development)
+## 0.0.8
 
-**Upgrading from 0.0.7**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md)).
+**Upgrading from 0.0.7**: put the new UI bundle on the panel (`tools/build_ui_bundle.sh`, then `tools/install_bundles.sh <panel> ui`) and update the integration, then restart Home Assistant; the web bundle and the image stay as they are ([docs/home_assistant.md](docs/home_assistant.md#upgrading-from-007)).
 
 ### Several panels
 - Several panels in one Home Assistant: each panel's ID is the short name it gets at installation. It is the PanelOS entry's Panel ID, `panel_id` in actions and messages, the ESPHome device and mDNS name, and part of its device names ("NSPanel Pro (kitchen)"). A panel without a name stays `nspanel-pro`, with all its devices and entities (#114).
@@ -17,6 +17,7 @@
 - Setting and cancelling a panel's alarms by voice answers and refreshes the PanelOS page (#109).
 
 ### Alarms, timers and stopwatch
+- In dashboard mode a ringing timer or alarm, an open status screen, a critical alert and a doorbell's visitor view show over the dashboard until they end; before, they stayed hidden under it (#118).
 - Switching off or deleting a snoozed alarm (on the panel, on the PanelOS page or by voice) ends its snooze; a snoozed alarm shows on until its snooze rings (#105).
 - The alarm editor's sounds ring as they are named, and a sound picked on the panel stays after a change from Home Assistant.
 - A timer's label takes at most 30 characters, on the panel and in the integration; a longer name is cut (#90).
@@ -52,7 +53,7 @@
 - Wi-Fi takeover at installation reads each network saved in the stock firmware on its own (the one in use, else the first complete one); open and hidden networks and special characters work, WEP and enterprise networks are not taken over (#115).
 - The roam check compares a network name's own bytes, so names with accents, emoji, quotes or spaces work (#68).
 - `tools/build_ui_bundle.sh` builds the UI bundle and `tools/install_bundles.sh` puts the UI and web bundles on a panel; the install guide builds and installs both.
-- A smaller image (with the next image): the system files are packed with xz and FlatBuffers' compiler is left out; `tools/build_image.sh` prints the room left in the boot partition, or a warning when the image fits only the recovery partition (#116).
+- The image fits the 32 MiB boot partition again, with about 1.2 MB to spare: its system files are packed with xz and FlatBuffers' compiler is left out. `tools/build_image.sh` prints the room left in the boot partition, or a warning when the image fits only the recovery partition (#116).
 
 ## 0.0.7
 
