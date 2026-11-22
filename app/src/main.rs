@@ -58,6 +58,8 @@ mod todo;
 mod touch;
 mod visit;
 mod voice;
+#[cfg(test)]
+mod warp_pics;
 mod web;
 mod webstats;
 mod wifi;
