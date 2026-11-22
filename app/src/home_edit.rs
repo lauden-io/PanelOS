@@ -10,7 +10,7 @@ use std::cell::{Cell, RefCell};
 use std::time::{Duration, Instant};
 
 use serde_json::{json, Value};
-use slint::{ComponentHandle, Model, ModelRc, SharedString, VecModel};
+use slint::{ComponentHandle, ModelRc, SharedString, VecModel};
 
 use crate::ha::{Command, EntityState};
 use crate::pages::PeopleGroup;

@@ -20,6 +20,9 @@
 ### Integration
 - Home Assistant's Wake word and Wake word 2 selects of the panel's voice device show the panel's wake words: Home Assistant kept them at "No wake word" for a panel with two, and picking one of them then left the panel with only that word. The panel reports its wake words, and the integration sets the selects whenever they differ, also after a change on the panel or on the PanelOS page.
 
+### Panel app
+- Slint 1.19.0 (before 1.18.1). Among its fixes: a text drawn once into a layer no longer stops updating when the text cache drops it, which caused a timer digit to stand still. The renderer keeps the one PanelOS change (pictures at fractional positions, so slow movement stays smooth); the other one, a layer of a removed page, is fixed upstream.
+
 ### Docs
 - The install guide and the decisions say what `tools/build_image.sh` does with an image too big for the boot partition: it warns, and `tools/remove_android.sh` refuses to copy it.
 
