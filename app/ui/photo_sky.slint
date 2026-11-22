@@ -508,8 +508,7 @@ export component PhotoSky inherits Rectangle {
 
     // 5b. grass sways in the wind: the meadow rows of the foreground are redrawn in 8 px strips,
     //     each shifted sideways by a small, smoothly varying amount (more in front, gusts push it
-    //     left); sub-pixel shifts drawn twice with opacity = fraction (min 3 %: the renderer's alpha blend rounds down
-    //     by ~0.5 level, so a frame without the second strip would be a touch brighter)
+    //     left), drawn at its exact sub-pixel place like the sky (the renderer filters pictures there)
     property <int> sway-y0: root.theme == 1 ? 400 : root.theme == 3 ? 428 : root.theme == 5 ? 440 : 328;
     // (the strips down to the bottom edge: rows further down are off the screen)
     property <int> layer-bottom: min(528, (root.height - root.fy) / 1px);
@@ -524,29 +523,22 @@ export component PhotoSky inherits Rectangle {
             property <float> depth: Math.pow((k + 0.5) / ((528 - root.sway-y0) / 8), 1.2);
             property <float> off: (root.sway-a + 1.6 * root.grass-gust) * self.depth * Math.sin((root.t * 360 / 2.75 + k * 13) * 1deg)
                                   - 1.5 * root.grass-gust * self.depth;
-            property <float> oi: Math.floor(self.off);
-            property <float> of: max(0.03, min(0.97, self.off - self.oi));
             x: 0; y: 0; width: root.width; height: root.height;
             visible: root.sway-y0 + k * 8 < 528;
             if !root.day-hidden: Image {
-                x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px;
+                x: root.fx + parent.off * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px;
                 source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
-            }
-            if !root.day-hidden: Image {
-                x: root.fx + (parent.oi + 1) * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px;
-                source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
-                opacity: parent.of;
             }
             if root.has-grade && root.dk > 0 && root.nmix < 1: Image {
-                x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.dk;
+                x: root.fx + parent.off * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.dk;
                 source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
             }
             if root.has-grade && root.dn > 0 && root.nmix < 1: Image {
-                x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.dn;
+                x: root.fx + parent.off * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.dn;
                 source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
             }
             if root.nmix > 0: Image {
-                x: root.fx + parent.oi * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.nmix;
+                x: root.fx + parent.off * 1px; y: root.fy + (root.sway-y0 + k * 8) * 1px; width: 528px; height: 8px; opacity: root.nmix;
                 source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.sway-y0 + k * 8; source-clip-width: 528; source-clip-height: 8;
             }
         }
@@ -582,18 +574,14 @@ export component PhotoSky inherits Rectangle {
         for k in 27: bs0 := Rectangle {
             property <float> rel: max(0, min(1, (378 - (246 + k * 5 + 2.5)) / 132));
             property <float> off: -Math.pow(self.rel, 1.8) * (root.lean + root.flut * Math.sin((root.t * 190 + self.rel * 70 + 0) * 1deg));
-            property <float> oi: Math.floor(self.off);
-            property <float> of: max(0.03, min(0.97, self.off - self.oi));
             visible: 246 + k * 5 < 378;
-            Image { x: root.fx + (0 + bs0.oi) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px;
+            Image { x: root.fx + (0 + bs0.off) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px;
                 source: root.trees(root.theme, root.mood); source-clip-x: 0; source-clip-y: 246 + k * 5; source-clip-width: 145; source-clip-height: 5; }
-            Image { x: root.fx + (0 + bs0.oi + 1) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: bs0.of;
-                source: root.trees(root.theme, root.mood); source-clip-x: 0; source-clip-y: 246 + k * 5; source-clip-width: 145; source-clip-height: 5; }
-            if root.has-grade && root.dk > 0: Image { x: root.fx + (0 + bs0.oi) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: root.dk;
+            if root.has-grade && root.dk > 0: Image { x: root.fx + (0 + bs0.off) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: root.dk;
                 source: root.gtrees(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: 246 + k * 5; source-clip-width: 145; source-clip-height: 5; }
-            if root.has-grade && root.dn > 0: Image { x: root.fx + (0 + bs0.oi) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: root.dn;
+            if root.has-grade && root.dn > 0: Image { x: root.fx + (0 + bs0.off) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: root.dn;
                 source: root.gtrees(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: 246 + k * 5; source-clip-width: 145; source-clip-height: 5; }
-            if root.nmix > 0: Image { x: root.fx + (0 + bs0.oi) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: root.nmix;
+            if root.nmix > 0: Image { x: root.fx + (0 + bs0.off) * 1px; y: root.fy + (246 + k * 5) * 1px; width: 145px; height: 5px; opacity: root.nmix;
                 source: root.trees(root.theme, root.nmood); source-clip-x: 0; source-clip-y: 246 + k * 5; source-clip-width: 145; source-clip-height: 5; }
         }
     }
@@ -601,18 +589,14 @@ export component PhotoSky inherits Rectangle {
         for k in 46: bs2016 := Rectangle {
             property <float> rel: max(0, min(1, (470 - (245 + k * 5 + 2.5)) / 225));
             property <float> off: -Math.pow(self.rel, 1.8) * (root.lean + root.flut * Math.sin((root.t * 190 + self.rel * 70 + 0) * 1deg));
-            property <float> oi: Math.floor(self.off);
-            property <float> of: max(0.03, min(0.97, self.off - self.oi));
             visible: 245 + k * 5 < 470;
-            Image { x: root.fx + (0 + bs2016.oi) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px;
+            Image { x: root.fx + (0 + bs2016.off) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px;
                 source: root.trees(root.theme, root.mood); source-clip-x: 0; source-clip-y: 245 + k * 5; source-clip-width: 139; source-clip-height: 5; }
-            Image { x: root.fx + (0 + bs2016.oi + 1) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: bs2016.of;
-                source: root.trees(root.theme, root.mood); source-clip-x: 0; source-clip-y: 245 + k * 5; source-clip-width: 139; source-clip-height: 5; }
-            if root.has-grade && root.dk > 0: Image { x: root.fx + (0 + bs2016.oi) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: root.dk;
+            if root.has-grade && root.dk > 0: Image { x: root.fx + (0 + bs2016.off) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: root.dk;
                 source: root.gtrees(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: 245 + k * 5; source-clip-width: 139; source-clip-height: 5; }
-            if root.has-grade && root.dn > 0: Image { x: root.fx + (0 + bs2016.oi) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: root.dn;
+            if root.has-grade && root.dn > 0: Image { x: root.fx + (0 + bs2016.off) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: root.dn;
                 source: root.gtrees(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: 245 + k * 5; source-clip-width: 139; source-clip-height: 5; }
-            if root.nmix > 0: Image { x: root.fx + (0 + bs2016.oi) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: root.nmix;
+            if root.nmix > 0: Image { x: root.fx + (0 + bs2016.off) * 1px; y: root.fy + (245 + k * 5) * 1px; width: 139px; height: 5px; opacity: root.nmix;
                 source: root.trees(root.theme, root.nmood); source-clip-x: 0; source-clip-y: 245 + k * 5; source-clip-width: 139; source-clip-height: 5; }
         }
     }
@@ -620,18 +604,14 @@ export component PhotoSky inherits Rectangle {
         for k in 43: bs4053 := Rectangle {
             property <float> rel: max(0, min(1, (477 - (266 + k * 5 + 2.5)) / 211));
             property <float> off: -Math.pow(self.rel, 1.8) * (root.lean + root.flut * Math.sin((root.t * 190 + self.rel * 70 + 140) * 1deg));
-            property <float> oi: Math.floor(self.off);
-            property <float> of: max(0.03, min(0.97, self.off - self.oi));
             visible: 266 + k * 5 < 477;
-            Image { x: root.fx + (408 + bs4053.oi) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px;
+            Image { x: root.fx + (408 + bs4053.off) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px;
                 source: root.trees(root.theme, root.mood); source-clip-x: 408; source-clip-y: 266 + k * 5; source-clip-width: 120; source-clip-height: 5; }
-            Image { x: root.fx + (408 + bs4053.oi + 1) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: bs4053.of;
-                source: root.trees(root.theme, root.mood); source-clip-x: 408; source-clip-y: 266 + k * 5; source-clip-width: 120; source-clip-height: 5; }
-            if root.has-grade && root.dk > 0: Image { x: root.fx + (408 + bs4053.oi) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: root.dk;
+            if root.has-grade && root.dk > 0: Image { x: root.fx + (408 + bs4053.off) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: root.dk;
                 source: root.gtrees(root.theme, root.mood, 0); source-clip-x: 408; source-clip-y: 266 + k * 5; source-clip-width: 120; source-clip-height: 5; }
-            if root.has-grade && root.dn > 0: Image { x: root.fx + (408 + bs4053.oi) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: root.dn;
+            if root.has-grade && root.dn > 0: Image { x: root.fx + (408 + bs4053.off) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: root.dn;
                 source: root.gtrees(root.theme, root.mood, 1); source-clip-x: 408; source-clip-y: 266 + k * 5; source-clip-width: 120; source-clip-height: 5; }
-            if root.nmix > 0: Image { x: root.fx + (408 + bs4053.oi) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: root.nmix;
+            if root.nmix > 0: Image { x: root.fx + (408 + bs4053.off) * 1px; y: root.fy + (266 + k * 5) * 1px; width: 120px; height: 5px; opacity: root.nmix;
                 source: root.trees(root.theme, root.nmood); source-clip-x: 408; source-clip-y: 266 + k * 5; source-clip-width: 120; source-clip-height: 5; }
         }
     }
@@ -644,18 +624,14 @@ export component PhotoSky inherits Rectangle {
     if !root.rust-warp && root.wa > 0: Rectangle {
         for k in root.water-n: ws := Rectangle {
             property <float> off: root.wa * Math.sin((root.t * (95 + Math.mod(k * 37, 60)) + k * 67) * 1deg);
-            property <float> oi: Math.floor(self.off);
-            property <float> of: max(0.03, min(0.97, self.off - self.oi));
             visible: root.wy0 + k * 3 < 528;
-            if !root.day-hidden: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px;
+            if !root.day-hidden: Image { x: root.fx + ws.off * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px;
                 source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            if !root.day-hidden: Image { x: root.fx + (ws.oi + 1) * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: ws.of;
-                source: root.fg(root.theme, root.mood); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            if root.has-grade && root.dk > 0 && root.nmix < 1: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dk;
+            if root.has-grade && root.dk > 0 && root.nmix < 1: Image { x: root.fx + ws.off * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dk;
                 source: root.gfg(root.theme, root.mood, 0); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            if root.has-grade && root.dn > 0 && root.nmix < 1: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dn;
+            if root.has-grade && root.dn > 0 && root.nmix < 1: Image { x: root.fx + ws.off * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.dn;
                 source: root.gfg(root.theme, root.mood, 1); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
-            if root.nmix > 0: Image { x: root.fx + ws.oi * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.nmix;
+            if root.nmix > 0: Image { x: root.fx + ws.off * 1px; y: root.fy + (root.wy0 + k * 3) * 1px; width: 528px; height: 3px; opacity: root.nmix;
                 source: root.fg(root.theme, root.nmood); source-clip-x: 0; source-clip-y: root.wy0 + k * 3; source-clip-width: 528; source-clip-height: 3; }
         }
     }
@@ -717,7 +693,8 @@ export component PhotoSky inherits Rectangle {
             property <float> sp: 44 + Math.mod(i * 13, 24);
             property <float> d: Math.mod(root.t * self.sp + i * 97, 600);
             x: root.fx + (self.east ? self.d - 36 : 564 - self.d) * 1px; y: root.fy + (442 + (self.east ? 1 : 3)) * 1px;
-            width: 3px; height: 1px;
+            // (the radius makes it an anti-aliased shape: the light glides instead of stepping a pixel at a time)
+            width: 3px; height: 1px; border-radius: 0.5px;
             background: self.east ? #ff6a58 : #fff2d0;
             opacity: root.city-l;
         }

@@ -22,7 +22,8 @@
 - Home Assistant's Wake word and Wake word 2 selects of the panel's voice device show the panel's wake words: Home Assistant kept them at "No wake word" for a panel with two, and picking one of them then left the panel with only that word. The panel reports its wake words, and the integration sets the selects whenever they differ, also after a change on the panel or on the PanelOS page.
 
 ### Panel app
-- Slint 1.19.0 (before 1.18.1). Among its fixes: a text drawn once into a layer no longer stops updating when the text cache drops it, which caused a timer digit to stand still. The renderer keeps the one PanelOS change (pictures at fractional positions, so slow movement stays smooth); the other one, a layer of a removed page, is fixed upstream.
+- Slint 1.19.0 (before 1.18.1). Among its fixes: a text drawn once into a layer no longer stops updating when the text cache drops it, which caused a timer digit to stand still. The renderer keeps the PanelOS change for pictures at fractional positions (slow movement stays smooth); the other one, a layer of a removed page, is fixed upstream.
+- The wander clock, the title marquee, the news crawl and a few smaller moving parts glide instead of stepping a pixel at a time; what stands still is drawn as sharp as before.
 ### Security
 - The Home Assistant login token goes only to the address it was made for. A new address set on the panel keeps the login only when it is another of that Home Assistant's own addresses (Home Assistant names them over the existing connection); otherwise the old login is revoked and the panel pairs again. The WebSocket follows no redirects.
 - Integration: a user who has not been shown to be the panel's own can no longer change which ESPHome device counts as the panel; a custom page's widgets sent from the panel are refused while "Allow editing on the panel" is off; new `panelos/ha_addresses` command.
