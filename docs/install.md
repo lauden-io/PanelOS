@@ -259,7 +259,7 @@ Then put the two bundles of step 7 on the panel:
 cd /root/PanelOS && tools/install_bundles.sh $PANEL
 ```
 
-It sends both bundles over Wi-Fi (about 250 MB, a few minutes), checks them on the panel, and restarts the PanelOS app with them. The panel keeps running while they are sent. At the end it says `the app runs from the UI bundle, on the GPU`, `dashboard mode: the web bundle is mounted` and `done`, and the panel shows the setup screen again.
+It sends both bundles over Wi-Fi (about 230 MB, a few minutes), checks them on the panel, and restarts the PanelOS app with them. The panel keeps running while they are sent. At the end it says `the app runs from the UI bundle, on the GPU`, `dashboard mode: the web bundle is mounted` and `done`, and the panel shows the setup screen again.
 
 If it stops with a message, do what the message says and run the command again (an upload that already got through is not sent again). A failed upload changes nothing on the panel.
 
@@ -446,7 +446,7 @@ See [restore.md](restore.md), case A (case D once the stock Android is removed, 
 - **The setup screen says Home Assistant did not answer:** check the IP address and the port (`:8123` or none) in Home Assistant under Settings → System → Network.
 - **The panel says that its Wi-Fi has no connection or that Home Assistant is not answering:** the panel keeps trying by itself, no restart needed (**Try now** tries at once); check the Wi-Fi and that Home Assistant runs. **Change Wi-Fi** or **Change Home Assistant** on that screen picks another network or address.
 - **The screen stays black for minutes:** unplug the power for 10 seconds. If it still does not start, follow [restore.md](restore.md), case C.
-- **`tools/install_bundles.sh` says there is not enough room:** until step 14, both bundles (about 250 MB) share the small persistent partition (384 MiB) with the settings and the browser's cache. This shows what takes the room:
+- **`tools/install_bundles.sh` says there is not enough room:** until step 14, both bundles (about 230 MB) share the small persistent partition (384 MiB) with the settings and the browser's cache. This shows what takes the room:
 
   ```
   ssh -n -i /root/.ssh/nspanel_dev -o UserKnownHostsFile=/root/.ssh/panelos_known_hosts root@$PANEL "du -sh /mnt/persist/*"
