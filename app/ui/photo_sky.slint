@@ -3,6 +3,21 @@ import { Act, Clock } from "theme.slint";
 struct Star { x: int, y: int, b: float }
 struct Area { x: int, y: int, w: int, h: int }
 export struct WinRect { x: float, y: float, w: float, h: float }
+// What a scene shows of its moving rows (the meadow and its sheen, the bending trees, the river), for the app to draw
+// them into one picture (src/warp.rs). The picture covers columns x0 .. x0 + w and rows top .. bottom of the 528 px
+// layer; t is the scene's clock in steps of 1/30 s; sway, bend and water are the motions' strengths (0: still).
+export struct WarpIn {
+    theme: int, mood: int, nmood: int, light: bool, unlit: bool,
+    t: float,
+    x0: int, w: int, top: int, bottom: int,
+    day-hidden: bool, has-grade: bool, dk: float, dn: float, nmix: float,
+    grass-y0: int, sway: float, bend: float, water-y0: int, water: float, gust-k: float,
+}
+// The app's answer: the picture of the moving rows, or an empty one (pictures still loading, or no app: the PC preview),
+// and the scene then draws its rows as strips itself.
+export global Warp {
+    pure callback frame(WarpIn) -> image;
+}
 
 export component PhotoSky inherits Rectangle {
     in property <int> mood;              // see MOODS in gen_photo_sky.py
@@ -19,6 +34,7 @@ export component PhotoSky inherits Rectangle {
     in property <float> gust;            // km/h: gusts lean the rain further now and then
     in property <image> sky-frame;       // optional: the whole sky layer computed by the app per frame
     in property <bool> fixed-halo: true; // soft halos for the classic layout (the home page draws its own per widget)
+    in property <bool> live: true;       // (partly) on screen: only then the app draws the moving rows
     // The sun and the moon follow the real sky: azimuth and elevation in degrees (HA sun.sun; the
     // moon computed by the app). The scene looks south: east on the left, west on the right
     // (southern hemisphere: the app mirrors the azimuth). With real-sun the elevation also drives
@@ -468,6 +484,37 @@ export component PhotoSky inherits Rectangle {
         x: root.fx + root.win-out-rect.x * 1px; y: root.fy + root.win-out-rect.y * 1px; width: root.win-out-rect.w * 1px; height: root.win-out-rect.h * 1px;
         source: root.win-out; opacity: root.win-out-k; }
 
+    // 5b–5d drawn by the app: the meadow with its sheen, the bending trees and the river are one picture of the rows
+    //     that move, made by the app about 30 times a second while the scene is on screen (src/warp.rs, the same
+    //     strips and motions as below, with real sub-pixel interpolation). The strips below draw them only while the
+    //     app has no picture yet (its pictures loading) or without the app (the PC preview).
+    property <bool> warp-on: root.live && (root.sway-a > 0 || (root.has-trees && root.bend > 0) || root.wa > 0);
+    property <int> warp-top: root.has-trees && root.bend > 0 ? (root.theme == 3 ? 246 : 245) : root.wa > 0 ? root.wy0 : root.sway-y0;
+    property <WarpIn> warp-in;
+    property <bool> warp-ready;
+    function warp-snap() {
+        root.warp-in = {
+            theme: root.theme, mood: root.mood, nmood: root.nmood, light: root.light-variant, unlit: root.win-on,
+            t: Math.floor(root.t * 30) / 30,
+            x0: Math.round(-root.fx / 1px), w: Math.round(min(root.width / 1px, 528 + root.fx / 1px)),
+            top: root.warp-top, bottom: root.layer-bottom,
+            day-hidden: root.day-hidden, has-grade: root.has-grade, dk: root.dk, dn: root.dn, nmix: root.nmix,
+            grass-y0: root.sway-y0, sway: root.sway-a, bend: root.has-trees ? root.bend : 0,
+            water-y0: root.wy0, water: root.wa, gust-k: root.gust-k,
+        };
+        root.warp-ready = true;
+    }
+    changed warp-on => { if root.warp-on { root.warp-snap(); } else { root.warp-ready = false; } }
+    // (the snapshot changes only when its 1/30 s step does: the picture is made at most 30 times a second)
+    Timer { interval: 16ms; running: root.warp-on; triggered => { root.warp-snap(); } }
+    property <image> warp-img: root.warp-on && root.warp-ready ? Warp.frame(root.warp-in) : @image-url("");
+    property <bool> rust-warp: root.warp-img.width > 0;
+    if root.rust-warp: Image {
+        x: root.fx + root.warp-in.x0 * 1px; y: root.fy + root.warp-in.top * 1px;
+        width: root.warp-in.w * 1px; height: (root.warp-in.bottom - root.warp-in.top) * 1px;
+        source: root.warp-img;
+    }
+
     // 5b. grass sways in the wind: the meadow rows of the foreground are redrawn in 8 px strips,
     //     each shifted sideways by a small, smoothly varying amount (more in front, gusts push it
     //     left); sub-pixel shifts drawn twice with opacity = fraction (min 3 %, see the sky)
@@ -480,7 +527,7 @@ export component PhotoSky inherits Rectangle {
     // a gust pushes the grass only as far as the wind lets it sway
     property <float> grass-gust: root.genv * min(1, root.sway-a / 1.3);
     property <float> sheen-a: min(1, root.sway-a / 1.3) * (0.6 + 0.4 * max(0, min(1, (root.sway-a - 1.3) / 1.3)));
-    if root.sway-a > 0: Rectangle {
+    if !root.rust-warp && root.sway-a > 0: Rectangle {
         for k in root.grass-n: Rectangle {
             property <float> depth: Math.pow((k + 0.5) / ((528 - root.sway-y0) / 8), 1.2);
             property <float> off: (root.sway-a + 1.6 * root.grass-gust) * self.depth * Math.sin((root.t * 360 / 2.75 + k * 13) * 1deg)
@@ -514,8 +561,8 @@ export component PhotoSky inherits Rectangle {
     }
     // wind running over the grass: soft light bands sweep across the meadow (right to left)
     property <length> shx: -Math.mod(root.t * 64, 528) * 1px;
-    if root.sway-a > 0: Image { x: -24px + root.shx; y: root.fy + root.sway-y0 * 1px; width: 528px; height: 200px; source: @image-url("wx/grass-sheen.png"); opacity: min(1, root.sheen-a * (1 + 0.5 * root.genv)); }
-    if root.sway-a > 0: Image { x: -24px + root.shx + 528px; y: root.fy + root.sway-y0 * 1px; width: 528px; height: 200px; source: @image-url("wx/grass-sheen.png"); opacity: min(1, root.sheen-a * (1 + 0.5 * root.genv)); }
+    if !root.rust-warp && root.sway-a > 0: Image { x: -24px + root.shx; y: root.fy + root.sway-y0 * 1px; width: 528px; height: 200px; source: @image-url("wx/grass-sheen.png"); opacity: min(1, root.sheen-a * (1 + 0.5 * root.genv)); }
+    if !root.rust-warp && root.sway-a > 0: Image { x: -24px + root.shx + 528px; y: root.fy + root.sway-y0 * 1px; width: 528px; height: 200px; source: @image-url("wx/grass-sheen.png"); opacity: min(1, root.sheen-a * (1 + 0.5 * root.genv)); }
 
     // 5c. drawn themes: the swaying trees have their own layer (drawn after the grass strips)
     property <bool> has-trees: root.theme == 3 || root.theme == 5;
@@ -527,7 +574,7 @@ export component PhotoSky inherits Rectangle {
     // (still: only the trees' areas of their pictures, the same in all of them, with 2 px of clear margin)
     property <[Area]> tree-areas: root.theme == 3 ? [{ x: 2, y: 246, w: 131, h: 134 }]
         : [{ x: 0, y: 245, w: 127, h: 227 }, { x: 420, y: 266, w: 108, h: 213 }];
-    if root.has-trees && root.bend == 0: Rectangle {
+    if root.has-trees && (root.rust-warp ? root.warp-in.bend == 0 : root.bend == 0): Rectangle {
         for a in root.tree-areas: Rectangle {
             Image { x: root.fx + a.x * 1px + root.shake; y: root.fy + a.y * 1px; width: a.w * 1px; height: a.h * 1px;
                 source: root.trees(root.theme, root.mood); source-clip-x: a.x; source-clip-y: a.y; source-clip-width: a.w; source-clip-height: a.h; }
@@ -539,7 +586,7 @@ export component PhotoSky inherits Rectangle {
                 source: root.trees(root.theme, root.nmood); source-clip-x: a.x; source-clip-y: a.y; source-clip-width: a.w; source-clip-height: a.h; }
         }
     }
-    if root.theme == 3 && root.bend > 0: Rectangle {
+    if !root.rust-warp && root.theme == 3 && root.bend > 0: Rectangle {
         for k in 27: bs0 := Rectangle {
             property <float> rel: max(0, min(1, (378 - (246 + k * 5 + 2.5)) / 132));
             property <float> off: -Math.pow(self.rel, 1.8) * (root.lean + root.flut * Math.sin((root.t * 190 + self.rel * 70 + 0) * 1deg));
@@ -558,7 +605,7 @@ export component PhotoSky inherits Rectangle {
                 source: root.trees(root.theme, root.nmood); source-clip-x: 0; source-clip-y: 246 + k * 5; source-clip-width: 145; source-clip-height: 5; }
         }
     }
-    if root.theme == 5 && root.bend > 0: Rectangle {
+    if !root.rust-warp && root.theme == 5 && root.bend > 0: Rectangle {
         for k in 46: bs2016 := Rectangle {
             property <float> rel: max(0, min(1, (470 - (245 + k * 5 + 2.5)) / 225));
             property <float> off: -Math.pow(self.rel, 1.8) * (root.lean + root.flut * Math.sin((root.t * 190 + self.rel * 70 + 0) * 1deg));
@@ -577,7 +624,7 @@ export component PhotoSky inherits Rectangle {
                 source: root.trees(root.theme, root.nmood); source-clip-x: 0; source-clip-y: 245 + k * 5; source-clip-width: 139; source-clip-height: 5; }
         }
     }
-    if root.theme == 5 && root.bend > 0: Rectangle {
+    if !root.rust-warp && root.theme == 5 && root.bend > 0: Rectangle {
         for k in 43: bs4053 := Rectangle {
             property <float> rel: max(0, min(1, (477 - (266 + k * 5 + 2.5)) / 211));
             property <float> off: -Math.pow(self.rel, 1.8) * (root.lean + root.flut * Math.sin((root.t * 190 + self.rel * 70 + 140) * 1deg));
@@ -602,7 +649,7 @@ export component PhotoSky inherits Rectangle {
     property <int> water-n: Math.ceil((root.layer-bottom - root.wy0) / 3);
     property <float> wa: root.theme == 4 || root.theme == 6 ? (root.strong-wind ? 1.7 : root.wind >= 15 ? 1.2 : 0.8) : 0;
     animate wa { duration: 5s; easing: ease-in-out; }
-    if root.wa > 0: Rectangle {
+    if !root.rust-warp && root.wa > 0: Rectangle {
         for k in root.water-n: ws := Rectangle {
             property <float> off: root.wa * Math.sin((root.t * (95 + Math.mod(k * 37, 60)) + k * 67) * 1deg);
             property <float> oi: Math.floor(self.off);

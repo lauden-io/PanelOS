@@ -1,5 +1,9 @@
 use std::fmt::Write as _;
 
+#[allow(dead_code)]
+#[path = "src/warp_pics.rs"]
+mod warp_pics;
+
 fn main() {
     // The pages' pictures and fonts are not embedded: they are read at run time
     // from the UI bundle, by the absolute path they have in it. PANELOS_UI_DIR is
@@ -41,6 +45,14 @@ fn main() {
     std::fs::write(dest, out).unwrap();
     println!("cargo:rerun-if-changed=ui/fonts/mdi-codepoints.txt");
     println!("cargo:rerun-if-changed=ui");
+
+    // The pictures of the weather scenes' moving rows the app draws (src/warp.rs): what the scene's own picture
+    // functions pick, so both always load the same files.
+    let sky = std::fs::read_to_string("ui/photo_sky.slint").expect("ui/photo_sky.slint");
+    let pics = warp_pics::generate(&sky).unwrap_or_else(|e| panic!("ui/photo_sky.slint pictures: {e}"));
+    std::fs::write(std::path::Path::new(&std::env::var("OUT_DIR").unwrap()).join("warp_pics.rs"), pics).unwrap();
+    println!("cargo:rerun-if-changed=ui/photo_sky.slint");
+    println!("cargo:rerun-if-changed=src/warp_pics.rs");
 
     // Build time, reported to Home Assistant as the "compilation time".
     let built = std::process::Command::new("date")

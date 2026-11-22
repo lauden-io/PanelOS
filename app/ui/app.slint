@@ -23,7 +23,7 @@ import { ChildLockLayer, ProxCalLayer } from "device_layers.slint";
 import { PairingScreen, FoundHa, SetupScreen, WifiNet, WifiScreen, WifiPasswordScreen, HiddenNetworkScreen, HaPickScreen, ConnectingScreen, OfflineScreen, Phrases } from "overlays.slint";
 import { Person, TimerInfo, ClockData, ClockFace, StatusBar, TimerIsland, PageDots, People, WeatherHour, WeatherDay, WeatherData } from "panels.slint";
 import { HomeItem, HomeEvent, HomeMusic, HomeSensor, HomeGrid, WxIcons } from "home.slint";
-import { PhotoSky, WinRect } from "photo_sky.slint";
+import { PhotoSky, WinRect, Warp, WarpIn } from "photo_sky.slint";
 import { FastLane } from "fast_lane.slint";
 import { MusicPlayer, MusicPage } from "music.slint";
 import { TimerItem, AlarmItem, SwCar, TimersPage } from "timers.slint";
@@ -45,7 +45,7 @@ export { PeoplePics } from "home.slint";
 export { Theme, Act, Clock, Words, Phrases, FoundHa, WifiNet, Person, TimerInfo, ClockData, WeatherHour, WeatherDay, WeatherData }
 export { HomeItem, HomeEvent, HomeMusic, HomeSensor, MusicPlayer, TimerItem, AlarmItem, SwCar, ClimateDev, ClimateRoom, CamItem, CamAction }
 export { TodoItem, TodoList, CalEvent, CalDay, CalCell, CalBoard, WallCell, InfoNote, InfoStatus, StatusScreen, QuickTile, QuickGroup }
-export { SetRow, SetBar, SetSeg, SetSection, WinRect }
+export { SetRow, SetBar, SetSeg, SetSection, WinRect, Warp, WarpIn }
 
 // One page of the pager: which kind, and the variant / look where a kind has several.
 export struct PageSlot {
@@ -1066,6 +1066,7 @@ export component AppWindow inherits Window {
                 // or the old one fades out over the new one (3 s); the widgets lie over both, drawn once
                 if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k < 0.999: PhotoSky {
                     taps: home-slot.mood-k <= 0.001;
+                    live: home-slot.on-view;
                     bolts: root.lightning;
                     flash: root.lightning;
                     mood: home-slot.mood-a;
@@ -1096,6 +1097,7 @@ export component AppWindow inherits Window {
                 }
                 if home-slot.grid-page && home-slot.home-theme != 8 && home-slot.home-theme != 9 && home-slot.mood-k > 0.001: PhotoSky {
                     taps: true;
+                    live: home-slot.on-view;
                     bolts: root.lightning;
                     flash: root.lightning;
                     mood: home-slot.mood-b;
