@@ -347,9 +347,10 @@ fn blend_is(shown: f32, want: f32, tol: f32) -> bool {
     (shown - want).abs() <= tol
 }
 
-/// Sets the views' blend, the view's colour and the shooting stars (at night, and at any time in space). Each only
-/// when it changed: a set redraws every page with a scene (the scenes live on pages out of sight too).
-fn show_views(ui: &AppWindow, scene: usize, mix: f32, dawn: f32, tol: f32) {
+/// Sets the views' blend, the view's colour (when `colour`) and the shooting stars (at night, and at any time in
+/// space). Each only when it changed: a set redraws every page with a scene (the scenes live on pages out of sight
+/// too), and a new colour makes the widgets' neon glow be drawn again, which costs a frame of about 150 ms.
+fn show_views(ui: &AppWindow, scene: usize, mix: f32, dawn: f32, tol: f32, colour: bool) {
     if !blend_is(ui.get_home_fl_mix(), mix, tol) {
         ui.set_home_fl_mix(mix);
     }
@@ -357,7 +358,7 @@ fn show_views(ui: &AppWindow, scene: usize, mix: f32, dawn: f32, tol: f32) {
         ui.set_home_fl_mix_c(dawn);
     }
     let g = view_colour(scene, mix, dawn);
-    if ui.get_home_fl_grid() != g {
+    if colour && ui.get_home_fl_grid() != g {
         ui.set_home_fl_grid(g);
     }
     let star = if scene == 3 { 1.0 } else { mix };
@@ -369,6 +370,9 @@ fn show_views(ui: &AppWindow, scene: usize, mix: f32, dawn: f32, tol: f32) {
 /// How long a new sun value takes to come in on screen: 75 whole 40 ms frames (3 s), straight, without easing.
 const GLIDE_FRAMES: u32 = 75;
 const GLIDE_FRAME_MS: u64 = 40;
+/// The view's colour follows a glide once a second (three small steps), not in every frame: each new colour draws
+/// the widgets' glow again.
+const GLIDE_COLOUR_EVERY: u32 = 25;
 
 /// The views' glide: from which blend (mix, dawn) to which, for which scene, and the frames done.
 #[derive(Clone, Copy, Default)]
@@ -382,6 +386,11 @@ struct Glide {
 thread_local! {
     static GLIDE: slint::Timer = slint::Timer::default();
     static GLIDE_PATH: std::cell::Cell<Glide> = std::cell::Cell::new(Glide::default());
+}
+
+/// Whether the view's colour is set `step` frames into a glide: once a second, and always on the last frame.
+fn colour_step(step: u32) -> bool {
+    step % GLIDE_COLOUR_EVERY == 0 || step >= GLIDE_FRAMES
 }
 
 /// The blend `step` frames into a glide of GLIDE_FRAMES frames from `from` to `to`.
@@ -402,7 +411,7 @@ fn glide_to(ui: &AppWindow, scene: usize, mix: f32, dawn: f32) {
     }
     let from = (ui.get_home_fl_mix(), ui.get_home_fl_mix_c());
     if !running && blend_is(from.0, mix, 0.004) && blend_is(from.1, dawn, 0.004) {
-        show_views(ui, scene, mix, dawn, 0.004);
+        show_views(ui, scene, mix, dawn, 0.004, true);
         return;
     }
     GLIDE_PATH.with(|p| p.set(Glide { from, to, scene, step: 0 }));
@@ -414,7 +423,7 @@ fn glide_to(ui: &AppWindow, scene: usize, mix: f32, dawn: f32) {
             g.step += 1;
             GLIDE_PATH.with(|p| p.set(g));
             let (m, d) = glide_at(g.from, g.to, g.step);
-            show_views(&ui, g.scene, m, d, 0.0);
+            show_views(&ui, g.scene, m, d, 0.0, colour_step(g.step));
             if g.step >= GLIDE_FRAMES {
                 GLIDE.with(|t| t.stop());
             }
@@ -482,7 +491,7 @@ pub fn tick(ui: &AppWindow, s: &crate::UiState) {
     let shown = on_screen(ui, s);
     if new_scene || !shown {
         GLIDE.with(|g| g.stop());
-        show_views(ui, scene, mix, dawn, 0.004);
+        show_views(ui, scene, mix, dawn, 0.004, true);
     } else {
         glide_to(ui, scene, mix, dawn);
     }
@@ -767,6 +776,12 @@ mod tests {
         let a = glide_at(from, to, 10).1 - glide_at(from, to, 9).1;
         let b = glide_at(from, to, 60).1 - glide_at(from, to, 59).1;
         assert!((a - b).abs() < 1e-6 && a > 0.0);
+    }
+
+    #[test]
+    fn a_glide_moves_the_colour_three_times() {
+        let steps: Vec<u32> = (1..=GLIDE_FRAMES).filter(|&k| colour_step(k)).collect();
+        assert_eq!(steps, vec![25, 50, 75]);
     }
 
     #[test]
